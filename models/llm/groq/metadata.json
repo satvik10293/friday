@@ -1,0 +1,15 @@
+{
+  "name": "groq",
+  "category": "llm",
+  "provider": "groq",
+  "format": "api",
+  "source": "cloud",
+  "role": "primary cloud fallback when local reasoning is not confident",
+  "weights_tracked": false,
+  "weights_obtained": "n/a (hosted API)",
+  "api_key_env": "GROQ_API_KEY",
+  "milestone_introduced": "3.0",
+  "version": "llama-3.x",
+  "status": "active",
+  "used_by": ["core.brain.friday_neural"]
+}

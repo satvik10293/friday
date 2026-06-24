@@ -1,0 +1,15 @@
+{
+  "name": "openai",
+  "category": "llm",
+  "provider": "openai",
+  "format": "api",
+  "source": "cloud",
+  "role": "final cloud fallback",
+  "weights_tracked": false,
+  "weights_obtained": "n/a (hosted API)",
+  "api_key_env": "OPENAI_API_KEY",
+  "milestone_introduced": "3.0",
+  "version": "gpt-4o-mini",
+  "status": "active",
+  "used_by": ["core.brain.friday_neural"]
+}

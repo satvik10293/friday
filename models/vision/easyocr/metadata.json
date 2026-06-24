@@ -1,0 +1,15 @@
+{
+  "name": "easyocr",
+  "category": "vision",
+  "provider": "jaided-ai",
+  "format": "pth",
+  "source": "local",
+  "role": "on-screen text recognition for visual answers / proactive watcher",
+  "weights_tracked": false,
+  "weights_obtained": "downloaded by easyocr to its model dir on first use",
+  "license": "Apache-2.0",
+  "milestone_introduced": "3.0",
+  "version": "latin_g2",
+  "status": "active",
+  "used_by": ["core.io.friday_visual", "core.io.friday_proactive"]
+}

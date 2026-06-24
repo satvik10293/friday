@@ -1,0 +1,15 @@
+{
+  "name": "edge-tts",
+  "category": "speech",
+  "provider": "microsoft",
+  "format": "api",
+  "source": "cloud",
+  "role": "text-to-speech (TTS) — FRIDAY's voice",
+  "weights_tracked": false,
+  "weights_obtained": "n/a (hosted neural voices)",
+  "license": "GPL-3.0 (client)",
+  "milestone_introduced": "3.0",
+  "version": "neural",
+  "status": "active",
+  "used_by": ["core.voice.friday_tts"]
+}

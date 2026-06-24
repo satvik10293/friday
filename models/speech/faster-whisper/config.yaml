@@ -1,0 +1,7 @@
+# faster-whisper STT configuration
+model_size: base
+device: cpu
+compute_type: int8
+language: en
+beam_size: 5
+# CTranslate2 weights are downloaded at runtime; *.bin is gitignored

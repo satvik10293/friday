@@ -1,0 +1,15 @@
+{
+  "name": "faster-whisper",
+  "category": "speech",
+  "provider": "systran",
+  "format": "ctranslate2",
+  "source": "local",
+  "role": "speech-to-text (STT) for voice mode",
+  "weights_tracked": false,
+  "weights_obtained": "downloaded by faster-whisper on first use",
+  "license": "MIT",
+  "milestone_introduced": "3.0",
+  "version": "base",
+  "status": "active",
+  "used_by": ["core.voice.friday_stt"]
+}

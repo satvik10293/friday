@@ -1,0 +1,6 @@
+# edge-tts configuration (hosted neural voices — no local weights)
+voice: en-US-AriaNeural
+rate: "+0%"
+volume: "+0%"
+pitch: "+0Hz"
+output: friday_reply.mp3   # temp; routed to a temp dir (see TODO in CLAUDE.md)

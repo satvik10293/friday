@@ -1,0 +1,5 @@
+# HashingEmbedder configuration (pure code — no weights, no download)
+dim: 256
+algorithm: md5-bag-of-words
+normalize: true
+# Deterministic + stable across processes, so a persisted index stays valid.

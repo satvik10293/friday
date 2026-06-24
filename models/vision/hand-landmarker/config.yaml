@@ -1,0 +1,15 @@
+# MediaPipe HandLandmarker (Tasks API) configuration
+model_asset_path: core/io/models/hand_landmarker.task
+running_mode: LIVE_STREAM
+num_hands: 1
+min_hand_detection_confidence: 0.5
+min_tracking_confidence: 0.5
+# gesture -> action mapping (see core.io.friday_gesture)
+gestures:
+  fist: minimize
+  open_palm: restore
+  call_me: launch_voice
+  point: focus_window
+  peace: scout_screen
+  thumbs_up: approve
+  pinch: system_volume

@@ -1,0 +1,53 @@
+# Friday 3.0 — runtime dependencies
+# Install:  pip install -r requirements.txt   (or run: python setup.py)
+
+# ── Brain / LLM clients ──────────────────────────────────────────────
+requests
+groq
+google-generativeai
+openai
+
+# ── Knowledge: embeddings + vector index ─────────────────────────────
+sentence-transformers
+faiss-cpu
+numpy
+
+# ── Local reasoning reader (retrieve -> comprehend -> generate) ──────
+transformers
+torch
+
+# ── Documents ────────────────────────────────────────────────────────
+pypdf
+
+# ── Voice (STT + TTS + audio) ────────────────────────────────────────
+faster-whisper
+edge-tts
+sounddevice
+soundfile
+pygame
+
+# ── Senses / screen / input ──────────────────────────────────────────
+mss
+easyocr
+pyperclip
+keyboard
+psutil
+pygetwindow
+pyautogui
+
+# ── Web UI ───────────────────────────────────────────────────────────
+flask
+flask-cors
+pywebview
+
+# Desktop window (native HUD) + gesture control (webcam hand tracking, pinch volume)
+mediapipe
+pycaw ; sys_platform == "win32"
+comtypes ; sys_platform == "win32"
+
+# ── Actions / messaging ──────────────────────────────────────────────
+pywhatkit
+
+# ── Notifications ────────────────────────────────────────────────────
+plyer
+win10toast ; sys_platform == "win32"

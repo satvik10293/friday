@@ -1,0 +1,8 @@
+# all-MiniLM-L6-v2 embedding configuration
+model: sentence-transformers/all-MiniLM-L6-v2
+dim: 384
+device: cpu
+normalize_embeddings: true
+max_seq_length: 512
+# Selected automatically by core.memory.embedder.get_embedder() when
+# sentence-transformers is installed; otherwise the hashing fallback is used.
