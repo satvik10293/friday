@@ -1,0 +1,9 @@
+# flan-t5 — local reasoning reader configuration
+model: google/flan-t5-base
+task: text2text-generation
+device: cpu
+max_input_tokens: 512
+max_new_tokens: 256
+temperature: 0.3
+# Local-first gate: friday_local answers when confident, else falls back to cloud.
+confidence_threshold: 0.45

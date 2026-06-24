@@ -1,0 +1,15 @@
+{
+  "name": "flan-t5",
+  "category": "llm",
+  "provider": "google",
+  "format": "transformers",
+  "source": "local",
+  "role": "local reasoning reader (retrieve -> comprehend -> generate)",
+  "weights_tracked": false,
+  "weights_obtained": "downloaded by transformers on first use (HF hub)",
+  "license": "Apache-2.0",
+  "milestone_introduced": "3.0",
+  "version": "base",
+  "status": "active",
+  "used_by": ["core.brain.friday_local"]
+}

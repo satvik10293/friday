@@ -1,0 +1,76 @@
+# ── Python ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── Virtualenv / IDE ─────────────────────────────────────────────────
+.venv/
+venv/
+.idea/
+.vscode/
+
+# ── Secrets — never commit API keys ──────────────────────────────────
+.env
+# friday_config.json is now a safe template (keys live in .env, not here),
+# so it can be tracked. If you ever paste keys back into it, re-ignore it.
+
+# ── Generated audio (temp STT/TTS output) ────────────────────────────
+*.wav
+*.mp3
+
+# ── Runtime data / memory / models (regenerable or machine-local) ────
+# No SQLite DB belongs in Git anywhere (source of truth is regenerable/local).
+*.db
+*.db-wal
+*.db-shm
+data/*.jsonl
+data/local_qa.npz
+data/local_qa.json
+data/codex_backups/
+data/core_backup_*/
+core/world_data/
+
+# ── Local harness / IDE state (not shared) ───────────────────────────
+.claude/settings.local.json
+
+# Note: the Obsidian knowledge + proposal vaults live outside the repo
+# (C:\VAULT\...), so they are not tracked here.
+
+# ── Model weights — NEVER commit large weights to Git ────────────────
+# Store model *configs/metadata/registry/docs* (see models/), never the
+# binary weights. Pull weights at install/runtime instead.
+*.gguf
+*.bin
+*.pt
+*.pth
+*.safetensors
+*.onnx
+*.h5
+*.ckpt
+*.pkl
+*.npz
+# Exception: the bundled MediaPipe gesture model is a small (~7 MB) asset the
+# app needs to boot, so it stays tracked. Ignore any *other* .task weights.
+*.task
+!core/io/models/hand_landmarker.task
+
+# ── Model caches & downloaded weights (regenerable) ──────────────────
+models/**/weights/
+models/**/*.gguf
+models/**/*.bin
+models/**/*.safetensors
+.cache/
+**/.cache/
+huggingface/
+.huggingface/
+*.model
+
+# ── Large datasets & embedding databases (regenerable / machine-local)
+datasets/
+data/datasets/
+*.faiss
+*.index
+*.ann
+embeddings_cache/
+data/embeddings/

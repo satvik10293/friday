@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#030608">
+  <meta name="description" content="FRIDAY 3.0 Local Cognitive System">
+  <title>FRIDAY Interface</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='none' stroke='%2372eef2' stroke-width='2'/><circle cx='16' cy='16' r='6' fill='%2372eef2' opacity='.6'/></svg>">
+  <link rel="stylesheet" href="friday_ui.css">
+</head>
+<body data-mode="idle" data-voice-state="idle">
+  <div class="cinematic-frame" aria-hidden="true"></div>
+  <canvas id="friday-core" aria-hidden="true" title="FRIDAY neural core visualization"></canvas>
+  <div id="no-webgl-fallback" class="no-webgl-fallback" aria-hidden="true"></div>
+
+  <main class="interface">
+    <header class="hud-top">
+      <div class="brand-block">
+        <span class="micro-label">FRIDAY 3.0</span>
+        <h1>Local Cognitive System</h1>
+      </div>
+      <div class="top-readouts">
+        <span id="mode-badge" class="mode-badge" aria-label="Current mood">Idle</span>
+        <span id="time-value" class="data-readout">--:--</span>
+        <div class="voice-status" id="voice-status" data-state="idle" aria-live="polite">
+          <span class="voice-status__ring" aria-hidden="true"></span>
+          <span class="voice-status__bars" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="voice-status__dot" aria-hidden="true"></span>
+          <span class="voice-status__label" id="voice-status-label">Standby</span>
+        </div>
+        <span id="connection-label" class="connection-chip status-pulse">Local systems online</span>
+      </div>
+    </header>
+
+    <section class="center-stage">
+      <aside class="hud-rail left-rail">
+        <div class="hud-section primary-mode">
+          <span class="corner-bracket tl" aria-hidden="true"></span>
+          <span class="corner-bracket tr" aria-hidden="true"></span>
+          <span class="corner-bracket bl" aria-hidden="true"></span>
+          <span class="corner-bracket br" aria-hidden="true"></span>
+          <span class="micro-label">Current Mood</span>
+          <strong id="mode-value">Idle</strong>
+          <p id="goal-value">Goal: Stand by and assist Satvik.</p>
+        </div>
+
+        <dl class="hud-section data-stack">
+          <div><dt>Confidence</dt><dd id="confidence-value">--</dd></div>
+          <div><dt>Source</dt><dd id="source-value">--</dd></div>
+          <div><dt>Focus</dt><dd id="focus-value">Idle</dd></div>
+          <div><dt>State</dt><dd id="class-value">Ready</dd></div>
+          <div><dt>Gesture</dt><dd id="vision-value" class="is-stale" title="Toggle gesture control on the core">—</dd></div>
+        </dl>
+      </aside>
+
+      <section class="core-zone" aria-label="Friday visual core">
+        <div class="mode-ring" data-mode-ring aria-hidden="true"></div>
+        <div class="reticle" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+
+        <button type="button" id="gesture-toggle" class="gesture-toggle" title="Toggle gesture control (webcam)">Gesture</button>
+        <div class="gesture-stage" id="gesture-stage" hidden>
+          <img id="gesture-feed" alt="Gesture camera feed">
+          <span class="gesture-label" id="gesture-label">Idle</span>
+        </div>
+
+        <div class="core-caption">
+          <span class="micro-label">Neural Core</span>
+          <strong id="autonomy-line" aria-live="polite">FRIDAY neural core online.</strong>
+        </div>
+      </section>
+
+      <aside class="hud-rail right-rail">
+        <div class="hud-section">
+          <div class="section-head">
+            <span class="micro-label">Talk to Friday</span>
+            <strong id="command-state">Ready</strong>
+          </div>
+          <div class="action-grid">
+            <button data-command="what is your status" aria-label="Ask status" aria-keyshortcuts="1"><span class="btn-label">Status</span><kbd class="btn-hotkey">1</kbd></button>
+            <button data-command="who are you" aria-label="Ask identity" aria-keyshortcuts="2"><span class="btn-label">Identity</span><kbd class="btn-hotkey">2</kbd></button>
+            <button data-command="what can you do" aria-label="Ask capabilities" aria-keyshortcuts="3"><span class="btn-label">Skills</span><kbd class="btn-hotkey">3</kbd></button>
+            <button data-command="summarize what is on my screen" aria-label="Summarize screen" aria-keyshortcuts="4"><span class="btn-label">Screen</span><kbd class="btn-hotkey">4</kbd></button>
+            <button data-command="what is today's news" aria-label="Today's news" aria-keyshortcuts="5"><span class="btn-label">News</span><kbd class="btn-hotkey">5</kbd></button>
+            <button data-command="how are you feeling" aria-label="Ask mood" aria-keyshortcuts="6"><span class="btn-label">Mood</span><kbd class="btn-hotkey">6</kbd></button>
+          </div>
+          <form id="command-form" class="command-form" autocomplete="off">
+            <label class="visually-hidden" for="command-input">Send a message to Friday</label>
+            <input id="command-input" type="text" placeholder="Ask Friday anything…" maxlength="2000" spellcheck="false">
+            <button type="submit" id="command-submit" aria-label="Send">Send</button>
+          </form>
+          <p id="command-log" class="command-log" role="status" aria-live="polite">Ask a question or tap a quick action.</p>
+
+          <section class="agents-panel" aria-label="Mini-brain specialists">
+            <div class="section-head agents-panel__head">
+              <span class="micro-label">Mini-Brains</span>
+              <strong id="agents-panel-status">ready</strong>
+            </div>
+            <div id="agents-roster" class="agents-roster" role="list"></div>
+            <div class="agents-quick" role="group" aria-label="Quick deploy">
+              <button type="button" class="agents-quick__btn" data-agents-task="Make a focused plan for the next 2 hours">Plan</button>
+              <button type="button" class="agents-quick__btn" data-agents-task="Review your own code and suggest one improvement">Code</button>
+              <button type="button" class="agents-quick__btn" data-agents-task="Research best practices for local AI assistants in 2026">Research</button>
+              <button type="button" class="agents-quick__btn" data-agents-task="Explain what is on my screen and what I should do next">Scout</button>
+            </div>
+            <form id="agents-form" class="agents-form" autocomplete="off">
+              <label class="visually-hidden" for="agents-task-input">Task for mini-brains</label>
+              <input id="agents-task-input" type="text" placeholder="Deep task: describe it…" maxlength="2000" spellcheck="false">
+              <button type="submit" id="agents-deploy" class="agents-deploy">Deploy</button>
+            </form>
+            <p id="agents-last-run" class="agents-last-run" aria-live="polite">Deploy mini-brains for deeper answers.</p>
+          </section>
+        </div>
+
+        <dl class="hud-section data-stack">
+          <div><dt>Voice</dt><dd id="voice-value" class="is-stale" title="Voice runs in the spine">Standby</dd></div>
+          <div><dt>Screen</dt><dd id="screen-value">Idle</dd></div>
+          <div><dt>Brains</dt><dd id="agents-value" title="Specialist modules">Standby</dd></div>
+          <div><dt>Memory</dt><dd id="memory-value">Active</dd></div>
+          <div><dt>Scheduler</dt><dd id="scheduler-value">--</dd></div>
+          <div><dt>Battery</dt><dd id="battery-value">--</dd></div>
+          <div><dt>Network</dt><dd id="network-value">--</dd></div>
+        </dl>
+      </aside>
+    </section>
+
+    <footer class="hud-bottom">
+      <section class="timeline-strip">
+        <div class="section-head">
+          <span class="micro-label">Conversation Timeline</span>
+          <strong>Live Context</strong>
+        </div>
+        <ol id="timeline-list" class="timeline-filmstrip">
+          <li class="timeline-empty"><time class="tl-time">--:--</time><span class="tl-kind">Status</span><span class="tl-detail">Waiting for live events…</span></li>
+        </ol>
+      </section>
+
+      <section class="scheduler-brief">
+        <div class="section-head">
+          <span class="micro-label">Scheduler</span>
+          <strong id="scheduler-panel-title">Jobs</strong>
+        </div>
+        <ul id="scheduler-job-list" class="scheduler-job-list">
+          <li class="scheduler-empty">Loading schedule…</li>
+        </ul>
+      </section>
+
+      <section class="agents-brief agents-brief--footer">
+        <div class="section-head">
+          <span class="micro-label">Deep Answer</span>
+          <strong id="agents-fusion-title">Standby</strong>
+        </div>
+        <p id="agents-fusion-preview" class="agents-fusion-preview">Last deep answer appears here after Deploy.</p>
+      </section>
+
+      <section class="system-brief">
+        <div class="section-head">
+          <span class="micro-label">System Briefing</span>
+          <strong>Machine State</strong>
+        </div>
+        <p id="system-summary">Waiting for live system summary.</p>
+      </section>
+    </footer>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="friday_ui.js"></script>
+</body>
+</html>

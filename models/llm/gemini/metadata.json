@@ -1,0 +1,15 @@
+{
+  "name": "gemini",
+  "category": "llm",
+  "provider": "google",
+  "format": "api",
+  "source": "cloud",
+  "role": "second cloud fallback",
+  "weights_tracked": false,
+  "weights_obtained": "n/a (hosted API)",
+  "api_key_env": "GEMINI_API_KEY",
+  "milestone_introduced": "3.0",
+  "version": "1.5",
+  "status": "active",
+  "used_by": ["core.brain.friday_neural"]
+}

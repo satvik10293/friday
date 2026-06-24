@@ -1,0 +1,16 @@
+{
+  "name": "all-minilm-l6-v2",
+  "category": "embeddings",
+  "provider": "sentence-transformers",
+  "format": "transformers",
+  "source": "local",
+  "role": "text embeddings for semantic memory/knowledge retrieval",
+  "dim": 384,
+  "weights_tracked": false,
+  "weights_obtained": "downloaded by sentence-transformers on first use",
+  "license": "Apache-2.0",
+  "milestone_introduced": "M2",
+  "version": "L6-v2",
+  "status": "active",
+  "used_by": ["core.memory.embedder"]
+}

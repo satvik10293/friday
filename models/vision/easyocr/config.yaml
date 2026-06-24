@@ -1,0 +1,5 @@
+# EasyOCR configuration
+languages: ["en"]
+gpu: false
+recog_network: latin_g2
+# weights are downloaded by easyocr at runtime; .pth files are gitignored

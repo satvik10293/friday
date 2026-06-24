@@ -1,0 +1,12 @@
+# Normalize text line endings in the repo (silences LF/CRLF churn on Windows).
+* text=auto
+
+# Binary assets — never normalize.
+*.task binary
+*.png binary
+*.jpg binary
+*.mp3 binary
+*.wav binary
+*.gguf binary
+*.bin binary
+*.safetensors binary

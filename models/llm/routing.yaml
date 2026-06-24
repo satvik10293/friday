@@ -1,0 +1,16 @@
+# FRIDAY LLM routing rules — version-controlled brain architecture.
+# Local-first: she answers from her own reasoning when confident, and only then
+# escalates through the cloud chain. Mirrors core.brain.friday_neural.
+routing:
+  strategy: local-first
+  local:
+    model: flan-t5
+    confidence_threshold: 0.45     # below this -> escalate to cloud
+  cloud_chain:                      # tried in order until one succeeds
+    - groq
+    - gemini
+    - openai
+  learn_back: true                  # substantive cloud answers are saved to the vault (M7/M8)
+  notes: >
+    The local/cloud decision and which route served each answer are recorded in
+    the M1 DecisionLog, so independence (self-vs-API) is an auditable fact.

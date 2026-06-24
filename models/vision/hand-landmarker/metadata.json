@@ -1,0 +1,16 @@
+{
+  "name": "hand-landmarker",
+  "category": "vision",
+  "provider": "mediapipe",
+  "format": "task",
+  "source": "local",
+  "role": "hand gesture recognition (fist/open-palm/point/peace/pinch/...)",
+  "weights_tracked": true,
+  "weights_path": "core/io/models/hand_landmarker.task",
+  "weights_note": "small (~7 MB) bundled asset the app needs to boot; the one tracked weight",
+  "license": "Apache-2.0",
+  "milestone_introduced": "3.0",
+  "version": "1.0",
+  "status": "active",
+  "used_by": ["core.io.friday_gesture"]
+}

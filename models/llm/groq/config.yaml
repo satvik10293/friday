@@ -1,0 +1,7 @@
+# Groq cloud LLM configuration (hosted API — no local weights)
+provider: groq
+model: llama-3.1-8b-instant
+api_key_env: GROQ_API_KEY     # secret lives in .env, never here
+temperature: 0.4
+max_tokens: 1024
+chain_order: 1                 # tried first in the cloud fallback chain
