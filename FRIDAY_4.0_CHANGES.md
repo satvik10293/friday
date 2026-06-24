@@ -323,6 +323,31 @@ FRIDAY now feels like a long-term partner: she knows who Satvik is, what he's bu
 
 ---
 
+## Model Storage & Git Versioning (repo initialized; configs in Git, weights out)
+
+A standing requirement so the whole intelligence system stays **reproducible and recoverable**: Git versions every config that defines how FRIDAY thinks; model **weights never enter Git**. The repository was **initialized** this change (it wasn't one before) at the verified 500-test-green state.
+
+| Status | File | What it is |
+|---|---|---|
+| INIT | `.git/` + tag `m9-baseline` | Repo initialized (`git init -b main`), local identity set, baseline commit `37dcbd7` ("M1–M9 baseline + Model Storage & Git Versioning"), tagged `m9-baseline`. 280 tracked files; tree clean. |
+| EDIT (additive) | `.gitignore` | Added exclusions: model weights (`*.gguf/*.bin/*.pt/*.pth/*.safetensors/*.onnx/*.h5/*.ckpt`), all `*.db` (+`-wal/-shm`), datasets, embedding/FAISS DBs (`*.faiss/*.index`), caches, `data/core_backup_*/`, `.claude/settings.local.json`. **Exception:** the bundled `core/io/models/hand_landmarker.task` (~7 MB) stays tracked. |
+| NEW | `.gitattributes` | Deterministic line endings (`* text=auto`) + binary asset rules (silences LF/CRLF churn on Windows). |
+| NEW | `models/registry.json` | Machine-readable model registry (10 models: 4 llm · 2 vision · 2 speech · 2 embeddings); metadata only, `weights_in_git:false`. |
+| NEW | `models/MODEL_REGISTRY.md`, `models/README.md` | Human-readable registry index + conventions. |
+| NEW | `models/{llm,vision,speech,embeddings}/<name>/{metadata.json,config.yaml,README.md}` | Per-model config/metadata/docs for flan-t5, groq, gemini, openai, hand-landmarker, easyocr, faster-whisper, edge-tts, all-minilm-l6-v2, hashing. |
+| NEW | `models/llm/routing.yaml` | Version-controlled brain routing rules (local-first: `flan-t5 → Groq → Gemini → OpenAI`). |
+| NEW | `core/infra/model_registry.py` | `ModelRegistry` — read-only registry reader (`list_models`/`get`/`by_category`/`milestone_of`/`weights_excluded`/`config_path`/`health`); merges on-disk `metadata.json`. Side-effect-free. |
+| NEW | `core/infra/repo_status.py` | `RepoStatus` — read-only Git introspection: branch/latest commit/dirty/modified files/tags, and **per-file history** (`file_added`/`file_last_modified`/`file_history`) so FRIDAY can answer "when added / modified / which commit / which milestone". Fixed read-only args (no input interpolated into commands), pathspec-safe, degrades to `{available:False}` without Git. The Mission Control "repository health" data layer. |
+| NEW | `tests/test_model_registry.py` (10) | registry load/query/health, custom + missing registry, side-effect-free import. |
+| NEW | `tests/test_repo_status.py` (10) | throwaway-repo branch/commit/dirty/modified, **add-vs-modify history**, milestone tags, status payload, graceful-when-not-a-repo, pathspec-not-an-option safety. |
+| NEW | `docs/MODEL_STORAGE_AND_GIT.md` | The requirement: principle, in-Git-vs-excluded lists, model directory, **checkpoint convention** (commit before/after milestones; tag completions), version-history queries, Mission Control (M10) plan. |
+
+**Git checkpoint convention (going forward):** commit before milestone work, after completion (`git commit -m "M10 complete"`), before major refactors, and after the suite is green; tag completions (`git tag -a m10-complete`). The 500-test baseline is the recovery point this protects.
+
+**Git installed:** `git version 2.54.0.windows.1` (winget). **Tests: 500 passed** (480 + 20 new), zero regressions.
+
+---
+
 ## Verified 3.0 defects closed
 
 | Defect (from `FRIDAY_VERIFIED_STATE.md`) | Closed by |
@@ -375,7 +400,7 @@ Knowledge's true source of truth is the **Obsidian vault** (`FRIDAY_KNOWLEDGE_VA
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
-# expected: 480 passed
+# expected: 500 passed
 ```
 
 ---
