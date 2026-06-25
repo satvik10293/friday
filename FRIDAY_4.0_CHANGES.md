@@ -1,4 +1,4 @@
-# FRIDAY 4.0 — Changes (M1 Runtime + Observability, M2 Memory Service, M3 Skills + Security, M4 Goal Engine + Reflection, M5 Executive Brain, M6 Perception & Awareness, M7 Knowledge & Learning Core, M8 Knowledge System + Portal, M9 Personal Model & User Intelligence)
+# FRIDAY 4.0 — Changes (M1 Runtime + Observability, M2 Memory Service, M3 Skills + Security, M4 Goal Engine + Reflection, M5 Executive Brain, M6 Perception & Awareness, M7 Knowledge & Learning Core, M8 Knowledge System + Portal, M9 Personal Model & User Intelligence, M10 Mission Control + Hardening)
 
 > Strangler-fig migration: **all additive**. No existing 3.0 file was modified.
 > The system still boots. **Test status: 269 passed** (`python -m pytest`).
@@ -348,6 +348,32 @@ A standing requirement so the whole intelligence system stays **reproducible and
 
 ---
 
+## M10 — Mission Control + Architecture Hardening (7 new packages; cockpit + risk fixes)
+
+M10 builds **Mission Control** (FRIDAY's operational cockpit) *and* resolves the highest-priority risks from `docs/ARCHITECTURE_REVIEW.md` (unauthenticated writes, no migration runner, GIL-bound agents, keyword-only retrieval) so no later milestone stops for security/migration/observability repairs.
+**Completely additive — no M1–M9 file modified.** **Tests: 586 passed** (500 + 86 new), zero regressions. 100% local, privacy-first, no cloud. M10 **passed its own Design Challenge Gate** before implementation (all 8 questions answered, additive).
+
+| Status | File | What it is |
+|---|---|---|
+| NEW | `core/review/design_gate.py` (+`__init__`) | **Part 6** — `DesignGate`/`DesignReview`: the 8 design-challenge questions; `evaluate`/`submit`/persistence; non-additive changes blocked. No milestone begins until its review passes. |
+| NEW | `core/database/migrations/migration_runner.py` (+pkg) | **Part 3** — `MigrationRunner` (DB-agnostic): upgrade/downgrade/status/validate/backup/restore; backup-before-change, transactional per step, **auto-rollback on failure**, irreversible guard. `Migration`/`sql_migration`. Works for memory/knowledge/user_model/mission_control/future DBs. |
+| NEW | `core/security/auth/` (store·tokens·sessions·headers·audit·authenticator) | **Part 2** — auth layer: API-token + session auth (CSPRNG, **hashed at rest**, constant-time verify), origin validation, CSP/CSRF/XSS headers, secure cookies, and an audit trail (ts·actor·action·result·**trace id**). `Authenticator.authenticate()` enforces **no write without auth**. SQLite `data/auth.db`. |
+| NEW | `core/embeddings/registry.py` (+`__init__`) | **Part 5** — embedding abstraction: `EmbeddingRegistry` resolves backends by name (hashing·MiniLM·BGE-Small·Nomic), **no model hardcoded**; `resolve_backend_name` (explicit→env→best-available); lazy load; pluggable. |
+| NEW | `core/retrieval/semantic_search.py` + `metrics.py` (+`__init__`) | **Part 5** — `SemanticSearch`: full local-first cascade (Working Memory→Memory→Knowledge DB→Semantic→Graph→External) with real vector ranking + `RetrievalMetrics` (latency, confidence, embedding quality, **precision@k**). |
+| NEW | `core/agent_runtime/` (runtime·models·tasks) | **Part 4** — `ProcessAgentRuntime`: agents run in **separate OS processes** (spawn), lifecycle metrics (spawn/lifetime/cpu/memory/failure/completion rate), timeout-terminate, crash isolation; in-process fallback for resilience. M11-ready. |
+| NEW | `core/mission_control/` (service·aggregator·resources·events·resilience·ui·server) | **Parts 1 & 7** — the cockpit: `MissionControl` facade; 7-panel aggregator (cognitive/goal/knowledge/agent/resource/security/event) each via `safe_call`; `ResourceMonitor` (CPU/RAM/GPU/disk/db/model); `EventStream`; **single-screen hybrid HUD** (`ui.py`: Three.js 3D galaxy + goal net + 2D overlays, no tabs, offline w/ 2D fallback); **authenticated** Flask `server.py` (security headers, no write without auth). |
+| NEW | `tests/test_design_gate.py` (10) · `test_migrations.py` (11) · `test_security.py` (19) · `test_agent_runtime.py` (9) · `test_semantic_search.py` (13) · `test_mission_control.py` (15) · `test_resilience.py` (9) | **Part 8** — 86 tests incl. real-subprocess agent runs, auth contract (write-requires-auth, foreign-origin-blocked, scope, audit), migration rollback/backup/restore, **cockpit survives every subsystem exploding**, authenticated server routes. |
+| NEW | `docs/M10_MISSION_CONTROL.md` · `M10_SECURITY.md` · `M10_MIGRATIONS.md` · `M10_AGENT_PREP.md` · `M10_REVIEW_SYSTEM.md` | **Part 9** — design docs for each part. |
+| EDIT (additive) | `.gitignore` | Ignore `**/migration_backups/`. |
+
+New runtime data file: `data/auth.db` (auth tokens/sessions/audit; secrets hashed; local-only). All seven packages are **side-effect-free to import** (Flask stays lazy; no server starts, no model loads, no process spawns at import).
+
+**Risks closed (from the architecture review):** unauthenticated local write API → auth layer + origin/CSRF/headers; `schema_version` gate with no runner → migration framework with backup/rollback; GIL-bound thread agents → process runtime; keyword-only knowledge retrieval / hardcoded embedder → embedding abstraction + measured semantic pipeline; "challenge before coding" was a doc → executable Design Gate that M10 itself had to pass.
+
+**Resilience (Part 7):** every Mission Control subsystem read goes through `safe_call`; injecting an exploding provider for *every* subsystem still returns `operational: True` with failures listed in `degraded`. Individual systems degrade; the whole never collapses.
+
+---
+
 ## Verified 3.0 defects closed
 
 | Defect (from `FRIDAY_VERIFIED_STATE.md`) | Closed by |
@@ -380,6 +406,7 @@ data/cognition.db      # Cognitive state (M5); created on first CognitiveStateSt
 data/perception.db     # Perception store (M6); created on first PerceptionStore()
 data/knowledge.db      # Knowledge store/index (M7); created on first KnowledgeStore()
 data/user_model.db     # Personal model (M9); created on first UserModelStore() — local-only
+data/auth.db           # Auth tokens/sessions/audit (M10); secrets hashed; local-only
 ```
 
 Knowledge's true source of truth is the **Obsidian vault** (`FRIDAY_KNOWLEDGE_VAULT`, default `C:\VAULT\friday_knowledge`); `data/knowledge.db` and the vector index are rebuildable from it.
@@ -400,7 +427,7 @@ Knowledge's true source of truth is the **Obsidian vault** (`FRIDAY_KNOWLEDGE_VA
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
-# expected: 500 passed
+# expected: 586 passed
 ```
 
 ---
@@ -638,3 +665,31 @@ All changes are appended to `FRIDAY_4.0_CHANGES.md` and detailed in `docs/M9_PER
 #### Recommended next
 1. **Git is installed** — a repo can now be initialised (`git init` + a `.gitignore` for `data/*.db`, the vault, and `.venv`) to start version-controlling the M1–M9 build before any 3.0 rewiring.
 2. **M10 candidates:** **Mission Control** (render the M9 dashboard widgets + M8 portal + goal board + decision/audit feeds in the HUD); **or** wire `UserContextBuilder` into the real respond pipeline so every answer is personalised end-to-end; **or** an Agent Team that consumes the `UserContextPackage`.
+
+---
+
+## M10 delivery summary (reply, verbatim)
+
+### M10 delivered — Mission Control + Architecture Hardening
+
+FRIDAY now has an **operational cockpit** and the highest-priority architectural risks are **closed before** advanced-intelligence milestones begin. **Completely additive — no M1–M9 file modified.** **Full suite: 586/586 passing** (M1: 20, M2: 27, M3: 44, M4: 33, M5: 74, M6: 71, M7: 88, M8: 50, M9: 73, M10: 86) — zero regressions. 100% local, privacy-first, no cloud. M10 **passed its own Design Challenge Gate** before any code was written.
+
+#### Two milestones in one — 7 new packages
+- **Mission Control** (`core/mission_control/`) — a single-screen **hybrid HUD**: 3D (Three.js/WebGL) knowledge galaxy + goal network + agent-team space + cognitive/world state, with 2D overlays for resources, security, events, and critical alerts. No tabs, nothing hidden. Seven panels assembled by an aggregator, an authenticated localhost Flask server, an offline UI with a 2D-canvas fallback.
+- **Security hardening** (`core/security/auth/`) — session + API-token auth (CSPRNG, **hashed at rest**, constant-time verify), origin validation, CSP/CSRF/XSS headers, secure cookies, and an audited front door enforcing **no write without authentication** — closing the review's unauthenticated-write risk.
+- **Migration framework** (`core/database/migrations/`) — a DB-agnostic `MigrationRunner` (upgrade/downgrade/status/validate/backup/restore) with backup-before-change, per-step transactions, and automatic rollback — closing the "schema_version gate with no runner" risk.
+- **Process agent runtime** (`core/agent_runtime/`) — agents run in **separate OS processes** with full lifecycle metrics and crash/timeout isolation (in-process fallback for resilience) — closing the GIL-bound-threads risk and prepping M11.
+- **Embedding abstraction + retrieval** (`core/embeddings/`, `core/retrieval/`) — no embedding model hardcoded (hashing/MiniLM/BGE/Nomic by name), and a measured semantic pipeline (latency/confidence/precision@k) — closing the keyword-only-retrieval risk.
+- **Design Challenge Gate** (`core/review/`) — the architecture review's §9 discipline turned into an executable gate every future milestone must pass first. M10 was its first subject.
+
+#### Resilience (graceful degradation)
+Every cockpit subsystem read goes through `safe_call`; injecting an exploding provider for *every* subsystem still returns `operational: True` with the failures listed in `degraded`. Memory, knowledge, portal, agent runtime, executive brain, or embeddings may degrade — the cockpit and FRIDAY keep running.
+
+#### Observability & privacy
+New local `data/auth.db` (secrets hashed). All seven packages import side-effect-free (Flask lazy; no server/model/process at import). Security decisions are audited with trace ids; retrieval and agent runtimes expose metrics to the Resource/Knowledge/Agent panels.
+
+All changes are appended to `FRIDAY_4.0_CHANGES.md` and detailed across `docs/M10_MISSION_CONTROL.md`, `M10_SECURITY.md`, `M10_MIGRATIONS.md`, `M10_AGENT_PREP.md`, `M10_REVIEW_SYSTEM.md`.
+
+#### Recommended next
+1. **Checkpoint:** commit + tag `m10-complete` (586 green) per the versioning convention.
+2. **M11 candidates:** **Agent Teams** on the process runtime (leaders spawn sub-agent processes; topology fills the 3D Agent-Team panel); **or** vendor Three.js + wire Mission Control into the desktop HUD; **or** apply the auth layer to the Knowledge Portal's write endpoints; **or** adopt migrations to evolve a store schema (first real v2). Each must pass the Design Challenge Gate first.
