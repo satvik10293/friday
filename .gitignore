@@ -30,6 +30,8 @@ data/local_qa.json
 data/codex_backups/
 data/core_backup_*/
 core/world_data/
+# Migration framework backups (M10) — regenerable snapshots
+**/migration_backups/
 
 # ── Local harness / IDE state (not shared) ───────────────────────────
 .claude/settings.local.json
