@@ -407,6 +407,8 @@ data/perception.db     # Perception store (M6); created on first PerceptionStore
 data/knowledge.db      # Knowledge store/index (M7); created on first KnowledgeStore()
 data/user_model.db     # Personal model (M9); created on first UserModelStore() — local-only
 data/auth.db           # Auth tokens/sessions/audit (M10); secrets hashed; local-only
+data/society.db        # Agent society roster/lifecycle/reputation (M11); local-only
+data/simulation.db     # Simulation metadata (M11); virtual worlds stay in memory
 ```
 
 Knowledge's true source of truth is the **Obsidian vault** (`FRIDAY_KNOWLEDGE_VAULT`, default `C:\VAULT\friday_knowledge`); `data/knowledge.db` and the vector index are rebuildable from it.
@@ -448,7 +450,7 @@ M11 turns FRIDAY into a **distributed, self-simulating** intelligence. A living 
 | NEW | `core/cognitive_space/service.py` | `CognitiveSpace` facade: `build(level, focus)`, `universe()`, `search()`, `zoom_levels()`, `visual_language()`, `health()`. `get_cognitive_space()` singleton. |
 | NEW | `core/cognitive_space/ui.py` | `render_cognitive_ui()` — self-contained offline HTML: Three.js 3D (sphere meshes + edges, orbit/zoom) + 2D-canvas fallback; search → camera focus; sim timeline + controls; inspect panel; legend. |
 | NEW | `core/cognitive_space/server.py` | `CognitiveSpaceServer` — authenticated Flask server (`127.0.0.1:5060`): read API + cognitive UI + sim controls (write → M10 auth required). M10 security headers on every response. |
-| NEW | `tests/test_agent_lifecycle.py` (10) | 8 leaders, worker catalogue, full lifecycle, leader selection by domain+keyword, merged results, workers-cannot-spawn-workers, only-leaders-create-workers, comms-through-passive-brain, direct-message-forbidden, status/health. |
+| NEW | `tests/test_agent_lifecycle.py` (11) | 8 leaders, worker catalogue, full lifecycle, leader selection by domain+keyword, merged results, workers-cannot-spawn-workers, only-leaders-create-workers, comms-through-passive-brain, direct-message-forbidden, status/health. |
 | NEW | `tests/test_agent_reputation.py` (7) | first record, success>failure, speed affects score, success_rate, preferred threshold, top_templates ranked, persistence. |
 | NEW | `tests/test_agent_scheduler.py` (7) | single, parallel (order preserved), empty, unknown-target graceful, failure isolated, metrics collected, real-process dispatch. |
 | NEW | `tests/test_cognitive_space.py` (9) | universe structure, all 6 levels build, visual language on nodes, visual mapping, global search focuses, search across domains, thought chain from sim, resilient to no services, partition present. |
@@ -456,7 +458,7 @@ M11 turns FRIDAY into a **distributed, self-simulating** intelligence. A living 
 | NEW | `tests/test_simulation_sandbox.py` (7) | isolated, rejects production service, rejects db objects, only virtual types, all virtual entities, real services unaffected, bulk spawn. |
 | NEW | `tests/test_virtual_agents.py` (6) | defaults, engine populates, failures marked, generic creates goals/tasks, independent worlds, never-leak-to-production. |
 | NEW | `tests/test_zoom_levels.py` (9) | 6 levels, budgets present, universe budget smallest, apply_budget trims, deterministic place, spreads nodes, partition buckets, accepts dicts, scales to 100k without redesign. |
-| NEW | `docs/M11_AGENT_SOCIETY_SIMULATION.md` | Full design doc. |
+| NEW | `docs/M11_AGENT_SOCIETY.md` · `docs/M11_SIMULATION_ENGINE.md` · `docs/M11_COGNITIVE_SPACE.md` | Three design docs (society · simulation engine · cognitive space). |
 
 New runtime data files: `data/society.db` (agent roster/lifecycle/reputation), `data/simulation.db` (simulation metadata).
 
@@ -484,7 +486,7 @@ New runtime data files: `data/society.db` (agent roster/lifecycle/reputation), `
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
-# expected: 586 passed
+# expected: 651 passed
 ```
 
 ---
@@ -750,3 +752,28 @@ All changes are appended to `FRIDAY_4.0_CHANGES.md` and detailed across `docs/M1
 #### Recommended next
 1. **Checkpoint:** commit + tag `m10-complete` (586 green) per the versioning convention.
 2. **M11 candidates:** **Agent Teams** on the process runtime (leaders spawn sub-agent processes; topology fills the 3D Agent-Team panel); **or** vendor Three.js + wire Mission Control into the desktop HUD; **or** apply the auth layer to the Knowledge Portal's write endpoints; **or** adopt migrations to evolve a store schema (first real v2). Each must pass the Design Challenge Gate first.
+
+---
+
+## M11 delivery summary (reply, verbatim)
+
+### M11 delivered — Distributed Agent Society + Cognitive Simulation + Interactive Cognitive Space
+
+FRIDAY evolves from a single system into a **visible, simulated intelligence ecosystem**. **Completely additive — no M1–M10 file modified.** **Full suite: 651/651 passing** (M1–M10 586, M11 65) — zero regressions. 100% local, privacy-first, no cloud. M11 **passed its own Design Challenge Gate** before implementation.
+
+#### Three new subsystems
+- **Agent Society** (`core/society/`) — the hierarchy Executive → Passive Brain Coordinator → 8 permanent Leaders → disposable Workers. `solve()` runs the full lifecycle: select leader → decompose → spawn workers (in **separate processes** via the M10 runtime) → parallel work → validate → merge → destroy → update reputation. Workers never spawn workers; all communication relays through the Passive Brain (direct agent→agent raises). Worker reputation (accuracy/reliability/speed/efficiency/success-rate) picks preferred templates.
+- **Cognitive Simulation Engine** (`core/simulation/`) — observe→simulate→evaluate→present. 10 simulation types; the agent-society stress test answers "will this scale to 10,000 agents?" by ramping virtual agents, discovering the failure point, optimising, and recommending — all in a **sandbox that refuses any production object** (`SandboxViolation`) so simulations can never touch real DBs/goals/memories/knowledge. Stepwise snapshots enable pause/resume/fast-forward/replay, timeline past/present/predicted-future, fork, and compare.
+- **Interactive Cognitive Space** (`core/cognitive_space/`) — a navigable 3D universe at **6 zoom levels** (Universe→Domain→Team→Agent→Task→Thought Chain), the visual language (knowledge=stars, goals=attractors, agents=entities, tasks=energy, decisions=convergence, simulations=universes), global search with camera focus, and LOD budgets + spatial partitioning that scale toward 100k nodes without redesign. Three.js HUD (vendored, offline, 2D fallback) on an authenticated localhost server.
+
+#### Safety & resilience
+Sandbox isolation is enforced structurally and verified (a real KnowledgeService is exactly unchanged after running simulations). The cognitive universe is `safe_call`-wrapped — with zero services it still renders the FRIDAY core and reports `health: ok`. Agents run as crash-isolated processes.
+
+#### Integration (additive)
+`AgentScheduler` wraps the M10 `ProcessAgentRuntime`; the cognitive space reuses M10 `safe_call`, `Authenticator`, and `security_headers`; the simulation evaluator reuses a society worker function. New local DBs: `data/society.db`, `data/simulation.db`. The "install skills for the UI" ask was met by vendoring `three.module.js` (gitignored, re-downloadable) so both Mission Control and the cognitive universe render in real 3D.
+
+All changes are appended to `FRIDAY_4.0_CHANGES.md` and detailed in `docs/M11_AGENT_SOCIETY.md`, `docs/M11_SIMULATION_ENGINE.md`, `docs/M11_COGNITIVE_SPACE.md`.
+
+#### Recommended next
+1. **Checkpoint:** the milestone is committed and tagged `m11-complete` (651 green).
+2. **M12 candidates:** real leader→sub-agent communication protocols over the process runtime; persist & visualize live simulations in Mission Control; wire the society's `solve()` into the respond pipeline so hard questions are simulated before answered; scenario sandbox UI (Part 7) for user-authored worlds. Each must pass the Design Challenge Gate first.
