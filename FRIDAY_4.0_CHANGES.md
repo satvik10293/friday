@@ -1,4 +1,4 @@
-# FRIDAY 4.0 — Changes (M1 Runtime + Observability, M2 Memory Service, M3 Skills + Security, M4 Goal Engine + Reflection, M5 Executive Brain, M6 Perception & Awareness, M7 Knowledge & Learning Core, M8 Knowledge System + Portal, M9 Personal Model & User Intelligence, M10 Mission Control + Hardening)
+# FRIDAY 4.0 — Changes (M1–M11)
 
 > Strangler-fig migration: **all additive**. No existing 3.0 file was modified.
 > The system still boots. **Test status: 269 passed** (`python -m pytest`).
@@ -413,13 +413,70 @@ Knowledge's true source of truth is the **Obsidian vault** (`FRIDAY_KNOWLEDGE_VA
 
 ---
 
+## M11 — Distributed Agent Society + Cognitive Simulation + Interactive Cognitive Space (3 new packages; 65 new tests)
+
+M11 turns FRIDAY into a **distributed, self-simulating** intelligence. A living agent hierarchy solves problems through coordinated parallel work; a simulation engine stress-tests solutions in a fully isolated sandbox before recommending them; and a navigable 3D cognitive universe lets the user inspect any layer of FRIDAY's mind.
+**Completely additive — no M1–M10 file modified.** **Tests: 651 passed** (586 + 65 new), zero regressions. 100% local, no cloud. All new packages are side-effect-free to import.
+
+| Status | File | What it is |
+|---|---|---|
+| NEW | `core/society/__init__.py` | Side-effect-free exports. |
+| NEW | `core/society/models.py` | `Task`, `SubTask`, `WorkerResult`, `TaskResult`, `Message`, `AgentRecord`, status enums. Pure data. |
+| NEW | `core/society/store.py` | `SocietyStore` — SQLite (`data/society.db`): agent roster, lifecycle, task history, reputation. Per-thread conns + WAL + `schema_version`. |
+| NEW | `core/society/bus.py` | `AgentBus` — every message hops through `passive_brain`; `deliver_direct` between two non-coordinator agents raises `DirectMessageError` (mesh forbidden). |
+| NEW | `core/society/reputation.py` | `ReputationSystem` — EWMA scoring per worker template (accuracy/reliability/speed/efficiency/success_rate → 0..1 composite); preferred templates (≥ threshold). |
+| NEW | `core/society/scheduler.py` | `AgentScheduler` — parallel `ThreadPoolExecutor` dispatch (bounded by `max_parallel`), backed by M10 `ProcessAgentRuntime`. |
+| NEW | `core/society/worker_tasks.py` | Picklable worker functions (math_solve/analyze_dependencies/review_architecture/debug_python/research_summarize/api_research/write_documentation/evaluate_simulation). Pure, cross-process-safe on Windows `spawn`. |
+| NEW | `core/society/workers.py` | `WorkerTemplate` catalogue: 8 templates → worker_tasks functions + domain. |
+| NEW | `core/society/leaders.py` | 8 permanent `LeaderAgent` subclasses (Research/Coding/Planning/Knowledge/Security/Creative/Automation/Simulation). `select_leader` picks by domain → keyword → Research fallback. |
+| NEW | `core/society/coordinator.py` | `PassiveBrainCoordinator` — full lifecycle: decompose → spawn → parallel → validate → merge → destroy → reputation update. Single relay for all communication. |
+| NEW | `core/society/society.py` | `AgentSociety` facade: `solve(description)` runs the full hierarchy. Executive gate (prioritize/approve). `get_society()` singleton. |
+| NEW | `core/simulation/__init__.py` | Side-effect-free exports. |
+| NEW | `core/simulation/models.py` | `Simulation`, `Scenario`, `SimStep`, `SimResult`, `Recommendation`, `SimulationType` (10), `SimStatus`, `VirtualAgent/Goal/Knowledge/Task`. Pure data. |
+| NEW | `core/simulation/sandbox.py` | `SimulationSandbox` — isolated in-memory virtual world. Production-like objects (conn/store/remember/etc.) raise `SandboxViolation`. `assert_isolated()` on every run. |
+| NEW | `core/simulation/scenario.py` | `ScenarioBuilder` — `from_problem` keyword-maps free text to a `SimulationType`; `build` for explicit scenarios. |
+| NEW | `core/simulation/engine.py` | `SimulationEngine` — agent-society stress test (analytic failure model; LOD: ≤ 2000 virtual agents materialised regardless of target count) + generic improvement-curve; snapshots every step. |
+| NEW | `core/simulation/director.py` | `SimulationDirector` — `direct(problem)` = one-shot observe→simulate→evaluate→recommend pipeline. |
+| NEW | `core/simulation/controls.py` | `SimulationControls` — pause/resume/fast-forward/rewind/goto/replay over recorded steps. |
+| NEW | `core/simulation/timeline.py` | `Timeline` — past/present/predicted-future; linear extrapolation of metric trends for the timeline's "future" band. |
+| NEW | `core/simulation/service.py` | `SimulationService` — create/run/simulate/fork/compare; persists metadata to `data/simulation.db`; virtual worlds stay in memory. `get_simulation_service()` singleton. |
+| NEW | `core/cognitive_space/__init__.py` | Side-effect-free exports. |
+| NEW | `core/cognitive_space/models.py` | `SpaceNode`, `SpaceEdge`, `ZoomLevel` (1–6), `VisualKind`, `VISUAL_LANGUAGE`. Pure data. |
+| NEW | `core/cognitive_space/zoom.py` | `LEVEL_BUDGETS`, `apply_budget`, `place` (Fibonacci-sphere deterministic layout), `partition` (cells³ spatial grid for frustum culling). Scales to 100k nodes without redesign. |
+| NEW | `core/cognitive_space/space.py` | `CognitiveSpaceBuilder` — one builder per zoom level; resilient via `safe_call`. |
+| NEW | `core/cognitive_space/search.py` | `GlobalSearch` — knowledge / goals / projects / agents / simulations / models; each hit carries `focus` (level + node_id) for camera fly-to. |
+| NEW | `core/cognitive_space/service.py` | `CognitiveSpace` facade: `build(level, focus)`, `universe()`, `search()`, `zoom_levels()`, `visual_language()`, `health()`. `get_cognitive_space()` singleton. |
+| NEW | `core/cognitive_space/ui.py` | `render_cognitive_ui()` — self-contained offline HTML: Three.js 3D (sphere meshes + edges, orbit/zoom) + 2D-canvas fallback; search → camera focus; sim timeline + controls; inspect panel; legend. |
+| NEW | `core/cognitive_space/server.py` | `CognitiveSpaceServer` — authenticated Flask server (`127.0.0.1:5060`): read API + cognitive UI + sim controls (write → M10 auth required). M10 security headers on every response. |
+| NEW | `tests/test_agent_lifecycle.py` (10) | 8 leaders, worker catalogue, full lifecycle, leader selection by domain+keyword, merged results, workers-cannot-spawn-workers, only-leaders-create-workers, comms-through-passive-brain, direct-message-forbidden, status/health. |
+| NEW | `tests/test_agent_reputation.py` (7) | first record, success>failure, speed affects score, success_rate, preferred threshold, top_templates ranked, persistence. |
+| NEW | `tests/test_agent_scheduler.py` (7) | single, parallel (order preserved), empty, unknown-target graceful, failure isolated, metrics collected, real-process dispatch. |
+| NEW | `tests/test_cognitive_space.py` (9) | universe structure, all 6 levels build, visual language on nodes, visual mapping, global search focuses, search across domains, thought chain from sim, resilient to no services, partition present. |
+| NEW | `tests/test_simulation_engine.py` (9) | 10 types, agent-society scale, generic sim, create-then-run, controls playback, timeline past/present/future, fork, compare, persistence/health. |
+| NEW | `tests/test_simulation_sandbox.py` (7) | isolated, rejects production service, rejects db objects, only virtual types, all virtual entities, real services unaffected, bulk spawn. |
+| NEW | `tests/test_virtual_agents.py` (6) | defaults, engine populates, failures marked, generic creates goals/tasks, independent worlds, never-leak-to-production. |
+| NEW | `tests/test_zoom_levels.py` (9) | 6 levels, budgets present, universe budget smallest, apply_budget trims, deterministic place, spreads nodes, partition buckets, accepts dicts, scales to 100k without redesign. |
+| NEW | `docs/M11_AGENT_SOCIETY_SIMULATION.md` | Full design doc. |
+
+New runtime data files: `data/society.db` (agent roster/lifecycle/reputation), `data/simulation.db` (simulation metadata).
+
+**Integration (additive):** `AgentScheduler` wraps M10 `ProcessAgentRuntime`; `CognitiveSpaceBuilder` + `GlobalSearch` use M10 `safe_call`; `CognitiveSpaceServer` reuses M10 `Authenticator` + `security_headers`; simulation `evaluate_simulation` reuses the existing worker function from `society.worker_tasks`. No M1–M10 file touched.
+
+**Invariants enforced:**
+- Workers never spawn workers — `worker_tasks` imports no coordinator/scheduler (structurally impossible).
+- All inter-agent messages relay through `passive_brain` — `AgentBus` raises `DirectMessageError` for agent→agent direct sends.
+- Simulations never touch production state — `SimulationSandbox` rejects any object with production markers; `assert_isolated()` validates at runtime.
+- Cognitive universe degrades gracefully — every subsystem access is `safe_call`-wrapped; `CognitiveSpace()` with zero services still renders the FRIDAY core node and returns `health: ok`.
+
+---
+
 ## Not yet done (next milestones)
 
-- **Install Git** before the rewiring step (it edits live code: `friday_neural` → Memory Service, retire dead bus + chronicle).
 - **Migrate `FridayAction` (30+ commands) → permissioned Skills** and route the brain through `SkillExecutor`.
-- **Mission Control** — surface `ApprovalManager.list_pending()` + audit/security/decision feeds (its own milestone).
 - **Rewiring**: wire Runtime + Observability + Memory + Skills into `friday_spine` and `friday_face`; retire the dead bus and chronicle.
 - **Sandbox hardening**: resource limits + process/container isolation for CRITICAL skills.
+- **Agent Society → Mission Control panel**: fill the 3D Agent-Team panel with live society topology.
+- **Simulation → respond pipeline**: FRIDAY simulates hard questions before answering them.
 
 ---
 
