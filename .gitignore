@@ -32,6 +32,9 @@ data/core_backup_*/
 core/world_data/
 # Migration framework backups (M10) — regenerable snapshots
 **/migration_backups/
+# Vendored JS libs (M10/M11 UI) — re-download to vendor, never bloat Git
+**/static/three.module.js
+**/static/vendor/
 
 # ── Local harness / IDE state (not shared) ───────────────────────────
 .claude/settings.local.json
