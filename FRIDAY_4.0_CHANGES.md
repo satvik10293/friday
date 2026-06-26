@@ -1,4 +1,4 @@
-# FRIDAY 4.0 — Changes (M1–M11)
+# FRIDAY 4.0 — Changes (M1–M12)
 
 > Strangler-fig migration: **all additive**. No existing 3.0 file was modified.
 > The system still boots. **Test status: 269 passed** (`python -m pytest`).
@@ -409,6 +409,7 @@ data/user_model.db     # Personal model (M9); created on first UserModelStore() 
 data/auth.db           # Auth tokens/sessions/audit (M10); secrets hashed; local-only
 data/society.db        # Agent society roster/lifecycle/reputation (M11); local-only
 data/simulation.db     # Simulation metadata (M11); virtual worlds stay in memory
+data/intelligence.db   # IOS reasoning traces / model snapshots / benchmarks (M12); local-only
 ```
 
 Knowledge's true source of truth is the **Obsidian vault** (`FRIDAY_KNOWLEDGE_VAULT`, default `C:\VAULT\friday_knowledge`); `data/knowledge.db` and the vector index are rebuildable from it.
@@ -472,6 +473,44 @@ New runtime data files: `data/society.db` (agent roster/lifecycle/reputation), `
 
 ---
 
+## M12 — Intelligence Operating System (1 new package, 18 modules; 102 new tests)
+
+M12 gives the agent society a **true local brain**: a model-agnostic Intelligence OS that routes every request to a *team* of collaborating local models. FRIDAY never depends on external AI for primary intelligence — cloud models are opt-in plugins behind the same protocol.
+**Completely additive — no M1–M11 file modified.** **Tests: 753 passed** (651 + 102 new), zero regressions. 100% local-first; no flask/torch/transformers loaded at import. M12 **passed its own Design Challenge Gate** before implementation.
+
+| Status | File | What it is |
+|---|---|---|
+| NEW | `core/intelligence/base.py` | `TaskType` (16), `Model` protocol, `BaseModel` (timed + error-isolated `infer`), `ModelInfo`, `InferenceRequest/Result`, `Complexity`, `ModelStatus`. Pure typed foundations. |
+| NEW | `core/intelligence/builtin_models.py` | The always-available local team (reasoner/research/planner/coder/math/memory) — deterministic, dependency-free; reuses M11 `worker_tasks`. The CPU-only fallback. |
+| NEW | `core/intelligence/plugins/flan_t5.py` (+`__init__`) | Optional lazy flan-t5 plugin (loads only if transformers present). Cloud/heavy models slot in behind the same protocol; never auto-loaded. |
+| NEW | `core/intelligence/registry.py` | Runtime model roster (Part 2): register by capability, hot load/unload, EWMA live stats, persisted snapshot. |
+| NEW | `core/intelligence/model_loader.py` · `model_manager.py` | Hot loading + lifecycle (Parts 2/3/12): bootstrap team + optional plugins, memory accounting, restart unhealthy. |
+| NEW | `core/intelligence/router.py` | **The heart** (Parts 1/3): classify task+complexity → choose strategy + primary/backup models → route → `RouterResponse`. Sub-second. |
+| NEW | `core/intelligence/reasoning_engine.py` | All strategies (Part 5): chain/tree-of-thought, consensus, debate, self-correction, parallel, recursive, and **collaborate** (research→plan→worker→critic→executive). |
+| NEW | `core/intelligence/critic.py` | Logic/hallucination/conflict/missing/weak/overconfidence review → suggestions + confidence delta (Part 6). |
+| NEW | `core/intelligence/confidence_engine.py` | 0–100% from knowledge·memory·agreement·past-accuracy·depth·simulation (Part 8). |
+| NEW | `core/intelligence/context_builder.py` | Gather memories/knowledge/goals/projects/prefs/agents/sims → compress to budget → **primitives only** (Parts 4 & 18). |
+| NEW | `core/intelligence/planner.py` | Goal → executable plan; break/estimate/dispatch to the M11 society/monitor (Part 7). |
+| NEW | `core/intelligence/trace_manager.py` | Record every reasoning session, searchable (Part 11). |
+| NEW | `core/intelligence/execution_manager.py` | Single-model run with cache+health+stats; task-level execute with **backup fallback** (Parts 3/12/14). |
+| NEW | `core/intelligence/health_monitor.py` | Per-model latency/failures + system CPU/RAM/GPU/temp; declare unhealthy → restart (Part 12). |
+| NEW | `core/intelligence/benchmark.py` | Deterministic suites → score → rank models (Part 13). |
+| NEW | `core/intelligence/cache.py` | Bounded thread-safe LRU + hit/miss stats (Part 14). |
+| NEW | `core/intelligence/optimizer.py` | Find bottlenecks; auto-tune internal resources; **production changes require approval** (Parts 15/17). |
+| NEW | `core/intelligence/reflection_engine.py` · `learning_engine.py` | Reflect→lesson and experience→knowledge, both via the **secure** M7 API (Parts 9/10). |
+| NEW | `core/intelligence/store.py` | SQLite (`data/intelligence.db`): traces + model snapshots + benchmarks. Per-thread + WAL + schema_version. |
+| NEW | `core/intelligence/service.py` · `dashboard.py` · `__init__.py` | `IntelligenceOS` facade (`think`/`think_async`/`plan`/`benchmark_all`/`optimize`/`dashboard`), Mission-Control panel data, exports. `get_intelligence_os()` singleton. |
+| NEW | `tests/test_intelligence_router.py` (11) · `test_intelligence_registry.py` (9) · `test_reasoning_engine.py` (10) · `test_confidence_critic.py` (10) · `test_context_builder.py` (6) · `test_intelligence_models.py` (13) · `test_trace_execution.py` (7) · `test_health_benchmark.py` (10) · `test_cache_optimizer.py` (11) · `test_intelligence_os.py` (15) | 102 tests incl. **security boundary** (models hold no services; context primitives-only) + **concurrency stress** (40 concurrent `think` + 50 parallel reasoning). |
+| NEW | `docs/M12_INTELLIGENCE_OS.md` | Architecture, sequence, module map, model lifecycle, security boundary, examples, extension + developer guide. |
+
+New runtime data file: `data/intelligence.db` (traces/model-snapshots/benchmarks; local-only).
+
+**Integration (additive):** `ContextBuilder` reuses M2 memory/M7 knowledge/M4 goals/M9 user-model/M11 society+simulation + M10 `safe_call`; `IntelligencePlanner` dispatches to the M11 society; reflection/learning write through the **secure** M7 knowledge API; builtin models reuse M11 `worker_tasks`. No M1–M11 file touched.
+
+**Invariants enforced:** local-first (builtin team always available; no external AI required/loaded); models receive only a primitives context (no store/service refs) and cannot modify memory/goals/knowledge or read secrets; backup-model retry on failure; unhealthy models auto-restart; the optimizer never modifies production without approval.
+
+---
+
 ## Not yet done (next milestones)
 
 - **Migrate `FridayAction` (30+ commands) → permissioned Skills** and route the brain through `SkillExecutor`.
@@ -486,7 +525,7 @@ New runtime data files: `data/society.db` (agent roster/lifecycle/reputation), `
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
-# expected: 651 passed
+# expected: 753 passed
 ```
 
 ---
@@ -777,3 +816,32 @@ All changes are appended to `FRIDAY_4.0_CHANGES.md` and detailed in `docs/M11_AG
 #### Recommended next
 1. **Checkpoint:** the milestone is committed and tagged `m11-complete` (651 green).
 2. **M12 candidates:** real leader→sub-agent communication protocols over the process runtime; persist & visualize live simulations in Mission Control; wire the society's `solve()` into the respond pipeline so hard questions are simulated before answered; scenario sandbox UI (Part 7) for user-authored worlds. Each must pass the Design Challenge Gate first.
+
+---
+
+## M12 delivery summary (reply, verbatim)
+
+### M12 delivered — Intelligence Operating System
+
+FRIDAY now has a **permanent, local-first intelligence backbone**: a model-agnostic OS that routes every request to a *team* of collaborating local models. **Completely additive — no M1–M11 file modified.** **Full suite: 753/753 passing** (M1–M11 651, M12 102) — zero regressions. 100% local; no OpenAI/Claude/Gemini, no torch/transformers required or loaded. M12 **passed its own Design Challenge Gate** before implementation.
+
+#### One new package, 18 modules (`core/intelligence/`)
+- **Router** (the heart) — classifies task + complexity, picks a strategy + primary/backup models, routes sub-second, returns a structured response.
+- **Model team** — an always-available builtin local team (reasoner/research/planner/coder/math/memory), deterministic and dependency-free, behind a `Model` **plugin protocol**; heavier models (flan-t5) and cloud plugins slot in the same way (opt-in, never auto-loaded).
+- **Reasoning engine** — chain/tree-of-thought, consensus, debate, self-correction, parallel, recursive, and the **collaborate** pipeline (research→planning→worker→critic→executive); no single model dominates.
+- **Critic + Confidence** — every important answer reviewed; 0–100% confidence from knowledge/memory/agreement/past-accuracy/depth/simulation.
+- **Context builder** — gathers memories/knowledge/goals/projects/prefs/agents/sims and compresses to a token budget, emitting **primitives only**.
+- **Traces, reflection, learning** — every reasoning session is recorded and searchable; lessons and experience become permanent knowledge through the **secure** M7 API.
+- **Execution/health/benchmark/cache/optimizer** — backup-model fallback, unhealthy-model restart, deterministic benchmarks + ranking, LRU cache, and a self-improvement optimizer that auto-tunes only internal resources (production changes require approval).
+
+#### Security & local-first (verified)
+Models receive only a read-only primitives context — never store/service references — so they can't modify memory/goals/knowledge, execute commands, or read secrets; state changes flow through secure APIs. The builtin team guarantees the OS works with zero external dependencies (CPU-only fallback), and no external AI library is loaded.
+
+#### Performance
+Sub-second routing; async `think_async` + parallel reasoning stress-tested at 40 concurrent + 50 parallel; lazy model loading; new local `data/intelligence.db`.
+
+All changes are appended to `FRIDAY_4.0_CHANGES.md` and detailed in `docs/M12_INTELLIGENCE_OS.md`.
+
+#### Recommended next
+1. **Checkpoint:** the milestone is committed and tagged `m12-complete` (753 green).
+2. **M13 candidates:** mount `ios.dashboard()` as the Mission Control intelligence panel (live routing/models/traces/confidence); wire `IntelligenceOS.think()` into the respond pipeline as FRIDAY's primary answer path (cloud only as optional plugin); register a real local LLM plugin; or vision/speech model plugins for M18+. Each must pass the Design Challenge Gate first.
