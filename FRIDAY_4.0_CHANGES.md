@@ -1,4 +1,4 @@
-# FRIDAY 4.0 — Changes (M1–M12.1)
+# FRIDAY 4.0 — Changes (M1–M13)
 
 > Strangler-fig migration: **all additive**. No existing 3.0 file was modified.
 > The system still boots. **Test status: 269 passed** (`python -m pytest`).
@@ -544,6 +544,24 @@ The listening loop becomes a continuously running, event-driven **auditory perce
 
 ---
 
+## M13 — Persistent Entity & Belief Foundation (FRIDAY 6.0; 1 new package; 60 tests)
+
+First milestone of the FRIDAY 6.0 Cognitive-OS charter. **Completely additive** — no M1–M12.1 code modified (World Model *extended* via a v2 migration, not redesigned). **883 passed** (823 + 60). Side-effect-free imports. Authoritative architecture record is structured data: `core/cognition_core/architecture.json` (per the compact-docs directive — no large markdown).
+
+New package `core/cognition_core/`:
+- **Entity Resolver** (`entity_resolver.py`) — pipeline exact → alias → normalization → similarity → create; learns aliases so identity persists independently of names.
+- **Persistent Entity Registry** (`entity_registry.py`) — **opaque stable ids** (`ENT_000001`, never typed counters); labels are metadata; `merge()` folds duplicates and re-points beliefs.
+- **Belief System** (`belief_system.py`) — first-class *evolving* beliefs `{subject, predicate, value, confidence, supporting/contradicting evidence, source, timestamp, last_verification, status}`; reinforce / revise / retract / verify; conflicts resolved by confidence + recency.
+- **Self Model** (`self_model.py`) — live aggregation of active goals/tasks/plan/sensors/agents/compute/workload/confidence/limitations from injected subsystems; degrades gracefully.
+- **Persistence behind interfaces** (`interfaces.py`, `repositories.py`) — `EntityRepository`/`BeliefRepository` Protocols with SQLite (`data/cognition.db`) **and** in-memory backends; cognition never imports sqlite.
+- **World integration** (`world_integration.py`) — `ResolvingWorldFeed(WorldFeed)` resolves a stable id before the M5 `WorldModel.observe` (M6 untouched); `EntityLinker` for any subsystem.
+- **Migration** (`migration.py`) — world.db **v2** adds an additive `entities.stable_id` column via the M10 `MigrationRunner` (backup + rollback-safe); M5 code unchanged.
+- **Observability** — `metrics.py` (resolution/by-method/duplicate-rate/belief counts/latency), `events.py` (`entity.*`/`belief.*` bus keys), `benchmark.py` (resolution accuracy ≥0.95, duplicate rate ≤0.05, ~60k resolves/s, belief updates <0.05 ms), `service.dashboard()` for Mission Control, `service.manifest()`.
+
+Tests (60): `test_entity_resolver` · `test_entity_registry` (mem+sqlite) · `test_belief_system` · `test_self_model` · `test_world_migration` (upgrade/validate/rollback) · `test_cognition_core` (integration + world feed + events + benchmark). Two graphs preserved (entity vs concept) — knowledge graph untouched. Prediction / scientific reasoning / research deliberately **not** built (later milestones).
+
+---
+
 ## Not yet done (next milestones)
 
 - **Migrate `FridayAction` (30+ commands) → permissioned Skills** and route the brain through `SkillExecutor`.
@@ -558,7 +576,7 @@ The listening loop becomes a continuously running, event-driven **auditory perce
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
-# expected: 823 passed
+# expected: 883 passed
 ```
 
 ---
