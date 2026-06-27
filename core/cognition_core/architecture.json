@@ -1,0 +1,55 @@
+{
+  "subsystem": "cognition_core",
+  "milestone": "M13",
+  "title": "Persistent Entity & Belief Foundation",
+  "summary": "Permanent name-independent entity identity, first-class evolving beliefs, and a live self model. The substrate the rest of the cognitive OS references.",
+  "frozen_decisions": [4, 5, 6, 9, 10],
+  "inputs": [
+    {"name": "observation", "shape": "(kind, name, attributes?, confidence?)", "via": "EntityResolver.resolve / ResolvingWorldFeed.observe"},
+    {"name": "belief_assertion", "shape": "(subject, predicate, value, confidence, source, evidence?)", "via": "CognitionCore.assert_belief"},
+    {"name": "self_providers", "shape": "goal_service, sensor_registry, society, resource_monitor, cognitive_state, intelligence", "via": "constructor injection"}
+  ],
+  "outputs": [
+    {"name": "ResolveResult", "fields": ["stable_id", "created", "method", "score", "entity"]},
+    {"name": "Entity", "id": "ENT_000001 (opaque, permanent)", "fields": ["stable_id", "kind", "primary_label", "labels", "attributes", "confidence", "merged_from"]},
+    {"name": "Belief", "fields": ["subject", "predicate", "value", "confidence", "supporting_evidence", "contradicting_evidence", "source", "timestamp", "last_verification", "status"]},
+    {"name": "SelfModelSnapshot", "fields": ["active_goals", "current_task", "current_plan", "sensors", "active_agents", "compute", "workload", "confidence", "limitations"]}
+  ],
+  "dependencies": {
+    "required": ["core.database.migrations (world v2 migration)"],
+    "reused_additively": ["core.perception.world_feed (subclassed)", "core.world.world_model (extended via migration, code untouched)"],
+    "injected_optional": ["core.goals", "core.sensors", "core.society", "core.mission_control.ResourceMonitor", "core.executive.state", "core.intelligence"]
+  },
+  "events": ["entity.created", "entity.resolved", "entity.merged", "belief.asserted", "belief.revised", "belief.retracted", "belief.conflict"],
+  "metrics": ["resolutions", "entities_created", "entities_merged", "duplicate_collisions", "duplicate_rate", "by_method", "beliefs_asserted", "beliefs_revised", "beliefs_retracted", "belief_conflicts", "avg_belief_update_ms"],
+  "configuration": {
+    "similarity_threshold": 0.82,
+    "entity_db": "data/cognition.db (default; injectable repository)",
+    "belief_db": "data/cognition.db (default; injectable repository)",
+    "world_db_migration": "v2 adds entities.stable_id (additive, rollback-safe)"
+  },
+  "persistence": {
+    "abstraction": "EntityRepository / BeliefRepository protocols",
+    "backends": ["SqliteEntityRepository", "SqliteBeliefRepository", "InMemoryEntityRepository", "InMemoryBeliefRepository"],
+    "rule": "cognition logic never imports sqlite; storage is injected"
+  },
+  "public_api": [
+    "resolve(kind, name, attributes?, confidence?) -> ResolveResult",
+    "get_entity(stable_id) / entities() / entities_by_kind(kind)",
+    "merge(keep_id, drop_id) -> Entity",
+    "assert_belief(subject, predicate, value, confidence?, source?, evidence?) -> Belief",
+    "beliefs_about(subject) / query_beliefs(...) / revise_belief / retract_belief / verify_belief",
+    "self_snapshot() -> SelfModelSnapshot",
+    "resolving_world_feed(world_model) -> ResolvingWorldFeed",
+    "linker() -> EntityLinker",
+    "dashboard() / health() / metrics_snapshot() / manifest() / attach(runtime)"
+  ],
+  "invariants": [
+    "entity identity is permanent (stable_id never changes; names are metadata)",
+    "observations never bypass entity resolution",
+    "world model remains source of truth; entities reference stable ids",
+    "beliefs are evolving, never immutable; every change records evidence + confidence",
+    "cognition is not coupled to SQLite (repository interfaces)",
+    "no global mutable state; no side effects at import"
+  ]
+}
