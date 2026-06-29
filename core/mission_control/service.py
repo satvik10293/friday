@@ -22,7 +22,7 @@ log = logging.getLogger("friday.mission_control.service")
 class MissionControl:
     def __init__(self, *, executive=None, goal_service=None, knowledge_service=None,
                  user_model=None, agent_runtime=None, authenticator=None,
-                 model_registry=None, runtime=None) -> None:
+                 model_registry=None, runtime=None, vision=None) -> None:
         self.events = EventStream()
         self.resources = ResourceMonitor(model_registry=model_registry)
         if authenticator is None:
@@ -33,7 +33,7 @@ class MissionControl:
             executive=executive, goal_service=goal_service,
             knowledge_service=knowledge_service, user_model=user_model,
             agent_runtime=agent_runtime, authenticator=authenticator,
-            resources=self.resources, events=self.events)
+            resources=self.resources, events=self.events, vision=vision)
         self._runtime = runtime
 
     # ── cockpit data ────────────────────────────────────────────────────────────
