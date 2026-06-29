@@ -13,6 +13,10 @@ from __future__ import annotations
 from .listener.events import AudioEvent, AudioEventBus, Event
 from .listener.pipeline import ListeningPipeline, ListeningState
 from .listener.service import ListeningService, get_listening_service
+# M15 — Auditory Cognition (environmental sound understanding, additive to M12.1)
+from .cognition.service import AuditoryCognition, get_auditory_cognition
+from .cognition.config import AudioCognitionConfig
 
 __all__ = ["ListeningService", "get_listening_service", "ListeningPipeline",
-           "ListeningState", "AudioEvent", "AudioEventBus", "Event"]
+           "ListeningState", "AudioEvent", "AudioEventBus", "Event",
+           "AuditoryCognition", "get_auditory_cognition", "AudioCognitionConfig"]
