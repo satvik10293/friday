@@ -1,0 +1,51 @@
+{
+  "subsystem": "vision_transport",
+  "milestone": "M14",
+  "part": "1 of N (Vision Transport Layer)",
+  "title": "Vision Transport Layer",
+  "summary": "Moves camera frames from physical cameras into the Cognitive OS as rich Frame objects, routed only through the Camera Manager. Transport only: no reasoning, no observations, no World Model writes.",
+  "responsibility": "Transport image frames from cameras into the COS. Nothing more.",
+  "must_never": ["reason", "update world model", "create entities", "plan", "create memories", "predict", "simulate"],
+  "pipeline_position": "Reality -> Camera -> [Vision Transport Layer] -> Frame Objects -> (Vision Processing -> Observation Builder -> ...) [later parts]",
+  "inputs": [
+    {"name": "browser_frame", "via": "SocketIO 'frame' (base64 JPEG data-URL, optional capture_time)"},
+    {"name": "pull_capture", "via": "CameraAdapter.read() (webcam/RTSP/array)"},
+    {"name": "raw_payload", "via": "CameraManager.submit_raw(camera_id, payload)"}
+  ],
+  "outputs": [
+    {"name": "Frame", "fields": ["frame_id", "camera_id", "frame_number", "width", "height", "pixel_format", "compression", "timestamps", "latency_ms", "checksum", "flags", "health", "ai_metadata(reserved)", "embedding(reserved)", "observation_ref(reserved)"], "consumed_by": "next stage via CameraManager.consume(camera_id)"},
+    {"name": "CameraInfo", "id": "CAMERA_0001 (opaque, permanent, key-stable)"}
+  ],
+  "components": {
+    "Frame": "rich frame object (replaces raw numpy arrays)",
+    "CameraManager": "single access point: register/remove/lookup/ingest/health/lifecycle/events",
+    "CameraAdapter": "pull (webcam/RTSP/array) or PushAdapter (browser/ESP32) - add a camera = add an adapter",
+    "FrameQueue": "thread-safe bounded queue, overflow policy (drop_oldest|drop_newest|block), back-pressure, metrics",
+    "FrameDecoder": "cv2 -> Pillow -> none; runs off the socket thread",
+    "CameraHealth": "fps/latency/bandwidth/dropped/queue-depth/quality/health-score + status transitions",
+    "CameraRegistry": "permanent key->id mapping (in-memory or SQLite data/vision.db)",
+    "VisionTransportServer": "productionized Flask+SocketIO ingress (lazy import; legacy 'frame' protocol preserved)"
+  },
+  "threading": ["socket server (Flask/SocketIO)", "per-camera worker (decode+ingest)", "heartbeat monitor (health/recovery)", "metrics (rolling)"],
+  "camera_support": ["browser (Android/iPhone/laptop)", "usb_webcam", "laptop_webcam", "network", "rtsp", "esp32", "robot", "drone", "wearable", "array(test)", "future via new adapter"],
+  "events": ["vision.camera.registered", "vision.camera.connected", "vision.camera.streaming", "vision.camera.degraded", "vision.camera.recovered", "vision.camera.disconnected", "vision.camera.removed", "vision.frame.dropped", "vision.frame.corrupt", "vision.transport.warning", "vision.transport.error"],
+  "metrics": ["frames_received", "frames_dropped", "frames_corrupt", "decode_failures", "reconnects", "bytes_total", "drop_rate", "total_fps", "per-camera fps/latency/bandwidth/queue-depth/health-score"],
+  "failure_recovery": ["browser refresh", "phone sleep", "wifi interruption", "temporary disconnect", "frame corruption", "socket reconnect", "camera replacement/removal", "server restart (persistent registry)"],
+  "configuration": {"queue_size": 2, "target_fps": 10.0, "overflow": "drop_oldest", "registry": "in-memory (persistent=True -> data/vision.db)", "ngrok": "optional/lazy", "deps": "core: numpy; optional: cv2/Pillow (decode), flask+flask-socketio (server), pyngrok (tunnel)"},
+  "public_api": [
+    "connect_browser(token, label) / add_webcam(source) / add_rtsp(url) / add_array_camera(key, frames) / register(adapter)",
+    "submit_raw(camera_id, payload) / pump(camera_id) / consume(camera_id) / latest(camera_id)",
+    "cameras() / dashboard() / health() / metrics() / manifest() / attach(runtime) / start() / stop()",
+    "server(host, port, use_ngrok) -> VisionTransportServer"
+  ],
+  "invariants": [
+    "no subsystem accesses transport sockets directly (only the Camera Manager)",
+    "downstream consumes Frame objects, never raw arrays",
+    "cameras referenced only by permanent CAMERA_id (never ip/socket/session)",
+    "transport performs zero cognition (cannot corrupt the World Model)",
+    "decode runs off the socket thread; no expensive AI on transport threads",
+    "the Cognitive Core never crashes due to transport failure (decoupled + event-driven)",
+    "existing Flask+SocketIO receiver preserved (legacy 'frame' protocol still works)",
+    "no side effects at import"
+  ]
+}

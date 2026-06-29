@@ -1,0 +1,75 @@
+{
+  "subsystem": "vision",
+  "milestone": "M14",
+  "title": "Vision System — Visual Perception",
+  "summary": "Turns every camera frame into a structured Observation that improves the World Model. Transport moves frames; a modular processing pipeline perceives; the Observation Builder standardizes; the Cognitive Bridge routes observations through Attention -> Perception -> Entity Resolver -> World Model (never bypassing it); the Scene Graph and Visual Memory retain what was seen. Vision is a perception subsystem only — it performs no reasoning.",
+  "purpose": "visual perception, not computer vision",
+  "pipeline": "Reality -> Camera -> Vision Transport -> Camera Manager -> Frame -> Processing Pipeline -> Observation Builder -> Attention -> Entity Resolver -> Persistent Entity IDs -> World Model -> Knowledge Graph -> Memory -> Reasoning -> Executive -> Planner -> Prediction -> Simulation -> Action -> Reality",
+  "must_never": ["reason", "plan", "predict", "simulate", "write the World Model directly from a processor", "block transport/socket threads with AI work", "crash the Cognitive Core on a vision failure"],
+  "stages": {
+    "transport": {"package": "core.vision.transport", "role": "move frames into the COS as Frame objects via the Camera Manager (M14 part 1; productionized Flask+SocketIO+OpenCV)"},
+    "processing": {"package": "core.vision.processing", "role": "modular processor plugins: scene_stats, motion, segmentation, tracking (always-available); objects, face, face_recognition, ocr, pose (opt-in, graceful)"},
+    "observation": {"package": "core.vision.observation", "role": "convert processing results into core.perception.Observation objects (the only place vision builds observations)"},
+    "integration": {"package": "core.vision.integration", "role": "Cognitive Bridge: Observation -> Attention -> Perception(ResolvingWorldFeed) -> Entity Resolver -> World Model; link scene objects to stable ids; emit visual events"},
+    "scene": {"package": "core.vision.scene", "role": "live per-camera Scene Graph: persistent objects, spatial relationships, camera/world positions, room hooks"},
+    "memory": {"package": "core.vision.memory", "role": "Visual Memory: significant observations, visual events, object histories, scene changes (SQLite)"},
+    "service": {"module": "core.vision.service", "role": "VisionSystem facade composing all stages; processing runs on its own thread"},
+    "mission_control": {"module": "core.vision.mission_control", "role": "cockpit vision panel + on-demand live preview"}
+  },
+  "inputs": [
+    {"name": "browser_frame", "via": "SocketIO 'frame' -> CameraManager.submit_raw"},
+    {"name": "pull_capture", "via": "CameraAdapter.read() (webcam/RTSP/array)"},
+    {"name": "Frame", "via": "VisionTransport.consume(camera_id)"}
+  ],
+  "outputs": [
+    {"name": "Observation", "type": "core.perception.Observation(type=VISION)", "fields": ["source", "entity_candidates", "confidence", "timestamp", "spatial", "visual_evidence", "processing"]},
+    {"name": "SceneObject", "id": "tracker track id linked to permanent ENT_ stable id"},
+    {"name": "VisualMemory records", "kinds": ["observations", "events", "object_history", "scene_changes"]}
+  ],
+  "dependencies": {
+    "required": ["numpy", "core.vision.transport", "core.perception.models"],
+    "reused_additively": ["core.perception.manager (ingest)", "core.cognition_core (resolve/linker/resolving_world_feed)", "core.world.world_model (observe)", "core.attention (rank_observations)", "core.runtime (events/health)"],
+    "optional_backends": ["cv2 (motion CC, face Haar, decode, dnn)", "easyocr (ocr)", "mediapipe (pose)", "ultralytics|onnx via cv2.dnn (object detection, model-gated)"]
+  },
+  "processors": [
+    {"name": "scene_stats", "kind": "scene", "available": "always", "out": "brightness/contrast/sharpness/dominant colour/signature"},
+    {"name": "motion", "kind": "motion", "available": "always", "out": "motion flag/score + moving-region proposals"},
+    {"name": "segmentation", "kind": "segmentation", "available": "always", "out": "coarse colour segments (grid + union-find)"},
+    {"name": "tracking", "kind": "tracking", "available": "always", "out": "persistent per-camera track ids (greedy IoU)"},
+    {"name": "objects", "kind": "object_detection", "available": "model-gated", "out": "labelled objects (ultralytics or opencv_dnn/onnx)"},
+    {"name": "face", "kind": "face_detection", "available": "cv2", "out": "face boxes (Haar cascade)"},
+    {"name": "face_recognition", "kind": "face_recognition", "available": "embedder-gated", "out": "identity candidates (hook)"},
+    {"name": "ocr", "kind": "ocr", "available": "easyocr", "out": "text regions + joined text"},
+    {"name": "pose", "kind": "pose", "available": "mediapipe", "out": "person + normalized landmarks"}
+  ],
+  "events": ["vision.camera.* (transport)", "vision.observation", "vision.object.appeared", "vision.object.disappeared", "vision.object.promoted", "vision.motion.started", "vision.motion.stopped", "vision.scene.changed", "vision.entity.linked"],
+  "metrics": ["frames_received", "frames_dropped", "drop_rate", "total_fps", "per-camera fps/latency/queue-depth/health-score", "frames_processed", "avg_processing_ms", "per-processor avg_ms/runs/errors", "object_count", "detection_rate", "observations ingested/promoted/linked", "scene_changes", "visual_memory writes"],
+  "configuration": {
+    "transport": "queue_size/target_fps/overflow/persistent_registry",
+    "processing": "enabled[scene_stats,motion,segmentation,tracking]/max_processing_fps/motion_threshold/segmentation_grid/object_backend+model/track_iou",
+    "observation": "source_name/min_significance/emit_per_detection/base_confidence",
+    "scene": "near_fraction/overlap_relation/forget_after_s",
+    "memory": "db_path(data/visual_memory.db)/significance_threshold/max_object_history"
+  },
+  "public_api": [
+    "VisionSystem(config?, runtime?, perception?, cognition?, attention?, world_model?, transport?)",
+    "connect_browser/add_webcam/add_rtsp/add_array_camera/register/remove/submit_raw/server",
+    "process_camera(camera_id) / process_all() / warmup() / start(warmup?) / stop() / close()",
+    "dashboard() / metrics() / health() / manifest() / attach(runtime)",
+    "VisionPanel(system).panel() / preview(camera_id)"
+  ],
+  "performance": {
+    "separation": ["transport threads (decode+enqueue)", "one processing thread (pipeline+observation+bridge)", "metrics/visualization on demand"],
+    "rule": "processing runs off transport threads and is throttled to max_processing_fps"
+  },
+  "reliability": ["camera disconnects/refresh/permission-loss/wifi (transport health+recovery)", "corrupted frames (decoder returns None -> corrupt flag, never a crash)", "processor failure isolated (never-raises)", "cognition failure isolated (bridge guards)", "server restart (persistent registry keeps camera ids)"],
+  "invariants": [
+    "every frame becomes a Frame, never a raw array downstream",
+    "only the Observation Builder creates Observations",
+    "observations never bypass entity resolution (routed via ResolvingWorldFeed)",
+    "no processor writes the World Model",
+    "processing never runs on a transport/socket thread",
+    "a vision failure can never crash the Cognitive Core",
+    "no side effects at import"
+  ]
+}

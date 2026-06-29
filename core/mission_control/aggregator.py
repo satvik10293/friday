@@ -18,7 +18,7 @@ from .resilience import is_degraded, safe_call
 class MissionControlAggregator:
     def __init__(self, *, executive=None, goal_service=None, knowledge_service=None,
                  user_model=None, agent_runtime=None, authenticator=None,
-                 resources=None, events=None) -> None:
+                 resources=None, events=None, vision=None) -> None:
         self.executive = executive
         self.goals = goal_service
         self.knowledge = knowledge_service
@@ -27,6 +27,7 @@ class MissionControlAggregator:
         self.auth = authenticator
         self.resources = resources
         self.events = events
+        self.vision = vision               # M14: VisionSystem (optional, additive)
 
     # ── 3D panels ───────────────────────────────────────────────────────────────
     def cognitive_state(self) -> dict:
@@ -99,6 +100,16 @@ class MissionControlAggregator:
                     "events": [], "runtime_metrics": metrics, "future": "M11"}
         return safe_call("agent_team", build)
 
+    def vision_panel(self) -> dict:
+        # M14: the Vision System cockpit panel — connected cameras, FPS/latency/queue,
+        # object count, detection rate, processing time, thread status, errors/warnings.
+        def build():
+            if self.vision is None:
+                return {"status": "absent", "cameras": []}
+            from core.vision.mission_control import VisionPanel
+            return VisionPanel(self.vision).panel()
+        return safe_call("vision_panel", build)
+
     # ── 2D overlays ─────────────────────────────────────────────────────────────
     def resource_monitor(self) -> dict:
         def build():
@@ -133,6 +144,7 @@ class MissionControlAggregator:
             "goal_network": self.goal_network(),
             "knowledge_space": self.knowledge_space(),
             "agent_team": self.agent_team(),
+            "vision": self.vision_panel(),
             "resource_monitor": self.resource_monitor(),
             "security_center": self.security_center(),
             "event_stream": self.event_stream(),
