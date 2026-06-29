@@ -52,6 +52,7 @@ in `setup.py`, never in `core/__init__.py`. Run any module's CLI with `-m`, e.g.
 | `core/agents/` | `friday_codex_agent` | 24/7 self-check → improvement proposals (human-gated) |
 | `core/infra/` | `friday_signal`, `friday_scheduler`, `friday_secrets` | Async event bus; periodic tasks; `.env` secret loading |
 | `core/voice/` | `friday_stt`, `friday_tts`, `friday_voice`, `friday_senses`, `friday_voice_loop`, `friday_audio`, `friday_mic_test` | STT (faster-whisper) + TTS (edge-tts) + mic loop |
+| `core/audio/` (M12.1, M15) | `listener/` (continuous listening, VAD, wake, transcription), `cognition/` (`AuditoryCognition`, event detection, context reasoning, auditory memory, audio attention) | Auditory perception: speech pipeline + environmental sound understanding → `Observation`s into the World Model. Additive; perception only. Docs: `docs/M15_AUDITORY_COGNITION.md`. |
 | `core/vision/` (M14) | `service` (`VisionSystem`), `transport/`, `processing/`, `observation/`, `integration/`, `scene/`, `memory/`, `mission_control`, `config` | Visual perception: camera Frames → processing plugins → `Observation`s routed through Attention→Perception→Entity Resolver→World Model; Scene Graph + Visual Memory. Perception only — no reasoning, no direct World-Model writes. Docs: `docs/M14_VISION_SYSTEM.md`. |
 
 ### Respond pipeline (per user turn)

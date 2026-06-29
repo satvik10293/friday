@@ -1,4 +1,4 @@
-# FRIDAY 4.0 — Changes (M1–M13)
+a# FRIDAY 4.0 — Changes (M1–M15)
 
 > Strangler-fig migration: **all additive**. No existing 3.0 file was modified.
 > The system still boots. **Test status: 269 passed** (`python -m pytest`).
@@ -814,6 +814,58 @@ All changes are appended to `FRIDAY_4.0_CHANGES.md` and detailed in `docs/M9_PER
 #### Recommended next
 1. **Git is installed** — a repo can now be initialised (`git init` + a `.gitignore` for `data/*.db`, the vault, and `.venv`) to start version-controlling the M1–M9 build before any 3.0 rewiring.
 2. **M10 candidates:** **Mission Control** (render the M9 dashboard widgets + M8 portal + goal board + decision/audit feeds in the HUD); **or** wire `UserContextBuilder` into the real respond pipeline so every answer is personalised end-to-end; **or** an Agent Team that consumes the `UserContextPackage`.
+
+---
+
+## M14 — Vision System / Visual Perception (FRIDAY 6.1; package `core/vision/` completed; 58 tests)
+
+M14 completes the **Vision System** on top of the existing Vision Transport layer: every camera frame becomes a structured `Observation` that improves the World Model. The purpose is *visual perception*, not computer vision. **Additive** — no M1–M13 file modified except one additive Mission-Control panel hook and one genuine bug fix in the transport metrics. **Vision is perception only:** it builds observations and never reasons, plans, or writes the World Model directly. Committed `a589971`, tagged `m14-complete`.
+
+| Status | File | What it is |
+|---|---|---|
+| NEW (transport, committed now) | `core/vision/transport/` (`frame`·`manager`·`camera`·`frame_queue`·`decoder`·`health`·`metrics`·`registry`·`events`·`server`·`service`·`adapters/{base,array,browser,webcam}`) | The permanent transport foundation (Flask+SocketIO+OpenCV): camera frames → rich immutable `Frame` objects routed only through the `CameraManager`. Permanent camera ids, per-camera bounded queues + overflow policy, off-socket-thread decode, health/recovery, metrics, events. Zero cognition. |
+| NEW | `core/vision/config.py` | `VisionConfig` — typed, injectable per-stage config (transport/processing/observation/scene/memory); tolerant `from_dict`. No hardcoded tunables. |
+| NEW | `core/vision/processing/{base,pipeline,registry}.py` | Plugin pipeline: `VisionProcessor` (never-raises, availability-gated), `VisionPipeline` (runs off transport threads; intra-frame detection sharing via the Frame's reserved `ai_metadata`), `ProcessorRegistry`. |
+| NEW | `core/vision/processing/{scene_stats,motion,segmentation,tracking}.py` | Always-available (numpy/cv2) processors: scene stats, motion + moving-region proposals, grid+union-find segmentation, greedy-IoU persistent tracking. |
+| NEW | `core/vision/processing/{objects,face,ocr,pose}.py` | Opt-in, graceful processors: object detection (ultralytics / OpenCV-DNN/ONNX, model-gated), face (cv2 Haar) + face-recognition hook, OCR (easyocr), pose (mediapipe). |
+| NEW | `core/vision/observation/builder.py` | `ObservationBuilder` — the only place vision creates `core.perception.Observation`s (type=VISION) with source/entity-candidates/confidence/timestamp/spatial/visual-evidence/processing metadata. |
+| NEW | `core/vision/integration/{cognitive_bridge,events}.py` | `CognitiveBridge` — routes observations through Attention → Perception (`ResolvingWorldFeed`) → Entity Resolver → World Model (no bypass), links scene objects to permanent `ENT_` ids, writes Visual Memory, emits visual events. |
+| NEW | `core/vision/scene/scene_graph.py` | `SceneGraph` — persistent objects, spatial relationships, camera/world positions (calibration hook), room-mapping hook. |
+| NEW | `core/vision/memory/visual_memory.py` | `VisualMemory` (SQLite) — significant observations, visual events, object histories, scene changes. |
+| NEW | `core/vision/service.py` | `VisionSystem` facade — composes all stages; **sole frame driver** (pump-on-demand + consume), processing on its own thread (never transport threads); dashboard/health/metrics/manifest/attach. |
+| NEW | `core/vision/mission_control.py` | `VisionPanel` — cockpit panel (cameras, FPS, latency, queue depth, dropped, object count, detection rate, processing time, thread status, errors/warnings) + on-demand live preview. |
+| NEW | `core/vision/{architecture.json,benchmark.py}` | Machine-readable manifest + performance benchmark (~340 fps, ~3 ms/frame, recall 1.0 on CPU). |
+| EDIT (additive) | `core/mission_control/aggregator.py`, `core/mission_control/service.py` | Optional `vision=` param + a `vision` panel (absent when unwired). M10 cockpit gains a vision panel without breaking existing panels. |
+| FIX | `core/vision/transport/metrics.py` | Deadlock: `TransportMetrics.snapshot()` held the lock then called `total_fps()` which re-acquired the same non-reentrant `Lock`. Now computes fps via a lock-held helper. Surfaced via dashboard/metrics. |
+| NEW | `tests/test_vision_{transport,processing,observation,scene,memory,integration,system}.py` (58) | Frame/queue/decoder/registry/manager/health/recovery; pipeline + processors (never-raises, gating, motion/segmentation/tracking); observation shape; scene graph; visual memory; cognitive bridge (no-bypass resolution, events); full system + Mission Control panel + benchmark + side-effect-free import. |
+| NEW | `docs/M14_VISION_SYSTEM.md` · `M14_VISION_API.md` · `M14_VISION_CONFIG.md` | Architecture, API, and configuration docs. |
+
+New runtime data file: `data/visual_memory.db` (significant visual events; in-memory in tests). **Pipeline:** Reality → Camera → Transport → Camera Manager → Frame → Processing → Observation Builder → Attention → Entity Resolver → World Model → Scene Graph + Visual Memory. The default pipeline needs only numpy and is always available; model/heavy processors degrade gracefully. A vision failure can never crash the Cognitive Core.
+
+---
+
+## M15 — Auditory Cognition (FRIDAY V3; package `core/audio/cognition/`; 43 tests)
+
+M15 extends FRIDAY from a speech assistant into understanding of the **whole auditory environment**. Built **additively on the M12.1 listening pipeline** (`core/audio/listener/`), which is *not modified*. Environmental sounds become contextual `Observation`s in the World Model; meaningful events are remembered; emergencies and wake words are prioritized. Perception only — interpretation, not deliberation.
+
+| Status | File | What it is |
+|---|---|---|
+| NEW | `core/audio/cognition/config.py` | `AudioCognitionConfig` (wake/speech/events/memory/attention) — the milestone's flat `audio:` YAML block *or* nested sections; no hardcoded tunables. |
+| NEW | `core/audio/cognition/features.py` | Model-free acoustic features (numpy rFFT + time domain): energy, ZCR, spectral centroid/bandwidth/flatness/rolloff, band ratios, harmonicity + pitch, onsets, modulation rate. |
+| NEW | `core/audio/cognition/{detector_base,profiles,engine}.py` | `AudioEventDetector` (never-raises) + `ProfileDetector` (feature-template matching, always available) + `MLEventDetector` (learned-classifier hook); the 13 built-in sound profiles **as data**; `AudioEventEngine` (windowing, confidence gate, per-type cooldown). **New sounds = register a `SoundType` + profile — no core change.** |
+| NEW | `core/audio/cognition/events.py` | Open `SoundCatalog` + `SoundType` + `SoundCategory`; `AuditoryEvent`; runtime event keys. Sounds: door knock, doorbell, alarm, timer, phone ringing, keyboard, mouse, laughter, crying, glass breaking, running water, dog barking, cat meowing. |
+| NEW | `core/audio/cognition/context.py` | `AudioContextReasoner` — sound → contextual `AUDIO` Observation + plain-language reasoning (doorbell → "Someone may be at the door"), routed via Perception (no World-Model bypass). |
+| NEW | `core/audio/cognition/memory.py` | `AuditoryMemory` (SQLite) — meaningful events only (timestamp/type/confidence/source/session id); optional Chronicle forwarding. |
+| NEW | `core/audio/cognition/attention.py` | `AudioAttention` — priority bands **emergency > wake > speech > environmental > background**, dynamic boost/decay, M5 `rank_observations` bridge. |
+| NEW | `core/audio/cognition/wake.py` | `WakeWordController` — confidence threshold, cooldown (no repeat triggers), self-speech suppression (ignore FRIDAY's TTS), resume-after-speaking; wraps the M12.1 `WakeWordEngine` additively. |
+| NEW | `core/audio/cognition/dedup.py` | `SpeechDeduplicator` — rejects identical/near-identical transcripts within a window (prevents double-answering). |
+| NEW | `core/audio/cognition/service.py` | `AuditoryCognition` facade — composes all subsystems and wires Runtime/World Model/Chronicle/Executive (emergency notifications)/Emotion/M12.1 Listening (`bind_listening`). All collaborators injected/optional; every call guarded. |
+| NEW | `core/audio/cognition/{architecture.json,benchmark.py}` | Manifest + benchmark (~4.7 ms/window, ~3500 frame fps, dedup precision 1.0). |
+| EDIT (additive) | `core/audio/__init__.py` | Export the `AuditoryCognition` facade + config. |
+| NEW | `tests/test_audio_cognition.py` · `test_audio_wake_control.py` · `test_audio_memory_attention.py` · `test_audio_cognition_integration.py` (43) | Features/detection/extensibility/cooldown/disabling; wake confidence/cooldown/self-speech/resume + dedup; memory (meaningful-only, retrieval, chronicle) + attention (exact priority order, dynamic, M5); full facade (sound → World Model no-bypass, emergency → Executive + runtime event, dedup/wake, listening binding, manifest, side-effect-free). |
+| NEW | `docs/M15_AUDITORY_COGNITION.md` | Architecture, configuration, integration, test results, limitations, M16 suggestions. |
+
+New runtime data file: `data/auditory_memory.db` (meaningful audio events; in-memory in tests). **Pipeline:** Microphone frames → Audio Event Engine → Context Reasoner → `AUDIO` Observation → Perception → World Model; + Auditory Memory + Audio Attention; speech: Transcript → De-dup → Wake Control. Existing M12.1 audio tests (70) remain green. **Status: implemented + tested + documented; awaiting verification before M16 (per owner's hold).**
 
 ---
 

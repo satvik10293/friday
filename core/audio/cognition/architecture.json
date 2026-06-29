@@ -1,0 +1,62 @@
+{
+  "subsystem": "auditory_cognition",
+  "milestone": "M15",
+  "title": "Auditory Cognition",
+  "summary": "Extends FRIDAY from a speech assistant into understanding of the whole auditory environment. Environmental sounds are detected by an open, plugin-based catalog, interpreted into contextual AUDIO Observations routed through Perception -> Entity Resolver -> World Model (no bypass), remembered (meaningful only), and prioritized by Audio Attention. The speech path gains confidence-gated wake control (self-speech aware, cooldown, resume) and de-duplication. Built additively on the M12.1 Listening pipeline, which is not modified.",
+  "builds_on": "M12.1 (core/audio/listener) — continuous listening, VAD, wake engine, transcription, events bus",
+  "must_never": ["deliberate / decide (Executive's job)", "write the World Model bypassing entity resolution", "block the real-time capture thread", "crash the Cognitive Core on an audio failure", "store routine background sound"],
+  "pipeline": "Microphone frames -> Audio Event Engine (features -> detectors) -> Context Reasoner -> Observation(AUDIO) -> Perception -> Entity Resolver -> World Model; + Auditory Memory + Audio Attention; speech: Transcript -> Dedup -> Wake Control",
+  "components": {
+    "config": "AudioCognitionConfig (wake/speech/events/memory/attention) — flat YAML 'audio:' block or nested sections",
+    "features": "numpy rFFT + time-domain features (energy, zcr, centroid, bandwidth, flatness, rolloff, band ratios, harmonicity, pitch, onsets, modulation)",
+    "detectors": "ProfileDetector (model-free feature templates, always available) + MLEventDetector (learned-classifier hook). Sounds are data (profiles), not code.",
+    "engine": "AudioEventEngine — rolling-window detection, confidence gate, per-type cooldown, emits AuditoryEvent",
+    "context": "AudioContextReasoner — sound -> contextual AUDIO Observation + reasoning, routed via perception (no bypass)",
+    "memory": "AuditoryMemory — SQLite store of meaningful events (ts/type/confidence/source/session); optional Chronicle forward",
+    "attention": "AudioAttention — priority bands emergency>wake>speech>environmental>background, dynamic, M5 integration",
+    "wake": "WakeWordController — confidence threshold, cooldown, self-speech suppression, resume-after-speaking (wraps M12.1 WakeWordEngine)",
+    "dedup": "SpeechDeduplicator — rejects identical/near-identical transcripts within a window",
+    "service": "AuditoryCognition facade — composes all, wires Runtime/WorldModel/Chronicle/Executive/Emotion/Listening"
+  },
+  "sounds": ["door_knock", "doorbell", "alarm", "timer", "phone_ringing", "keyboard_typing", "mouse_clicking", "laughter", "crying", "glass_breaking", "running_water", "dog_barking", "cat_meowing"],
+  "extensibility": "Add a sound = register a SoundType + a FeatureProfile (data); no engine/core change. ML detectors plug in via MLEventDetector.set_classifier.",
+  "inputs": [
+    {"name": "audio_frame", "shape": "mono float32 @16kHz (320/20ms)", "via": "AuditoryCognition.process_frame"},
+    {"name": "transcript", "shape": "{text, confidence}", "via": "on_transcript / bind_listening(bus TRANSCRIPT_READY)"}
+  ],
+  "outputs": [
+    {"name": "AuditoryEvent", "fields": ["event_id", "sound", "category", "confidence", "timestamp", "source", "session_id", "features"]},
+    {"name": "Observation(AUDIO)", "fields": ["source", "entity_candidates", "confidence", "timestamp", "reasoning", "evidence"]},
+    {"name": "memory record", "fields": ["event_id", "sound", "category", "confidence", "ts", "source", "session_id"]}
+  ],
+  "events": ["audio.sound.detected", "audio.sound.context", "audio.emergency", "audio.wake.detected", "audio.wake.suppressed", "audio.speech.duplicate"],
+  "attention_priority": ["emergency", "wake_word", "speech", "environmental", "background"],
+  "configuration": {
+    "audio.wake_word": "friday", "audio.continuous_listening": true, "audio.wake_confidence": 0.85,
+    "audio.noise_filter": true, "audio.audio_event_detection": true, "audio.store_audio_events": true,
+    "events": "window_s/hop_s/min_confidence/per_type_cooldown_s/emergency_sounds/disabled_sounds",
+    "memory": "db_path(data/auditory_memory.db)/significance_threshold/persistent"
+  },
+  "dependencies": {
+    "required": ["numpy", "core.perception.models"],
+    "reused_additively": ["core.audio.listener (WakeWordEngine, events bus)", "core.perception (ingest)", "core.perception.world_feed / core.world.world_model (observe)", "core.attention (rank_observations)", "core.runtime (events/health)"],
+    "injected_optional": ["perception", "world_model", "attention_system", "chronicle", "executive", "emotion", "runtime"]
+  },
+  "public_api": [
+    "AuditoryCognition(config?, runtime?, perception?, world_model?, attention_system?, chronicle?, executive?, emotion?, wake_engine?)",
+    "process_frame(frame, ts?, source?) / analyze_window(window) -> AuditoryEvent",
+    "on_transcript({text, confidence}) -> {accepted, wake, ...}",
+    "speaking_started() / speaking_finished() / should_resume_listening",
+    "bind_listening(listening_service) / prioritize(signals)",
+    "dashboard() / metrics() / health() / manifest() / attach(runtime)"
+  ],
+  "invariants": [
+    "every detected sound becomes an AuditoryEvent; meaningful ones become Observations + memories",
+    "context observations never bypass entity resolution (routed via perception)",
+    "no detector writes the World Model directly",
+    "detection runs off the capture thread and never raises",
+    "an audio failure can never crash the Cognitive Core",
+    "M12.1 listening pipeline is unmodified (additive integration)",
+    "no hardcoded tunables; no side effects at import"
+  ]
+}

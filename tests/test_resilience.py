@@ -40,7 +40,7 @@ def test_state_with_no_subsystems(tmp_path):
     mc = _mc(tmp_path)
     st = mc.state()
     assert st["operational"] is True
-    assert len(st["panels"]) == 7          # all panels still present (absent/ok)
+    assert len(st["panels"]) == 8          # all panels present (absent/ok); incl. M14 vision
 
 
 def test_state_with_exploding_knowledge(tmp_path, goal_service):
