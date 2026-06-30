@@ -1,0 +1,47 @@
+{
+  "subsystem": "cognitive_coordinator",
+  "milestone": "M17 (revision) + M18 foundation",
+  "title": "Human Cognitive Architecture — Cognitive Coordinator + Cognitive Brains + Executive foundation",
+  "summary": "Migrates the M17 Perception Hub into a Cognitive Coordinator. FRIDAY is now a society of specialized Cognitive Brains, each owning local reasoning/state/memory and emitting structured Situation Reports. The Coordinator merges/de-duplicates/conflict-resolves those reports into Unified Situations and is the only gateway into the Executive Brain (the CEO), which consumes only situations — never raw data. A dedicated Memory Brain owns the tiered memory hierarchy + semantic Knowledge Graph. Additive on M16 services + M17 hub (reused); no completed milestone rewritten.",
+  "layout": {
+    "core/brains/base.py": "CognitiveBrain lifecycle + SituationReport + SituationReportBus + LocalMemory",
+    "core/brains/{vision,audio,spatial,learning,emotion,automation,runtime}/": "Cognitive Brains (wrap existing subsystems via services; local caches; reports)",
+    "core/brains/memory/": "Memory Brain — tiers.py (Working→Core promotion) + knowledge_graph.py (semantic graph) + brain.py (sole memory owner)",
+    "core/brains/executive/": "Executive Brain foundation (M18) — consumes Unified Situations, owns Working Memory, decisions/focus/delegation; refuses raw data",
+    "core/coordinator/": "Cognitive Coordinator (this) — situation reports -> unified situations -> Executive"
+  },
+  "cognitive_brains": ["vision_brain", "audio_brain", "spatial_brain", "memory_brain", "learning_brain", "emotion_brain", "automation_brain", "runtime_brain", "executive_brain"],
+  "standard_lifecycle": ["observe", "analyze", "update_local_memory", "reason", "generate_situation_report", "publish", "wait"],
+  "situation_report_fields": ["report_id", "source_brain", "timestamp", "summary", "confidence", "priority", "evidence", "local_memory_summary", "recommended_action", "data"],
+  "coordinator_responsibilities": ["receive situation reports", "merge related reports", "resolve conflicting observations", "remove duplicates", "maintain active context", "build Unified Situations", "publish only to the Executive Brain"],
+  "executive_brain": {
+    "role": "CEO — decision making, planning, prioritization, delegation, focus",
+    "input": "ONLY Unified Situation Reports (refuses frames/audio/detections/db/scene graphs)",
+    "memory": "owns ONLY Working Memory; all other memory via the Memory Brain"
+  },
+  "memory_brain": {
+    "hierarchy": ["working", "short_term", "episodic", "semantic", "long_term", "core"],
+    "promotion_factors": ["reinforcement", "frequency", "confidence", "user_confirmation", "importance"],
+    "owns": ["tiered promotion/recall/forgetting/consolidation", "semantic Knowledge Graph"],
+    "knowledge_graph_nodes": ["person", "object", "room", "concept", "project", "habit", "preference", "device", "relationship"]
+  },
+  "events": ["coordinator.report.received", "coordinator.reports.merged", "coordinator.conflict.resolved", "coordinator.duplicate.removed", "coordinator.situation.built", "coordinator.published_to_executive", "coordinator.context.updated"],
+  "services": ["one public service per brain", "Situation Report Bus", "Runtime Event Bus", "core/services container (DI)"],
+  "reused": ["core.perception.hub.confidence.ConfidenceEngine", "core.perception.hub.timeline.Timeline", "core.services (M16)", "vision/audio/spatial subsystems via services", "M2 MemoryService (durable backend)", "M5 executive (planner, optional)"],
+  "graceful_degradation": "each brain runs independently; if one fails the others continue, the Coordinator adapts, and the Executive reasons with available information",
+  "public_api": [
+    "CoordinatorService(config?, container?|subsystems..., executive_planner?, config_dict?)",
+    "cycle() -> tick all brains + coordinate -> unified situations to Executive",
+    "submit_report(report) / coordinate() / situation() / context() / reports()",
+    "brain(name) / start(interval) / stop() / dashboard() / metrics() / health() / manifest() / attach(runtime)"
+  ],
+  "invariants": [
+    "no raw sensor data leaves a Cognitive Brain (only Situation Reports)",
+    "the Coordinator is the only gateway into the Executive Brain",
+    "the Executive Brain never processes raw data and owns only Working Memory",
+    "the Memory Brain is the sole owner of memory (no direct DB access elsewhere)",
+    "brains communicate only through services + the report/event buses (no internal imports, no circular deps)",
+    "every brain runs independently; one failing never stops the society",
+    "no hardcoded configuration; no side effects at import"
+  ]
+}
