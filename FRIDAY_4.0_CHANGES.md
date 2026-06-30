@@ -1,4 +1,4 @@
-# FRIDAY 4.0 — Changes (M1–M17, incl. M17 revision)
+# FRIDAY 4.0 — Changes (M1–M20, incl. M17 revision + M18 foundation)
 
 > Strangler-fig migration: **all additive**. No existing 3.0 file was modified.
 > The system still boots. **Test status: 269 passed** (`python -m pytest`).
@@ -968,6 +968,74 @@ before M19.**
 | NEW | `docs/M17_COGNITIVE_ARCHITECTURE.md` | Migration report, architecture + brain-mapping diagrams, Coordinator/Memory-Brain/Knowledge-Graph/Executive designs, situation-report spec, deployment, M19 work. |
 
 **No completed-milestone file rewritten.** Verified live: a society `cycle()` ticks all brains → reports merge into one Unified Situation (vision+audio+memory+runtime, conf 1.0) → Executive focuses on it and **refuses raw data**; Memory Brain promotes a user-confirmed preference to Core and threads `Satvik —prefers→ dark mode` into the Knowledge Graph; an emergency report fast-paths to the Executive. Audit: removed dead imports; **one-way dependencies** (services/hub never import brains/coordinator); pure stdlib; side-effect-free import (no threads/DB); no hardcoded paths; graceful degradation (a failing brain never stops the society). Full suite (M1–M17rev) green.
+
+---
+
+## M19 — Predictive Cognition, Simulation & Decision Intelligence (FRIDAY V3; 1 new brain; 53 tests)
+
+M19 gives FRIDAY the ability to *think before acting*. Before any significant action the
+new **Simulation Brain** generates scenarios, predicts outcomes, forecasts cost, scores
+quantitative risk across eight dimensions, evaluates + ranks candidate plans, and
+recommends the safest — then **advises** the Executive Brain, which makes the final
+decision. Only meaningful simulations persist (via the Memory Brain), and actual outcomes
+feed back so prediction accuracy calibrates. **Completely additive** — built on the M18
+brain framework + M16 services; lives under `core/brains/simulation/` (distinct from the
+M11 `core/simulation` engine). No M17/M18 functionality changed. Pure stdlib. **Status:
+complete + audited; NOT committed/tagged — awaiting review.**
+
+| Status | File | What it is |
+|---|---|---|
+| NEW | `core/brains/simulation/config.py` | `SimulationConfig` (enabled/max_scenarios/risk_threshold/timeout_seconds/cache_predictions/learning_feedback/store_successful_simulations + ranking weights). |
+| NEW | `core/brains/simulation/events.py` | `SimulationEvent` (requested/started/scenario.generated/compared/risk.calculated/prediction.generated/plan.ranked/completed/rejected/forecast.updated) — documented. |
+| NEW | `core/brains/simulation/interfaces.py` | Pipeline data models (SimulationRequest/Scenario/Prediction/Forecast/RiskScore/PlanEvaluation/SimulationResult) + strategy protocols (Generator/Predictor/Forecaster/RiskAssessor). |
+| NEW | `core/brains/simulation/forecast.py` | `ForecastEngine` — CPU/memory/storage/network/duration/automation-complexity/system-load (+ confidence). |
+| NEW | `core/brains/simulation/predictor.py` | `PredictionEngine` — intent/next-actions/success/completion/failure-modes (+ confidence); calibrated by learning feedback. |
+| NEW | `core/brains/simulation/risk_engine.py` | `RiskEngine` — safety/privacy/security/reliability/performance/resource/UX/system-health → quantitative overall risk + reasons. |
+| NEW | `core/brains/simulation/scenario_generator.py` | Multi-scenario generation (immediate/backup-then/ask-user/dry-run; redact; cautious/deferred); explicit options; extensible plugins. |
+| NEW | `core/brains/simulation/decision_evaluator.py` | `DecisionEvaluator` — expected success/time/cost/resource, risk, confidence, dependencies, policy compliance, reasoning, composite score (config-weighted). |
+| NEW | `core/brains/simulation/comparison.py` | `PlanComparison` — rank best-first + comparison summary. |
+| NEW | `core/brains/simulation/history.py` | `SimulationHistory` — store only meaningful sims via Memory Brain; learning feedback (predicted vs actual, predictor calibration, repeated-failure memory). |
+| NEW | `core/brains/simulation/simulation.py` | `SimulationBrain` orchestrator (Cognitive Brain; advises only, never executes; never-raises; incremental timeout). |
+| NEW | `core/brains/simulation/service.py` | `SimulationService` facade (SimulationServiceProtocol); registers as `simulation`. |
+| NEW | `core/brains/simulation/{benchmark.py,architecture.json,__init__.py}` | Benchmark (~1,080 sims/s) + manifest + exports. |
+| EDIT (additive) | `core/services/interfaces.py` | `SimulationServiceProtocol` (simulate/forecast/record_outcome) + `ServiceName.SIMULATION`. |
+| EDIT (additive) | `core/brains/executive/brain.py` | `deliberate(action,...)` (think-before-acting loop) + `report_outcome(...)` (learning) + `_deliberations` metric. Existing methods unchanged. |
+| EDIT (test) | `tests/test_services.py` | "wires all services" test skips `simulation` (self-registers). |
+| NEW | `tests/test_simulation_brain.py` · `test_simulation_executive.py` (53) | Forecast/prediction/risk/scenarios/evaluator/comparison units; simulate pipeline (ranking/rejection/events/never-raises/disabled/incremental); Executive deliberate + report_outcome; learning feedback; meaningful-only memory persistence; service facade; no-circular-imports. Distinct from M11 simulation tests. |
+| NEW | `docs/M19_SIMULATION.md` | Architecture, prediction pipeline, scenario/risk design, Executive integration, learning feedback, events, performance, M20 recommendations. |
+
+**Flow:** Situation → `Executive.deliberate` → Simulation (scenarios → predict → forecast → risk → evaluate → rank → recommend safest) → Executive decides (execute / ask_user) → execute → `report_outcome` → learning. Verified live: *"delete the project folder"* → plans ranked `ask_user`/`backup_then`/`dry_run` (safe) above `immediate` (policy-non-compliant); Executive chose `ask_user`; learning feedback recorded; meaningful sims persisted via the Memory Brain. Audit: removed 4 unused imports; pure stdlib; one-way dependencies; side-effect-free import; no hardcoded paths; never-raises. Full suite green.
+
+---
+
+## M20 — Productization, Deployment & Release Engineering (FRIDAY V3; 2 new packages; 31 tests)
+
+M20 turns the finished cognitive architecture (M1–M19) into a production-ready,
+cross-platform, releasable application — **without redesigning the architecture**. Adds a
+production launcher, an installer + build/release framework, structured rotating logging,
+health diagnostics, and repository release-readiness. **Completely additive**; one Python
+codebase for Windows/macOS/Linux; pure stdlib. **Status: complete + audited; NOT committed/
+tagged automatically — prepared for review.**
+
+| Status | File | What it is |
+|---|---|---|
+| NEW | `core/launcher/platform_adapter.py` | OS detection + env-overridable data/config/log dirs (no hardcoded paths) + best-effort desktop shortcut per OS. |
+| NEW | `core/launcher/logging_config.py` | Structured **rotating** logging (console + `friday.log` + `friday-error.log`; size-capped + backups); idempotent. |
+| NEW | `core/launcher/health.py` | `HealthMonitor` — service/runtime/coordinator/simulation health + process vitals (threads/CPU/RAM via psutil when present). |
+| NEW | `core/launcher/startup.py` | `StartupSequence` — ordered, isolated, graceful boot (Configuration→Kernel→Runtime→Memory→Knowledge→Perception→Simulation→Coordinator→Executive→Plugins→Voice→UI→Ready). |
+| NEW | `core/launcher/launcher.py` | `Launcher` — detect OS, load config, validate deps, run startup, report health, recover; CLI `main()`. No cognitive logic. |
+| NEW | `core/launcher/__init__.py` · `friday_launch.py` | Package exports + production entry point. |
+| NEW | `deploy/version.py` | Single source of truth: `VERSION=0.20.0`, metadata, `python_ok()`. |
+| NEW | `deploy/install.py` | Cross-platform installer: verify Python, install deps, validate config, **securely** capture the Groq key into a gitignored `.env` (never embedded/printed/logged), shortcut, uninstall info, logs; `--dry-run`. |
+| NEW | `deploy/build.py` | `build_package()` → clean source zip (excludes venv/git/data/caches/**secrets**/**weights**) + manifest + **SHA-256**; `verify_package()` (CRC + checksum + exclusion safety). |
+| NEW | `deploy/release.py` | `generate_changelog()` (from this file), `release_manifest()` (version + artifacts + checksums), `verify_release()`. |
+| NEW | `deploy/__init__.py` | Deployment package exports. |
+| NEW | `LICENSE` · `CONTRIBUTING.md` | Proprietary placeholder license + contribution guide (additive repo-readiness). |
+| EDIT (additive) | `.gitignore` | Ignore `dist/` + `build/` release artifacts. |
+| NEW | `tests/test_launcher.py` · `test_deploy.py` (31) | Platform adapter, rotating logging, ordered startup + graceful recovery, health diagnostics, launcher boot; version, installer (dry-run + secret-never-leaked), build (checksum + no-secrets/weights-leaked + tamper detection), release changelog/manifest verification. |
+| NEW | `docs/M20_DEPLOYMENT.md` | Launcher + installer + build/release architecture, startup diagram, cross-platform + repo-readiness reports, v1.0 recommendations. |
+
+Verified live: `python friday_launch.py` → all 13 startup stages, **FRIDAY READY in ~300 ms**, health ok; installer dry-run keeps the Groq key out of every report and writes only to `.env`; `deploy.build` packaged 646 source files with a SHA-256 manifest and **zero leaked secrets/weights/DBs**; release changelog extracted all 20 milestones. Audit: removed 2 unused imports; pure stdlib; no hardcoded paths; side-effect-free import; never-raises startup. Full suite (M1–M20) green.
 
 ---
 

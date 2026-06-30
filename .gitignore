@@ -79,3 +79,11 @@ data/datasets/
 *.ann
 embeddings_cache/
 data/embeddings/
+
+# M20 release artifacts (built locally, never committed)
+dist/
+build/
+
+# runtime logs (M20 launcher)
+*.log
+data/logs/
