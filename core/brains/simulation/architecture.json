@@ -1,0 +1,50 @@
+{
+  "subsystem": "simulation_brain",
+  "milestone": "M19",
+  "title": "Predictive Cognition, Simulation & Decision Intelligence",
+  "summary": "Gives FRIDAY the ability to think before acting. Before any significant action the Simulation Brain generates multiple scenarios, predicts outcomes (with confidence), forecasts resource/time cost, scores quantitative risk across eight dimensions, evaluates + ranks candidate plans, and recommends the safest. It ADVISES the Executive Brain — it never executes. Only meaningful simulations are persisted (via the Memory Brain), and actual outcomes feed back so prediction accuracy improves. Additive on the M18 brain framework + M16 services; lives under core/brains/simulation/ (distinct from the M11 core/simulation engine).",
+  "objective": "Observe -> Understand -> Predict -> Simulate -> Compare -> Evaluate Risk -> Select Best Plan -> Execute -> Learn. FRIDAY never blindly executes important actions.",
+  "pipeline": "SimulationRequest -> scenario generation -> prediction -> forecast -> risk scoring -> decision evaluation -> ranking -> recommended (safest) plan -> (Executive decides) -> learning feedback",
+  "components": {
+    "config": "SimulationConfig (enabled/max_scenarios/risk_threshold/timeout_seconds/cache_predictions/learning_feedback/store_successful_simulations + ranking weights)",
+    "scenario_generator": "multiple candidate futures (immediate / backup-then / ask-user / dry-run; redact; cautious / deferred); rule-based + extensible",
+    "predictor": "intent, next actions, success probability, completion, failure modes (+ confidence); calibrated by learning feedback",
+    "forecast": "CPU/memory/storage/network/duration/automation-complexity/system-load (+ confidence)",
+    "risk_engine": "safety/privacy/security/reliability/performance/resource/user-experience/system-health -> quantitative overall risk [0,1] + reasons",
+    "decision_evaluator": "expected success/time/cost/resource, risk level, confidence, dependencies, policy compliance, reasoning, composite score (config-weighted)",
+    "comparison": "rank plans best-first; comparison summary",
+    "history": "store only meaningful sims (success/repeated-failure/frequently-selected/high-value) via Memory Brain; learning feedback (predicted vs actual)",
+    "simulation": "SimulationBrain orchestrator (Cognitive Brain; never executes; advises only)",
+    "service": "SimulationService facade (SimulationServiceProtocol)"
+  },
+  "events": ["simulation.requested", "simulation.started", "simulation.scenario.generated", "simulation.scenario.compared", "simulation.risk.calculated", "simulation.prediction.generated", "simulation.plan.ranked", "simulation.completed", "simulation.rejected", "simulation.forecast.updated"],
+  "executive_integration": {
+    "method": "ExecutiveBrain.deliberate(action, context?, options?)",
+    "flow": "Situation -> Simulation Request -> Scenario Generation -> Risk Analysis -> Plan Ranking -> Executive Decision -> Execution -> ExecutiveBrain.report_outcome (learning)",
+    "rule": "the Executive remains responsible for the final decision; the Simulation Brain only advises; rejected (all plans too risky) -> ask_user"
+  },
+  "service_interface_added": "SimulationServiceProtocol (simulate/forecast/record_outcome) + ServiceName.SIMULATION",
+  "configuration": {
+    "simulation.enabled": true, "simulation.max_scenarios": 5, "simulation.risk_threshold": 0.70,
+    "simulation.timeout_seconds": 2, "simulation.cache_predictions": true,
+    "simulation.learning_feedback": true, "simulation.store_successful_simulations": true
+  },
+  "performance": ["incremental simulation (stops at the timeout budget)", "bounded history", "thread-safe", "low latency / low memory", "long-running sessions"],
+  "deployment": ["pure stdlib", "no OS logic", "no hardcoded paths", "plugin-extensible (scenario/predictor/risk strategies)", "offline-capable", "graceful degradation", "configuration-driven", "structured [Simulation] logging"],
+  "public_api": [
+    "SimulationService(config?, container?|subsystems..., config_dict?)",
+    "simulate(action, context?, options?) -> ranked plans + recommended (advisory)",
+    "forecast(action, context?) -> resource/time forecast",
+    "record_outcome(simulation_id, actual) -> learning feedback (prediction error)",
+    "dashboard() / metrics() / health() / manifest() / attach(runtime)",
+    "ExecutiveBrain.deliberate(action, ...) / report_outcome(simulation_id, actual)"
+  ],
+  "invariants": [
+    "the Simulation Brain never executes actions (advisory only)",
+    "the Executive Brain makes the final decision (not bypassed)",
+    "memory is written only through the Memory Brain (not bypassed); only meaningful sims persist",
+    "communication only via services + the Runtime event bus + situation reports",
+    "never-raises; thread-safe; configuration-driven; no hardcoded values",
+    "no circular imports; no side effects at import"
+  ]
+}
