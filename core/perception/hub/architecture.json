@@ -1,0 +1,49 @@
+{
+  "subsystem": "perception_hub",
+  "milestone": "M17",
+  "title": "Multimodal Intelligence & Perception Hub",
+  "summary": "Unifies FRIDAY's independent perception systems into one cognitive intelligence. Vision, audio, and spatial publish per-modality observations; the Hub fuses them into a single UnifiedObservation, combines confidences, performs first-level reasoning, maintains the active context + a chronological timeline, forwards understanding to the World Model (the Hub is the unified gateway), and remembers only meaningful, non-duplicate events. Built additively on the M16 service layer — the Hub imports no subsystem's internals.",
+  "location": "core/perception/hub/ (M6 perception package core/perception/*.py untouched)",
+  "objective": "Every observation becomes ONE unified cognitive event: Vision + Audio + Spatial + Memory -> Perception Hub -> Unified Observation -> World Model -> Executive -> Memory -> Learning.",
+  "pipeline": "modality observations -> FUSE -> CONFIDENCE gate (+enrich) -> REASON -> CONTEXT update -> TIMELINE -> World Model (gateway) -> Memory (dedup/compress) -> events",
+  "components": {
+    "config": "PerceptionHubConfig (enabled/fusion/reasoning/timeline/confidence_engine/minimum_confidence/store_unified_events + nested)",
+    "observations": "ModalityObservation (per-sensor input) + UnifiedObservation (timestamp/session/source_modules/confidence/location/related_objects/related_people/audio_context/spatial_context/previous_context/importance/event_category/conclusions)",
+    "fusion": "MultimodalFusion — group co-occurring modality observations by location into one UnifiedObservation",
+    "confidence": "ConfidenceEngine — noisy-OR fusion + agreement boost + conflict penalty; handles conflicts gracefully",
+    "context": "ContextEngine — continuously-updated active context (room/activity/objects/people/devices/conversation/situation)",
+    "timeline": "Timeline — bounded chronological ring; before/after/during/recently/current/historical",
+    "reasoning": "CognitiveReasoner — modular first-level rules (arrival/working/left-behind/breakfast); extensible",
+    "hub": "PerceptionHub — orchestrator; never-raises; thread-safe; World Model gateway",
+    "service": "PerceptionService facade (PerceptionServiceProtocol) + autonomous perceive loop"
+  },
+  "unified_observation_fields": ["id", "timestamp", "session_id", "source_modules", "confidence", "location", "related_objects", "related_people", "audio_context", "spatial_context", "previous_context", "importance", "event_category", "conclusions", "sources"],
+  "events": ["perception.observation.created", "perception.observation.updated", "perception.observation.merged", "perception.observation.rejected", "perception.context.changed", "perception.timeline.updated", "perception.ready", "perception.reasoning.completed", "perception.situation.changed"],
+  "services_used": ["runtime", "world_model", "memory", "vision", "audio", "spatial", "executive", "attention", "configuration", "plugin", "learning"],
+  "service_interface_added": "PerceptionServiceProtocol (ingest/perceive/situation/context/timeline) + ServiceName.PERCEPTION",
+  "configuration": {
+    "perception.enabled": true, "perception.fusion": true, "perception.reasoning": true,
+    "perception.timeline": true, "perception.confidence_engine": true,
+    "perception.minimum_confidence": 0.70, "perception.store_unified_events": true
+  },
+  "performance": ["incremental per-cycle work", "bounded timeline ring (capacity)", "memory dedup/compression of repetitive events", "thread-safe", "thousands of observations per session"],
+  "deployment": ["cross-platform (pure stdlib, no OS logic)", "no hardcoded paths", "plugin-extensible (fusion/reasoning strategies)", "offline-capable", "graceful degradation when services absent", "configuration-driven", "structured [Perception] logging", "multi-device ready (services are swappable/remote-able)"],
+  "public_api": [
+    "PerceptionService(config?, container?|subsystems..., config_dict?)",
+    "ingest(observations, session_id?) -> summary",
+    "perceive() -> summary   # pull from vision/audio/spatial services",
+    "situation() -> understanding for the Executive",
+    "context() -> active context",
+    "timeline(scope=recent|current|before|after|during|historical, **params)",
+    "start(interval) / stop() / dashboard() / metrics() / health() / manifest() / attach(runtime)"
+  ],
+  "invariants": [
+    "subsystems communicate ONLY through services (no internal imports, no circular deps)",
+    "the Hub is the unified multimodal gateway to the World Model for fused observations",
+    "only meaningful, non-duplicate unified observations are remembered (compression)",
+    "the Hub never raises (a perception fault cannot crash the Cognitive Core)",
+    "incomplete observations are enriched from context before rejection",
+    "no hardcoded configuration; everything configuration-driven",
+    "no side effects at import"
+  ]
+}
