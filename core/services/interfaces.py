@@ -123,6 +123,17 @@ class PerceptionServiceProtocol(ServiceProtocol, Protocol):
     def timeline(self, *, scope: str = "recent", **params) -> list: ...
 
 
+@runtime_checkable
+class SimulationServiceProtocol(ServiceProtocol, Protocol):
+    """M19 Simulation Brain: predictive cognition + decision intelligence. Given an
+    intended action it generates scenarios, predicts outcomes, scores risk, evaluates +
+    ranks candidate plans, and ADVISES (never executes — the Executive decides)."""
+    def simulate(self, action: str, *, context: Optional[dict] = None,
+                 options: Optional[list] = None) -> dict: ...
+    def forecast(self, action: str, *, context: Optional[dict] = None) -> dict: ...
+    def record_outcome(self, simulation_id: str, actual: dict) -> dict: ...
+
+
 # Canonical service names used as keys in the ServiceContainer.
 class ServiceName:
     RUNTIME = "runtime"
@@ -133,6 +144,7 @@ class ServiceName:
     AUDIO = "audio"
     SPATIAL = "spatial"
     PERCEPTION = "perception"
+    SIMULATION = "simulation"
     EXECUTIVE = "executive"
     CONFIGURATION = "configuration"
     PLUGIN = "plugin"
@@ -140,5 +152,5 @@ class ServiceName:
     EMOTION = "emotion"
 
     ALL = ("runtime", "world_model", "memory", "attention", "vision", "audio",
-           "spatial", "perception", "executive", "configuration", "plugin",
-           "learning", "emotion")
+           "spatial", "perception", "simulation", "executive", "configuration",
+           "plugin", "learning", "emotion")

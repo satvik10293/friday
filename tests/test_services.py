@@ -31,7 +31,7 @@ def test_container_lazy_factory_built_once():
 def test_default_container_wires_all_services():
     c = build_default_container()
     for name in ServiceName.ALL:
-        if name in ("spatial", "perception"):
+        if name in ("spatial", "perception", "simulation"):
             continue                                   # these register themselves
         assert c.has(name), name
     assert c.health()["status"] == "ok"

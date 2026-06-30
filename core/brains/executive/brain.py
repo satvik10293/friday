@@ -66,6 +66,7 @@ class ExecutiveBrain:
         self._received = 0
         self._decisions = 0
         self._refused = 0
+        self._deliberations = 0
 
     # ── receive unified situations (the ONLY input) ──────────────────────────────
     def receive(self, unified_situation: dict) -> dict:
@@ -111,6 +112,47 @@ class ExecutiveBrain:
     def plan(self, objective: str) -> dict:
         return self.decide(objective)
 
+    # ── think-before-acting (M19 Simulation integration) ─────────────────────────
+    def deliberate(self, action: str, *, context: Optional[dict] = None,
+                   options: Optional[list] = None) -> dict:
+        """Before a significant action, ask the Simulation Brain to predict + simulate +
+        risk-score + rank candidate plans, then make the final decision. The Executive
+        still decides; the Simulation Brain only advises. Falls back to a direct decision
+        when no simulation service is wired."""
+        sim = _svc(self.services, "simulation")
+        if sim is None:
+            return {"decision": "execute", "action": action, "simulated": False,
+                    "reason": "no simulation service"}
+        try:
+            result = sim.simulate(action, context=context or {}, options=options)
+        except Exception:  # noqa: BLE001 — a simulation fault never blocks the Executive
+            log.debug("simulation request failed", exc_info=True)
+            return {"decision": "execute", "action": action, "simulated": False,
+                    "reason": "simulation error"}
+        self._deliberations += 1
+        recommended = result.get("recommended")
+        if result.get("rejected") or recommended is None:
+            return {"decision": "ask_user", "action": action, "simulated": True,
+                    "reason": "all plans exceed the risk threshold",
+                    "simulation_id": result.get("simulation_id"), "simulation": result}
+        plan = recommended["scenario"]["name"]
+        return {"decision": "execute", "action": action, "chosen_plan": plan,
+                "expected_success": recommended.get("expected_success"),
+                "risk_level": recommended.get("risk_level"),
+                "reasoning": recommended.get("reasoning"), "simulated": True,
+                "simulation_id": result.get("simulation_id"), "simulation": result}
+
+    def report_outcome(self, simulation_id: str, actual: dict) -> dict:
+        """After execution, feed the actual result back to the Simulation Brain so its
+        predictions calibrate (learning feedback)."""
+        sim = _svc(self.services, "simulation")
+        if sim is None:
+            return {}
+        try:
+            return sim.record_outcome(simulation_id, actual)
+        except Exception:  # noqa: BLE001
+            return {}
+
     # ── memory access (ONLY via the Memory Brain) ────────────────────────────────
     def request_memory(self, query: str, *, limit: int = 5) -> list:
         if self._memory_brain is None:
@@ -127,7 +169,7 @@ class ExecutiveBrain:
 
     def metrics(self) -> dict:
         return {"brain": self.name, "received": self._received, "decisions": self._decisions,
-                "refused_raw": self._refused}
+                "refused_raw": self._refused, "deliberations": self._deliberations}
 
     def health(self) -> dict:
         return {"status": "ok", "brain": self.name,
