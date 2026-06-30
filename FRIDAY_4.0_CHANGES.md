@@ -1,4 +1,4 @@
-a# FRIDAY 4.0 — Changes (M1–M15)
+# FRIDAY 4.0 — Changes (M1–M17, incl. M17 revision)
 
 > Strangler-fig migration: **all additive**. No existing 3.0 file was modified.
 > The system still boots. **Test status: 269 passed** (`python -m pytest`).
@@ -866,6 +866,108 @@ M15 extends FRIDAY from a speech assistant into understanding of the **whole aud
 | NEW | `docs/M15_AUDITORY_COGNITION.md` | Architecture, configuration, integration, test results, limitations, M16 suggestions. |
 
 New runtime data file: `data/auditory_memory.db` (meaningful audio events; in-memory in tests). **Pipeline:** Microphone frames → Audio Event Engine → Context Reasoner → `AUDIO` Observation → Perception → World Model; + Auditory Memory + Audio Attention; speech: Transcript → De-dup → Wake Control. Existing M12.1 audio tests (70) remain green. **Status: implemented + tested + documented; awaiting verification before M16 (per owner's hold).**
+
+---
+
+## M16 — Spatial Cognition + Service Layer (FRIDAY V3; 2 new packages; 60 tests)
+
+M16 turns FRIDAY from "I see objects" into "I understand the environment": object
+permanence, location, spatial relationships, movement, room structure, user position, and
+change — stored as *relationships, not pixels*. It also introduces the **service layer**:
+beginning with M16, subsystems communicate ONLY through dependency-injected services,
+never by importing another subsystem's internals. **Completely additive — no M1–M15 file
+modified.** Pure stdlib (no new dependencies). **Status: complete + audited; NOT
+committed/tagged — awaiting owner review before M17.**
+
+| Status | File | What it is |
+|---|---|---|
+| NEW | `core/services/interfaces.py` | 12 service `Protocol`s (Runtime/WorldModel/Memory/Attention/Vision/Audio/Spatial/Executive/Configuration/Plugin/Learning/Emotion) + `ServiceName`. Any object structurally satisfying a protocol (real, mock, future remote proxy) injects. |
+| NEW | `core/services/container.py` | `ServiceContainer` — thread-safe DI registry (instances + lazy factories, no global state) + `build_default_container()` wiring graceful wrappers over supplied subsystems. |
+| NEW | `core/services/{runtime,world_model,memory,attention,vision,audio,executive,configuration,plugin}_service.py` | Thin, graceful adapters over existing subsystems behind stable APIs. RuntimeService is a decoupled event bus (local sync delivery + forward to the M1 async bus); WorldModel/Memory degrade to in-memory fallbacks; Vision/Audio convert to source-agnostic observations; Configuration is dotted-path; Plugin is an extension registry. |
+| NEW | `core/services/{learning,emotion}_service.py` | Placeholder services (stable API now; record/nudge into bounded buffers) for M17+. |
+| NEW | `core/spatial/config.py` | `SpatialConfig` (enabled/tracking/scene_graph/relationship_reasoning/remember_locations/camera_timeout/confidence_threshold/object_timeout + nested sections); flat or nested parse; no hardcoded paths/room names. |
+| NEW | `core/spatial/events.py` | `SpatialEvent` (object.detected/tracked/moved/lost/returned/removed, scene.updated/loaded/saved, relationship.changed, room.changed, user.moved/located). |
+| NEW | `core/spatial/interfaces.py` | `SpatialObservation` (source-agnostic engine input) + strategy Protocols (RelationshipInferencer/RoomClassifier/UserStateEstimator) for DI. |
+| NEW | `core/spatial/scene_graph.py` | Persistent `SceneNode` tree (UUID, persistent_id, object_class, label, parent/children, position, relationships, confidence, created/updated/last_seen, room, session, status); in-memory authoritative + SQLite write-through; `save()/load()` recovery; prune. |
+| NEW | `core/spatial/tracker.py` | Persistent object identity across frames — NEW/TRACKED/MOVED/LOST/RETURNED/REMOVED; greedy one-to-one match (no duplicate ids) + `stable_id` fast path; long sessions. |
+| NEW | `core/spatial/relationships.py` | Infers on/under/inside/near/beside/left_of/right_of/behind/in_front_of/touching/attached_to/contained_by; recomputed + diffed each update. |
+| NEW | `core/spatial/rooms.py` | Extensible `RoomModel` — rooms never hardcoded; camera→room map + injectable classifier plugin. |
+| NEW | `core/spatial/localization.py` | `UserLocalizer` — at_desk/working/sitting/standing/walking/entering_room/leaving_room/idle/unavailable/present, from visual presence + audio cues → World Model. |
+| NEW | `core/spatial/memory.py` | `SpatialMemory` (SQLite) — meaningful events (object/room/relationships/timestamp/confidence/session) + movement history; redundancy-suppressed; Chronicle forward via MemoryService. |
+| NEW | `core/spatial/queries.py` | Backend query engine: where_is / last_seen / what_changed / which_room / what_moved. |
+| NEW | `core/spatial/engine.py` | `SpatialEngine` orchestrator (rooms→tracker→scene graph→relationships→localization→world model→memory→events); never-raises; per-service-call guards; periodic pruning. |
+| NEW | `core/spatial/service.py` | `SpatialService` facade (satisfies `SpatialServiceProtocol`), DI via `ServiceContainer`, registers itself as `spatial`, optional autonomous poll loop, `attach_to_container`. |
+| NEW | `core/spatial/{benchmark.py,architecture.json}` | Benchmark (~3000 updates/s, 0.33 ms/update, scene bounded) + machine-readable manifest. |
+| NEW | `tests/test_services.py` · `test_spatial_{scene_graph,tracker,relationships,cognition,engine}.py` (60) | Service DI/decoupling/mockability/fallbacks; scene-graph CRUD/reparent/lifecycle/prune/persistence recovery; tracking (all six states, no dup ids, stable-id path); relationships (incl. corrected left/right + z-gated depth); rooms/localization/memory/queries; engine+service integration (events, World-Model writes, recovery, vision poll, never-raises, long-session performance, benchmark, no circular imports). |
+| NEW | `docs/M16_SPATIAL_COGNITION.md` | Architecture, scene graph, services, runtime/memory integration, deployment, performance, limitations, M17 recommendations. |
+
+New runtime data file: `data/spatial.db` (scene graph + spatial memory; in-memory in tests). **Pipeline:** SpatialObservation → rooms → tracker → Scene Graph → relationships → localization → World Model → Spatial Memory → events — all through the service layer (the spatial engine imports no other subsystem's internals; services never import spatial — one-way). Audit fixes: corrected inverted left/right relations, gated behind/in_front on explicit depth, fixed a dedup ts=0 false-positive, added per-service-call guards (graceful degradation), removed dead imports. Full suite (M1–M16) green; pure stdlib; side-effect-free import; no hardcoded paths.
+
+---
+
+## M17 — Multimodal Intelligence & Perception Hub (FRIDAY V3; 1 new subpackage; 48 tests)
+
+M17 stops FRIDAY thinking in separate modules: vision, audio, and spatial no longer each
+write memory; every sensor publishes observations and a central **Perception Hub** fuses
+them into ONE unified cognitive event, reasons about it, maintains context + a timeline,
+forwards understanding to the World Model, and remembers only meaningful, non-duplicate
+events. **Completely additive — no M1–M16 file rewritten.** Built on the M16 service layer;
+the Hub imports no subsystem's internals. Lives under `core/perception/hub/` so the M6
+perception package (`core/perception/*.py`) is untouched. Pure stdlib. **Status: complete
++ audited; NOT committed/tagged — awaiting owner review before M18.**
+
+| Status | File | What it is |
+|---|---|---|
+| EDIT (additive) | `core/services/interfaces.py` | Added `PerceptionServiceProtocol` (ingest/perceive/situation/context/timeline) + `ServiceName.PERCEPTION` (and into `ServiceName.ALL`). No existing service changed. |
+| EDIT (test) | `tests/test_services.py` | "wires all services" test now skips the two self-registering services (`spatial`, `perception`). |
+| NEW | `core/perception/hub/config.py` | `PerceptionHubConfig` (enabled/fusion/reasoning/timeline/confidence_engine/minimum_confidence/store_unified_events + nested); flat or nested parse. |
+| NEW | `core/perception/hub/observations.py` | `ModalityObservation` (per-sensor input) + `UnifiedObservation` (timestamp/session/source_modules/confidence/location/related_objects/related_people/audio_context/spatial_context/previous_context/importance/event_category/conclusions/sources) with subject/signature for dedup/compression. |
+| NEW | `core/perception/hub/events.py` | `HubEvent` (observation.created/updated/merged/rejected, context.changed, timeline.updated, perception.ready, reasoning.completed, situation.changed) — each documented. |
+| NEW | `core/perception/hub/interfaces.py` | Strategy Protocols (Fuser/ConfidenceCombiner/Reasoner) for DI. |
+| NEW | `core/perception/hub/confidence.py` | `ConfidenceEngine` — noisy-OR fusion + agreement boost + conflict penalty; detects conflicts; never out of [0,1]. |
+| NEW | `core/perception/hub/fusion.py` | `MultimodalFusion` — merge co-occurring modality observations by location into one `UnifiedObservation` (vision objects + audio context + spatial state). |
+| NEW | `core/perception/hub/context.py` | `ContextEngine` — continuously-updated active context (room/activity/objects/people/devices/conversation/situation); retains previous for enrichment. |
+| NEW | `core/perception/hub/timeline.py` | `Timeline` — bounded thread-safe chronological ring; before/after/during/recently/current/historical/by_category. |
+| NEW | `core/perception/hub/reasoning.py` | `CognitiveReasoner` — modular first-level rules (arrival/working/left-behind/breakfast); extensible; bad-rule isolated. |
+| NEW | `core/perception/hub/hub.py` | `PerceptionHub` orchestrator: fuse → confidence gate (+enrich) → reason → context → timeline → World Model gateway → memory (dedup/compress) → events; never-raises; thread-safe; pull (`perceive`) from vision/audio/spatial services. |
+| NEW | `core/perception/hub/service.py` | `PerceptionService` facade (satisfies `PerceptionServiceProtocol`), DI via `ServiceContainer`, registers as `perception`, optional autonomous perceive loop, `attach_to_container`. |
+| NEW | `core/perception/hub/{benchmark.py,architecture.json}` | Benchmark (hundreds of cycles/s, bounded timeline) + machine-readable manifest. |
+| NEW | `tests/test_perception_hub_units.py` · `test_perception_hub.py` (48) | Observation model; confidence (noisy-OR/agreement/conflict); fusion (modality merge + combined confidence); context (change + situation); timeline (all temporal queries + bounded capacity); reasoning (every rule + extensibility + isolation); hub/service integration (fusion→unified→reasoning, World-Model gateway, memory compression, rejection + enrichment, perceive-from-services, executive understanding, never-raises, long-session performance, benchmark, no circular imports, side-effect-free). |
+| NEW | `docs/M17_PERCEPTION_HUB.md` | Architecture + perception-hub diagrams, observation model, fusion pipeline, timeline, runtime/memory/executive integration, deployment, limitations, M18 recommendations. |
+
+**Pipeline:** ModalityObservation (vision/audio/spatial via services) → FUSE → CONFIDENCE gate (+enrich) → REASON → CONTEXT → TIMELINE → World Model (gateway) → Memory (dedup/compress) → events. Verified live: vision *bottle* + audio *running water* + spatial *kitchen present* → one unified observation (3 source modules) reasoning **"The user is preparing breakfast"**; laptop+keyboard+typing → **"The user is working"**; low-confidence observations rejected (after context enrichment); repetitive identical situations compressed to a single memory. Audit: removed 3 unused imports; one-way dependency (services never import the hub); pure stdlib; side-effect-free import; no hardcoded paths. Full suite (M1–M17) green.
+
+---
+
+## M17 (revision) — Human Cognitive Architecture: Cognitive Brains + Coordinator + Executive foundation (2 new packages; 46 tests)
+
+The original M17 Perception Hub is superseded by a **Human Cognitive Architecture**. FRIDAY
+is now a society of specialized **Cognitive Brains**, each owning local reasoning/state/
+memory and emitting structured **Situation Reports**; the **Cognitive Coordinator** (the
+renamed/redesigned hub) merges them into **Unified Situations** and is the only gateway
+into the **Executive Brain** (the CEO, M18 foundation). A dedicated **Memory Brain** owns
+the tiered hierarchy + a semantic **Knowledge Graph**. **Completely additive — M1–M16 and
+the M17 hub are reused, not rewritten** (the hub's ConfidenceEngine + Timeline back the
+Coordinator). Pure stdlib. New Executive Brain lives at `core/brains/executive/` (distinct
+from M5 `core/executive/`); new Knowledge Graph at `core/brains/memory/` (distinct from M7
+`core/knowledge/`). **Status: complete + audited; NOT committed/tagged — awaiting review
+before M19.**
+
+| Status | File | What it is |
+|---|---|---|
+| NEW | `core/brains/base.py` | `CognitiveBrain` (standard lifecycle observe→analyze→update_local_memory→reason→generate_situation_report→publish→wait; `tick()` never-raises), `LocalMemory` (private named ring caches + kv), `SituationReport`, `SituationReportBus`. |
+| NEW | `core/brains/{vision,audio,spatial}/brain.py` | Sensor brains wrapping M14/M15/M16 via services; local caches; report "I see…/I hear…/user working in office". |
+| NEW | `core/brains/memory/tiers.py` | `TieredMemory` — Working→Short→Episodic→Semantic→Long→Core promotion (reinforcement/frequency/confidence/user-confirmation/importance); recall reinforces; forgetting; consolidation. |
+| NEW | `core/brains/memory/knowledge_graph.py` | `KnowledgeGraph` — semantic entity graph (person/object/room/concept/project/habit/preference/device/relationship) with typed edges, neighbors/related/shortest-path. |
+| NEW | `core/brains/memory/brain.py` | `MemoryBrain` — the SOLE memory owner (replaces direct memory access); wraps M2 MemoryService for durability; threads situations into the graph. |
+| NEW | `core/brains/{learning,emotion,automation,runtime}/brain.py` | Support brains (learning candidates, affective context, automation rules, runtime health) — foundations with real lifecycle + local memory. |
+| NEW | `core/brains/executive/brain.py` | **Executive Brain foundation (M18)** — consumes ONLY Unified Situations (refuses raw frames/audio/detections/scene-graphs/queries), owns Working Memory only, focus-by-priority, `decide()` (delegates to M5 planner when present), `request_memory` via the Memory Brain. |
+| NEW | `core/coordinator/{unified_situation,config,events,coordinator,service}.py` | `CognitiveCoordinator` — receive reports → merge → resolve conflicts → de-duplicate → maintain context → build Unified Situations → publish only to Executive (the gateway); reuses the M17 hub ConfidenceEngine + Timeline. `CoordinatorService` wires the whole society (report bus + brains + executive + coordinator) and runs a `cycle()`. |
+| NEW | `core/{brains,coordinator}/architecture.json` | Machine-readable manifests. |
+| NEW | `tests/test_brains.py` · `test_memory_brain.py` · `test_coordinator.py` · `test_executive_brain.py` (46) | Framework (reports/bus/local memory/lifecycle never-raises); sensor brains; Memory Brain (promotion/recall/forget/consolidate/durable/graph) + Knowledge Graph (nodes/edges/path/find); Coordinator (merge/dedup/conflict/context/gateway/events/cycle/graceful-degradation/no-circular-imports); Executive Brain (receive/refuse-raw/focus/decide/working-memory-only/memory-via-brain). |
+| NEW | `docs/M17_COGNITIVE_ARCHITECTURE.md` | Migration report, architecture + brain-mapping diagrams, Coordinator/Memory-Brain/Knowledge-Graph/Executive designs, situation-report spec, deployment, M19 work. |
+
+**No completed-milestone file rewritten.** Verified live: a society `cycle()` ticks all brains → reports merge into one Unified Situation (vision+audio+memory+runtime, conf 1.0) → Executive focuses on it and **refuses raw data**; Memory Brain promotes a user-confirmed preference to Core and threads `Satvik —prefers→ dark mode` into the Knowledge Graph; an emergency report fast-paths to the Executive. Audit: removed dead imports; **one-way dependencies** (services/hub never import brains/coordinator); pure stdlib; side-effect-free import (no threads/DB); no hardcoded paths; graceful degradation (a failing brain never stops the society). Full suite (M1–M17rev) green.
 
 ---
 
