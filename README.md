@@ -13,8 +13,9 @@ LLMs are an optional fallback, not a dependency.
 ## Quick start
 
 ```bash
-python setup.py                 # one-time: install dependencies
-# put API keys in a gitignored .env (optional — only for cloud fallback)
+python -m deploy.install        # one-time installer (deps, config, optional Groq key)
+# (or: python setup.py)         # install dependencies only
+python friday_launch.py         # production launcher: ordered startup + health report
 python friday_orb.py            # minimal floating-orb launcher (click to start)
 python friday_app.py            # desktop HUD (native window)
 python friday_spine.py          # full voice-mode boot
