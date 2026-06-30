@@ -1,0 +1,63 @@
+{
+  "subsystem": "spatial",
+  "milestone": "M16",
+  "title": "Spatial Cognition",
+  "summary": "Transforms FRIDAY from 'I see objects' into 'I understand the environment': object permanence, location, spatial relationships, movement, room structure, user position, and change. A persistent Scene Graph stores relationships (not pixels); a tracker maintains persistent object identity; a relationship engine, room model, user localizer, spatial memory, and query engine complete the picture. All cross-subsystem communication goes through the M16 service layer (dependency injection) — the spatial engine imports no other subsystem's internals.",
+  "philosophy": "Humans remember relationships, not pixels. Store: phone ON desk, BESIDE keyboard, INSIDE office, last seen 09:34, confidence 96%.",
+  "service_layer": {
+    "package": "core.services",
+    "rule": "Beginning with M16, subsystems communicate ONLY through services obtained from a ServiceContainer (DI). No subsystem imports another's internals.",
+    "services": ["runtime", "world_model", "memory", "attention", "vision", "audio", "spatial", "executive", "configuration", "plugin", "learning(placeholder)", "emotion(placeholder)"]
+  },
+  "components": {
+    "config": "SpatialConfig (enabled/tracking/scene_graph/relationship_reasoning/remember_locations/camera_timeout/confidence_threshold/object_timeout + nested sections)",
+    "scene_graph": "persistent SceneNode tree (UUID, object_class, label, parent, children, position, relationships, confidence, created/updated/last_seen, room, session, persistent_id); SQLite write-through",
+    "tracker": "persistent identity across frames: NEW/TRACKED/MOVED/LOST/RETURNED/REMOVED; greedy one-to-one match (no duplicate ids); long sessions",
+    "relationships": "on/under/inside/near/beside/left_of/right_of/behind/in_front_of/touching/attached_to/contained_by; recomputed + diffed each update",
+    "rooms": "extensible RoomModel (never hardcoded names); camera->room map + injectable classifier plugin",
+    "localization": "user state at_desk/working/sitting/standing/walking/entering_room/leaving_room/idle/unavailable/present -> World Model",
+    "memory": "SpatialMemory (SQLite): meaningful events (object/room/relationships/timestamp/confidence/session) + movement history; redundancy-suppressed; Chronicle forward via MemoryService",
+    "queries": "backend reasoning: where_is / last_seen / what_changed / which_room / what_moved",
+    "engine": "SpatialEngine orchestrator (rooms -> tracker -> scene graph -> relationships -> localization -> world model -> memory -> events)",
+    "service": "SpatialService facade (SpatialServiceProtocol) + autonomous poll loop"
+  },
+  "inputs": [
+    {"name": "SpatialObservation", "shape": "{object_class, label, confidence, position{x,y}, bbox?, camera_id, room?, track_id?, stable_id?, source, ts}", "via": "SpatialService.update_scene / poll (from VisionService)"}
+  ],
+  "outputs": [
+    {"name": "SceneNode", "id": "persistent_id (OBJ_*/stable_id; room:*)", "fields": ["object_class", "label", "parent", "children", "position", "relationships", "room", "status", "confidence", "last_seen"]},
+    {"name": "user_state", "via": "WorldModelService.observe('user','primary', ...)"},
+    {"name": "query_result", "via": "SpatialService.query(intent, **params)"}
+  ],
+  "events": ["spatial.object.detected", "spatial.object.tracked", "spatial.object.moved", "spatial.object.lost", "spatial.object.returned", "spatial.object.removed", "spatial.scene.updated", "spatial.relationship.changed", "spatial.room.changed", "spatial.user.moved", "spatial.user.located", "spatial.scene.loaded", "spatial.scene.saved"],
+  "service_interfaces_added": ["RuntimeServiceProtocol", "WorldModelServiceProtocol", "MemoryServiceProtocol", "AttentionServiceProtocol", "VisionServiceProtocol", "AudioServiceProtocol", "SpatialServiceProtocol", "ExecutiveServiceProtocol", "ConfigurationServiceProtocol", "PluginServiceProtocol", "LearningServiceProtocol", "EmotionServiceProtocol"],
+  "configuration": {
+    "spatial.enabled": true, "spatial.tracking": true, "spatial.scene_graph": true,
+    "spatial.relationship_reasoning": true, "spatial.remember_locations": true,
+    "spatial.camera_timeout": 5, "spatial.confidence_threshold": 0.70, "spatial.object_timeout": 120
+  },
+  "performance": ["incremental updates", "periodic pruning (object_timeout)", "bounded movement history", "in-memory authoritative + SQLite write-through", "thousands of observations per session"],
+  "deployment": ["cross-platform (pathlib, portable SQLite)", "no hardcoded paths (DB resolves to project root unless configured)", "camera abstraction via VisionService", "configuration-driven", "plugin support (PluginService)", "graceful degradation when services absent"],
+  "dependencies": {
+    "required": ["core.services"],
+    "communicates_via_services_only": ["runtime", "world_model", "memory", "attention", "vision", "audio", "executive", "learning", "emotion"]
+  },
+  "public_api": [
+    "SpatialService(config?, container?|subsystems..., config_dict?)",
+    "update_scene(observations, camera_id?, room?) -> summary",
+    "query(intent, **params) -> dict   # where_is/last_seen/what_changed/which_room/what_moved",
+    "snapshot() / poll(camera_id?) / save() / load() / set_camera_room(cam, room)",
+    "start() / stop() / dashboard() / metrics() / health() / manifest() / attach(runtime)",
+    "attach_to_container(container, config?)"
+  ],
+  "invariants": [
+    "subsystems communicate ONLY through services (no internal imports, no circular deps)",
+    "every object keeps ONE persistent identity (no duplicate ids)",
+    "the engine never raises (a spatial fault cannot crash the Cognitive Core)",
+    "relationships are recomputed + diffed; only changes are published/persisted",
+    "redundant spatial events are suppressed before memory",
+    "no hardcoded paths or room names; everything configuration-driven",
+    "no global state in the service container; full dependency injection",
+    "no side effects at import"
+  ]
+}
