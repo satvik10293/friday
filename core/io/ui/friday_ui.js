@@ -74,7 +74,7 @@ void main() {
 `;
 
 const fragmentSource = `
-precision mediump float;
+precision highp float;
 varying vec4 vColor;
 uniform vec3 accent;
 uniform float time;
@@ -992,20 +992,33 @@ function createJarvisScene(gl) {
 
 let jarvisScene = null;
 
-if (!gl) {
-  document.body.classList.add("no-webgl");
-} else {
+// The neural-core WebGL is decorative: if the context or shaders fail to build
+// (e.g. strict ANGLE validation in WebView2), degrade gracefully — never let it
+// abort the rest of the UI (command box, status polling, timeline).
+try {
+  if (!gl) throw new Error("no webgl context");
   jarvisScene = createJarvisScene(gl);
+} catch (err) {
+  jarvisScene = null;
+  document.body.classList.add("no-webgl");
+  console.warn("[FRIDAY] neural-core WebGL disabled:", err && err.message);
+}
 
-  function render(ms) {
+if (jarvisScene) {
+  const render = (ms) => {
     if (!shouldAnimateWebGL()) {
       requestAnimationFrame(render);
       return;
     }
     setCanvasSize();
-    jarvisScene.render(ms * 0.001);
+    try {
+      jarvisScene.render(ms * 0.001);
+    } catch (err) {
+      console.warn("[FRIDAY] neural-core render stopped:", err && err.message);
+      return;                              // stop the loop; UI keeps working
+    }
     requestAnimationFrame(render);
-  }
+  };
 
   document.addEventListener("visibilitychange", () => {
     webglRunning = !document.hidden;
