@@ -1039,6 +1039,36 @@ Verified live: `python friday_launch.py` → all 13 startup stages, **FRIDAY REA
 
 ---
 
+## RC1 — Release Candidate 1 (first installable build; packaging + validation; 3 new test files)
+
+RC1 turns M20 into an **installable** build for real-world testing — **not a feature
+milestone, no architecture change**. Packaging model: ship source + a self-provisioning
+bootstrap (creates its own `.venv` on first run) rather than freezing the multi-GB CPU-ML
+stack into a brittle single binary; a native `Setup.exe` is still producible via Inno Setup.
+**Completely additive**; pure stdlib for all new launcher/deploy code. **Status: complete,
+full suite green, RC package built + verified. NOT committed/tagged/pushed — awaiting your
+testing results.**
+
+| Status | File | What it is |
+|---|---|---|
+| NEW | `core/launcher/first_run.py` | `FirstRunWizard` — one-time (marker-guarded) env verify: OS + Python runtime + **mic/speakers/camera** probes (best-effort, never raise), **secure** Groq-key capture into gitignored `.env` (never printed/logged/returned), config write, "FRIDAY Ready". CLI `--json/--force/--no-key`. |
+| NEW | `core/launcher/diagnostics.py` | `Diagnostics` — operator screen: version/build, runtime status, **Cognitive Brains + health**, plugins, **active AI provider** (presence-based; key values never shown), event-bus/runtime status, CPU/RAM/threads. Text + JSON + optional stdlib-Tkinter `--gui`. |
+| EDIT (additive) | `core/launcher/launcher.py` · `__init__.py` | Launcher runs the first-run wizard (idempotent) before startup, exposes `diagnostics()`, adds `--diagnostics`/`--first-run` CLI. New exports. |
+| EDIT (additive) | `deploy/version.py` | Adds release channel: `CHANNEL="rc"`, `RC=1`, `release_tag()` → `0.20.0-rc1`; `metadata()` gains `channel`+`build`. |
+| NEW | `deploy/bootstrap.py` | Self-provisioning launcher: create `.venv` → install pinned deps → run first-run → launch (orb/app/launch/spine). Idempotent; only system Python needed to start. |
+| NEW | `deploy/rc.py` | RC orchestrator: portable package (via `build_package`) + generated **release notes** + curated **known-issues** + **test checklist** + verified **RC manifest** (build tag, checksum, size). CLI `--notes-only`. |
+| NEW | `deploy/windows/install.ps1` | No-tooling Windows installer: welcome + license → dir prompt → copy (excl. vcs/venv/data/caches/secrets) → config folder → **provision venv** → Desktop + Start-Menu shortcuts → **Add/Remove Programs** uninstall entry → verify → optional launch. `-Silent/-NoLaunch/-NoDeps`. |
+| NEW | `deploy/windows/uninstall.ps1` | Removes shortcuts + uninstall entry + program files; **preserves user data** (`data/`, `.env`, config) unless `-Purge`. |
+| NEW | `deploy/windows/friday.iss` | Optional Inno Setup script → native `Setup.exe`; wraps the same bootstrap (venv provisioned post-install; heavy deps never frozen in). |
+| NEW | `Install-FRIDAY.bat` · `Launch-FRIDAY.bat` | Double-click install + launch entry points (route to `install.ps1` / `bootstrap.py`; pass-through args). |
+| NEW | `tests/test_first_run.py` · `test_diagnostics.py` · `test_rc_build.py` | Idempotent first-run; **secret never leaks** into report/env-report; graceful device probes; provider presence-only; verified/clean RC package (no `.env`/`.db`/`.venv`; ships installer+bootstrap+launchers); build tag = rc. |
+| NEW | `docs/RC1_RELEASE.md` | RC1 deliverables, install (PS/portable/Inno), first-run, startup, diagnostics, logging, packaging, test summary, known issues, deliverable locations. |
+| EDIT (additive) | `README.md` · `CLAUDE.md` | Install/run/operate quick-start + launcher/deploy architecture rows updated for RC1. |
+
+Verified live: `python friday_launch.py --diagnostics` → **FRIDAY READY in 348 ms**, diagnostics reports **v0.20.0-rc1**, 8 brains healthy, provider detection, vitals; first-run wizard detects OS/mic(22)/speakers(24)/camera and is idempotent; `python -m deploy.rc` built `friday-0.20.0.zip` (658 files, SHA-256 verified, **zero leaked secrets/weights/DBs**) + release notes + RC manifest. Full suite (M1–M20 + RC1) green.
+
+---
+
 ## M10 delivery summary (reply, verbatim)
 
 ### M10 delivered — Mission Control + Architecture Hardening

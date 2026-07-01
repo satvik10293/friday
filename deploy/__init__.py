@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from .build import build_package, verify_package
 from .install import Installer
+from .rc import build_rc, release_notes
 from .release import generate_changelog, release_manifest, verify_release
-from .version import VERSION, metadata, python_ok
+from .version import VERSION, metadata, python_ok, release_tag
 
-__all__ = ["VERSION", "metadata", "python_ok", "Installer", "build_package",
-           "verify_package", "generate_changelog", "release_manifest", "verify_release"]
+__all__ = ["VERSION", "metadata", "python_ok", "release_tag", "Installer", "build_package",
+           "verify_package", "generate_changelog", "release_manifest", "verify_release",
+           "build_rc", "release_notes"]
