@@ -1,5 +1,5 @@
 <#
-    deploy/windows/uninstall.ps1 — FRIDAY V3 (RC1)
+    deploy/windows/uninstall.ps1 - FRIDAY V3 (RC1)
 
     Removes a FRIDAY installation: shortcuts, the per-user uninstall registry entry, and
     (optionally) the installation directory. By default it PRESERVES user data (data\,

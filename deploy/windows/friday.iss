@@ -1,8 +1,8 @@
-; deploy/windows/friday.iss — FRIDAY V3 (RC1) Inno Setup script
+; deploy/windows/friday.iss - FRIDAY V3 (RC1) Inno Setup script
 ;
 ; Produces a native Windows installer (Setup .exe) from the FRIDAY source tree. Requires
 ; Inno Setup 6+ (https://jrsoftware.org/isinfo.php). This is the OPTIONAL "compiled
-; installer" path — the PowerShell installer (install.ps1) needs no external tooling and
+; installer" path - the PowerShell installer (install.ps1) needs no external tooling and
 ; is the default for RC1. Compile from the repo root:
 ;
 ;     iscc deploy\windows\friday.iss

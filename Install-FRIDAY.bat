@@ -1,5 +1,5 @@
 @echo off
-REM Install-FRIDAY.bat — FRIDAY V3 (RC1)
+REM Install-FRIDAY.bat - FRIDAY V3 (RC1)
 REM Double-click to install FRIDAY. Runs the PowerShell installer (no external tooling
 REM required): copies files, provisions an isolated .venv, and creates shortcuts.
 setlocal
