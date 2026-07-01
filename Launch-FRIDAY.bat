@@ -1,5 +1,5 @@
 @echo off
-REM Launch-FRIDAY.bat — FRIDAY V3 (RC1)
+REM Launch-FRIDAY.bat - FRIDAY V3 (RC1)
 REM Double-click to start FRIDAY. Uses the provisioned .venv if present; otherwise the
 REM bootstrap provisions it on first run. Pass-through args (e.g. --diagnostics) go to the
 REM bootstrap/launcher.
