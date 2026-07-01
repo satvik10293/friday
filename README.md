@@ -13,17 +13,33 @@ LLMs are an optional fallback, not a dependency.
 ## Quick start
 
 ```bash
+# Install (RC1) ──────────────────────────────────────────────────────────────
+Install-FRIDAY.bat              # Windows: full installer (copy + venv + shortcuts)
+python deploy/bootstrap.py      # any OS: provision an isolated .venv, then launch
+# ── or set up manually ──
 python -m deploy.install        # one-time installer (deps, config, optional Groq key)
 # (or: python setup.py)         # install dependencies only
+
+# Run ────────────────────────────────────────────────────────────────────────
+Launch-FRIDAY.bat               # Windows: start via the provisioned venv
 python friday_launch.py         # production launcher: ordered startup + health report
 python friday_orb.py            # minimal floating-orb launcher (click to start)
 python friday_app.py            # desktop HUD (native window)
 python friday_spine.py          # full voice-mode boot
-python -m pytest -q             # run the test suite
+
+# Operate ────────────────────────────────────────────────────────────────────
+python -m core.launcher.first_run     # first-run wizard (devices + key + config)
+python -m core.launcher.diagnostics   # diagnostics screen (--gui / --json)
+python -m deploy.rc                    # build the Release Candidate into dist/
+python -m pytest -q                    # run the test suite
 ```
 
-The **floating orb** (`friday_orb.py`) is a tiny, always-on-top launcher (pure stdlib
-Tkinter, cross-platform): drag it anywhere, click to launch FRIDAY, right-click for a menu.
+The first **installable** build is **Release Candidate 1** (`0.20.0-rc1`) — see
+`docs/RC1_RELEASE.md`. FRIDAY ships as source + a self-provisioning bootstrap (it creates
+its own `.venv` on first run); a native `Setup.exe` can be compiled via
+`deploy/windows/friday.iss` (Inno Setup). The **floating orb** (`friday_orb.py`) is a tiny,
+always-on-top launcher (pure stdlib Tkinter, cross-platform): drag it anywhere, click to
+launch FRIDAY, right-click for a menu.
 
 ---
 

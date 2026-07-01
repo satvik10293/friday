@@ -29,6 +29,8 @@ data/local_qa.npz
 data/local_qa.json
 data/codex_backups/
 data/core_backup_*/
+data/first_run.json
+data/uninstall.json
 core/world_data/
 # Migration framework backups (M10) — regenerable snapshots
 **/migration_backups/

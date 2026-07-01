@@ -13,6 +13,15 @@ RELEASE = "M20"
 CODENAME = "Productization & Release Engineering"
 PYTHON_REQUIRES = (3, 10)
 
+# Release channel. The first installable, real-world testing build is Release Candidate 1.
+CHANNEL = "rc"                   # rc | stable
+RC = 1                           # release-candidate number (ignored when CHANNEL == "stable")
+
+
+def release_tag() -> str:
+    """Human/git-friendly build tag, e.g. '0.20.0-rc1' or '0.20.0'."""
+    return f"{VERSION}-rc{RC}" if CHANNEL == "rc" else VERSION
+
 
 def metadata() -> dict:
     return {
@@ -20,6 +29,8 @@ def metadata() -> dict:
         "version": VERSION,
         "release": RELEASE,
         "codename": CODENAME,
+        "channel": CHANNEL,
+        "build": release_tag(),
         "python_requires": ">=%d.%d" % PYTHON_REQUIRES,
         "current_python": "%d.%d.%d" % sys.version_info[:3],
         "private": True,

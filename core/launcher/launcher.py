@@ -16,6 +16,7 @@ import json
 import logging
 from typing import Optional
 
+from .first_run import FirstRunWizard
 from .health import HealthMonitor
 from .logging_config import configure_logging
 from .platform_adapter import PlatformAdapter
@@ -63,11 +64,17 @@ class Launcher:
             (report["missing"] if missing else report["available"])[group] = missing or list(mods)
         return report
 
+    # ── first run (idempotent; runs the wizard only once) ────────────────────────
+    def first_run(self, *, force: bool = False, groq_key: Optional[str] = None) -> dict:
+        wizard = FirstRunWizard(platform=self.platform)
+        return wizard.run(force=force, groq_key=groq_key).to_dict()
+
     # ── boot ─────────────────────────────────────────────────────────────────────
     def run(self) -> dict:
         self.platform.ensure_dirs()
         log_report = configure_logging(log_dir=self.platform.log_dir(),
                                        debug=(self.profile == "development"))
+        first_run = self.first_run()               # idempotent: no-op after the first boot
         deps = self.validate_dependencies()
         sequence = StartupSequence(config=self.config, headless=self.headless,
                                    start_runtime=self.start_runtime)
@@ -81,10 +88,15 @@ class Launcher:
             "friday": "ready" if startup.ready else "degraded",
             "profile": self.profile, "headless": self.headless,
             "platform": self.platform.info(), "logging": log_report,
-            "dependencies": deps, "startup": startup.to_dict(),
+            "first_run": first_run, "dependencies": deps, "startup": startup.to_dict(),
             "health": health.diagnostics(),
         }
         return self.report
+
+    # ── diagnostics (operator view of the live components) ───────────────────────
+    def diagnostics(self) -> dict:
+        from .diagnostics import Diagnostics
+        return Diagnostics(components=self.components).report()
 
     # ── optional UI (guarded; never required) ────────────────────────────────────
     def start_ui(self) -> bool:
@@ -109,11 +121,24 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--headless", action="store_true", help="do not start UI/voice")
     parser.add_argument("--start-runtime", action="store_true", help="start the async runtime loop")
     parser.add_argument("--json", action="store_true", help="print the startup report as JSON")
+    parser.add_argument("--diagnostics", action="store_true",
+                        help="boot, then print the diagnostics screen and exit")
+    parser.add_argument("--first-run", action="store_true",
+                        help="run the first-run wizard interactively and exit")
     args = parser.parse_args(argv)
+
+    if args.first_run:
+        from .first_run import main as first_run_main
+        return first_run_main([])            # interactive wizard, then exit
 
     launcher = Launcher(profile=args.profile, headless=args.headless or True,
                         start_runtime=args.start_runtime)
     report = launcher.run()
+    if args.diagnostics:
+        print(launcher.diagnostics() if args.json else "")
+        from .diagnostics import Diagnostics
+        print(Diagnostics(components=launcher.components).render())
+        return 0 if report["friday"] == "ready" else 1
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:
