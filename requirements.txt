@@ -45,6 +45,9 @@ mediapipe
 pycaw ; sys_platform == "win32"
 comtypes ; sys_platform == "win32"
 
+# ── Scheduling (periodic tasks / reminders) ─────────────────────────
+schedule
+
 # ── Actions / messaging ──────────────────────────────────────────────
 pywhatkit
 
