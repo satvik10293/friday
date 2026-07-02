@@ -1,0 +1,497 @@
+/* =====================================================================
+   FRIDAY Orb UI — orb.css
+   Dark, premium, glassmorphic. Runs inside a frameless pywebview window
+   (Edge WebView2). Zero external requests: system-ui font stack only.
+   All state-reactive colour/motion is driven from orb.js; this sheet
+   holds layout, glass surfaces, and smooth transitions.
+   ===================================================================== */
+
+:root {
+  /* Accent + palette are re-written per state by orb.js */
+  --accent: #4f80ff;
+  --core:   #1f388c;
+  --glow:   #0d1f61;
+  --dim:    #04091f;
+  --orb-size: 260px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  /* Frameless window: transparent isn't reliable in WebView2, so a dark
+     near-black radial over the #05070d base. */
+  background:
+    radial-gradient(ellipse 80% 65% at 50% 42%,
+      #0a0f1e 0%, #05070d 68%, #03040a 100%);
+  color: #eef2ff;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#app {
+  position: relative;
+  /* The whole background is draggable (frameless window move) */
+}
+
+/* ── Stage / orb centring ─────────────────────────────────────────── */
+.stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.orb {
+  position: relative;
+  width: var(--orb-size);
+  height: var(--orb-size);
+  perspective: 700px;
+  pointer-events: auto;          /* the orb itself receives clicks */
+  cursor: pointer;
+}
+
+/* SVG filter host — hidden, zero footprint */
+#orb-filters { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* Wide ambient halo behind everything */
+.halo {
+  position: absolute;
+  inset: 5%;
+  border-radius: 50%;
+  background: var(--dim);
+  pointer-events: none;
+  transition: background 0.7s ease;
+}
+
+/* Breathing wrapper — orb.js drives scale() here */
+.orb-wrap {
+  position: relative;
+  width: var(--orb-size);
+  height: var(--orb-size);
+  transform-origin: center;
+  transform-style: preserve-3d;
+}
+
+/* Soft coloured glow layer */
+.glow {
+  position: absolute;
+  inset: 12%;
+  border-radius: 50%;
+  background: var(--glow);
+  filter: blur(28px);
+  transition: background 0.7s ease;
+  pointer-events: none;
+}
+
+/* Main sphere: 3D-shaded radial gradient + 4D SVG displacement filter */
+.sphere {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 34% 30%,
+    rgba(255, 255, 255, 0.62) 0%,
+    rgba(255, 255, 255, 0.15) 8%,
+    var(--core) 28%,
+    var(--glow) 62%,
+    var(--dim) 100%
+  );
+  filter: url(#d4);
+  box-shadow:
+    inset -10px -10px 32px rgba(0, 0, 0, 0.75),
+    inset  5px   5px 22px rgba(255, 255, 255, 0.10);
+  transition: background 0.7s ease;
+}
+
+/* Specular "Phong" highlight */
+.specular {
+  position: absolute;
+  left: 21%;
+  top: 17%;
+  width: 30%;
+  height: 26%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.72) 0%, transparent 100%);
+  filter: url(#bloom);
+  pointer-events: none;
+}
+
+/* Fresnel rim — orb.js drives the box-shadow colour/intensity */
+.rim {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  transition: box-shadow 0.5s ease;
+}
+
+/* Emotion colour overlay (subtle) */
+.emotion {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  mix-blend-mode: screen;
+  transition: opacity 0.8s ease, background 0.8s ease;
+}
+
+/* ── CSS 3D perspective rings ─────────────────────────────────────── */
+.rings { position: absolute; inset: 0; pointer-events: none; }
+
+.ring-slot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  transform-style: preserve-3d;
+}
+.slot1 { width: 306px; height: 306px; }
+.slot2 { width: 282px; height: 282px; }
+.slot3 { width: 256px; height: 256px; }
+
+.ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  transition: border-color 0.7s ease, box-shadow 0.7s ease;
+}
+.ring1 { border: 1.5px solid rgba(79, 128, 255, 0.33); }
+.ring2 { border: 1px solid rgba(79, 128, 255, 0.23); }
+.ring3 { border: 1px dashed rgba(79, 128, 255, 0.16); }
+
+/* Notification flash overlay */
+.flash {
+  position: absolute;
+  inset: -12%;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* ── State badge (top-centre) ─────────────────────────────────────── */
+.badge {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 18px;
+  border-radius: 40px;
+  background: rgba(255, 255, 255, 0.045);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+  z-index: 20;
+  transition: border-color 0.5s ease, background 0.5s ease;
+}
+.badge-emoji { font-size: 16px; line-height: 1; }
+.badge-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: #fff;
+  opacity: 0.78;
+}
+
+/* ── Speech panel (glassmorphic, above orb) ───────────────────────── */
+.speech {
+  position: absolute;
+  left: 50%;
+  bottom: 62%;
+  transform: translate(-50%, 12px);
+  width: min(540px, 88vw);
+  z-index: 30;
+  padding: 16px 20px;
+  border-radius: 18px;
+  background: rgba(2, 4, 16, 0.82);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(79, 128, 255, 0.25);
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.06),
+    0 8px 32px rgba(0, 0, 0, 0.6),
+    0 0 60px rgba(79, 128, 255, 0.08);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+              border-color 0.5s ease, box-shadow 0.5s ease, visibility 0.4s;
+}
+.speech.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+}
+.speech-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.speech-dots { display: inline-flex; gap: 4px; }
+.speech-dots i {
+  display: inline-block;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: dot 1.2s ease-in-out infinite;
+}
+.speech-dots i:nth-child(2) { animation-delay: 0.2s; }
+.speech-dots i:nth-child(3) { animation-delay: 0.4s; }
+.speech-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  opacity: 0.9;
+}
+.speech-text {
+  color: #e8eeff;
+  font-size: 15px;
+  line-height: 1.72;
+  letter-spacing: 0.015em;
+  margin: 0;
+  min-height: 1.72em;
+}
+.speech-text .caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--accent);
+  margin-left: 2px;
+  vertical-align: middle;
+  animation: pulse 0.7s ease infinite;
+}
+
+/* ── Mode indicator ───────────────────────────────────────────────── */
+.mode {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 13px;
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.03);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  pointer-events: none;
+  z-index: 20;
+  transition: all 0.4s ease;
+}
+.mode-icon { font-size: 12px; line-height: 1; opacity: 0.7; }
+.mode-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+.mode.mode-text .mode-label { color: rgba(255, 255, 255, 0.4); }
+
+/* ── Interaction hint ─────────────────────────────────────────────── */
+.hint {
+  position: absolute;
+  top: 20px;
+  right: 18px;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.16);
+  pointer-events: none;
+  z-index: 20;
+}
+
+/* ── Context menu ─────────────────────────────────────────────────── */
+.context-menu {
+  position: fixed;
+  width: 208px;
+  background: rgba(6, 8, 20, 0.94);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 14px;
+  padding: 8px 0;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.7), 0 0 0 0.5px rgba(255, 255, 255, 0.04);
+  z-index: 9999;
+  animation: slideUp 0.16s ease;
+}
+.context-menu[hidden] { display: none; }
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 16px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.ctx-item:hover { background: rgba(255, 255, 255, 0.06); }
+.ctx-item .ctx-icon { font-size: 14px; line-height: 1; width: 16px; text-align: center; }
+.ctx-item.danger { color: #f87171; }
+.ctx-item.danger:hover { background: rgba(248, 113, 113, 0.10); }
+.ctx-divider { height: 1px; background: rgba(255, 255, 255, 0.07); margin: 4px 0; }
+
+/* ── Dashboard overlay ────────────────────────────────────────────── */
+.dashboard {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  animation: fadeIn 0.3s ease;
+}
+.dashboard[hidden] { display: none; }
+.dash-panel {
+  width: min(900px, 94vw);
+  height: min(640px, 90vh);
+  display: flex;
+  overflow: hidden;
+  border-radius: 24px;
+  background: rgba(5, 7, 18, 0.97);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.8), 0 0 0 0.5px rgba(255, 255, 255, 0.05);
+  animation: slideUp 0.3s cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+.dash-side {
+  width: 210px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.02);
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 20px 0;
+}
+.dash-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.dash-logo-orb {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.5) 0%, #1a40cc 30%, #060e30 100%);
+  box-shadow: 0 0 16px 4px rgba(79, 128, 255, 0.3);
+}
+.dash-logo-title { font-size: 13px; font-weight: 800; letter-spacing: 0.12em; color: #fff; }
+.dash-logo-sub { font-size: 10px; color: rgba(255, 255, 255, 0.35); letter-spacing: 0.06em; }
+.dash-nav { flex: 1; padding: 12px 10px; overflow: auto; }
+.dash-tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  margin-bottom: 2px;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dash-tab .dash-tab-icon { font-size: 15px; width: 18px; text-align: center; }
+.dash-tab:hover { background: rgba(255, 255, 255, 0.04); }
+.dash-tab.active {
+  background: rgba(79, 128, 255, 0.15);
+  border-color: rgba(79, 128, 255, 0.25);
+  color: #7aa8ff;
+  font-weight: 600;
+}
+.dash-close-wrap { padding: 12px 10px; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.dash-close {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.15);
+  color: #f87171;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.dash-close:hover { background: rgba(248, 113, 113, 0.15); }
+.dash-content { flex: 1; overflow: auto; padding: 32px; }
+.dash-head { margin-bottom: 26px; }
+.dash-head-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.dash-title { font-size: 22px; font-weight: 700; color: #f0f4ff; margin: 0; }
+.dash-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: rgba(79, 128, 255, 0.15);
+  border: 1px solid rgba(79, 128, 255, 0.3);
+  color: #7aa8ff;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.dash-desc { color: rgba(255, 255, 255, 0.45); font-size: 14px; line-height: 1.6; margin: 0; }
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+.dash-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 20px;
+}
+.dash-card .bar1 {
+  width: 60%; height: 10px; border-radius: 5px; margin-bottom: 10px;
+  background-image: linear-gradient(90deg,
+    rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 200% auto;
+  animation: shimmer 2s infinite;
+}
+.dash-card .bar2 { width: 90%; height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.05); }
+
+/* ── Keyframes ────────────────────────────────────────────────────── */
+@keyframes fadeIn  { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes dot     { 0%, 80%, 100% { transform: scale(0.5); opacity: 0.35; } 40% { transform: scale(1); opacity: 1; } }
+@keyframes pulse   { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+@keyframes shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 3px; }

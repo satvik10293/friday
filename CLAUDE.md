@@ -48,7 +48,7 @@ in `setup.py`, never in `core/__init__.py`. Run any module's CLI with `-m`, e.g.
 | `core/brain/` | `friday_brain`, `friday_neural`, `friday_local`, `friday_context`, `friday_critic`, `friday_codex`, `friday_planner` | Respond pipeline; cloud LLM chain + **local reasoning QA**; code/plan specialists |
 | `core/knowledge/` | `friday_world`, `friday_sovereign`, `friday_chronicle`, `friday_learning`, `friday_pdf` | Vault store + FAISS search; fact extraction; memory; preference learning; PDF→notes |
 | `core/persona/` | `friday_psyche`, `friday_empath` | Identity, mood, emotional tone |
-| `core/io/` | `friday_face`, `friday_action`, `friday_proactive`, `friday_visual`, `friday_notify`, `friday_phone`, `friday_whatsapp` | Web UI; screen/desktop actions; proactive watcher; visual answers; notifications; messaging |
+| `core/io/` | `friday_face`, `friday_action`, `friday_proactive`, `friday_visual`, `friday_notify`, `friday_phone`, `friday_whatsapp`, `orb/` (M20-rev) | Web UI; screen/desktop actions; proactive watcher; visual answers; notifications; messaging. **`orb/`** = the primary floating-orb UI: native frameless pywebview window driven only via the Runtime Event Bus (`controller`, `window`, `speech_bridge`, `state`, `events`, `config`, `ui/orb.{html,css,js}`); no AI logic in the UI. Entry: `friday_orb_app.py`. Docs: `docs/M20_ORB_UI.md`. |
 | `core/agents/` | `friday_codex_agent` | 24/7 self-check → improvement proposals (human-gated) |
 | `core/infra/` | `friday_signal`, `friday_scheduler`, `friday_secrets` | Async event bus; periodic tasks; `.env` secret loading |
 | `core/voice/` | `friday_stt`, `friday_tts`, `friday_voice`, `friday_senses`, `friday_voice_loop`, `friday_audio`, `friday_mic_test` | STT (faster-whisper) + TTS (edge-tts) + mic loop |
