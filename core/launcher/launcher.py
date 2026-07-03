@@ -131,8 +131,8 @@ def main(argv: Optional[list] = None) -> int:
         from .first_run import main as first_run_main
         return first_run_main([])            # interactive wizard, then exit
 
-    launcher = Launcher(profile=args.profile, headless=args.headless or True,
-                        start_runtime=args.start_runtime)
+    launcher = Launcher(profile=args.profile, headless=args.headless,
+                        start_runtime=args.start_runtime or not args.headless)
     report = launcher.run()
     if args.diagnostics:
         print(launcher.diagnostics() if args.json else "")

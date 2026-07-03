@@ -15,7 +15,7 @@ from typing import Optional
 import numpy as np
 
 _WORD = re.compile(r"[a-z0-9]+")
-_DEFAULT = ("friday", "athena")
+_DEFAULT = ("friday", "hey friday", "okay friday", "athena")
 
 
 def _similar(a: str, b: str) -> float:
@@ -56,10 +56,14 @@ class WakeWordEngine:
     # ── detection ───────────────────────────────────────────────────────────────
     def detect(self, text: str) -> tuple[bool, Optional[str], float]:
         """Detect a wake word in a text hint. Returns (hit, word, confidence)."""
-        tokens = _WORD.findall((text or "").lower())
+        normalized = " ".join(_WORD.findall((text or "").lower()))
+        tokens = normalized.split()
         best_word, best_score = None, 0.0
-        for tok in tokens:
-            for w in self._words:
+        for w in self._words:
+            if " " in w and w in normalized:
+                best_word, best_score = w, 1.0
+                continue
+            for tok in tokens:
                 s = _similar(tok, w)
                 if s > best_score:
                     best_word, best_score = w, s
@@ -74,7 +78,11 @@ class WakeWordEngine:
     def strip_wake_word(self, text: str) -> str:
         """Remove the wake word prefix so the command is clean for the IOS."""
         tokens = (text or "").split()
-        if tokens and any(_similar(tokens[0].lower().strip(".,!?"), w) >= self._threshold
+        lowered = " ".join(_WORD.findall((text or "").lower()))
+        for w in sorted(self._words, key=lambda x: len(x.split()), reverse=True):
+            if " " in w and lowered.startswith(w):
+                return " ".join((text or "").split()[len(w.split()):]).strip()
+        if tokens and any(" " not in w and _similar(tokens[0].lower().strip(".,!?"), w) >= self._threshold
                           for w in self._words):
             return " ".join(tokens[1:]).strip()
         return text

@@ -29,24 +29,26 @@ if str(_ROOT) not in sys.path:
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
+    logging.basicConfig(level=logging.ERROR, format="%(levelname)s [%(name)s] %(message)s")
     log = logging.getLogger("friday.orb.app")
 
     from core.io.orb import OrbController, OrbView, OrbWindow
+    from core.launcher import Launcher
 
-    # 1. runtime (event bus). Best-effort: the orb still opens if it can't start.
-    runtime = None
-    try:
-        from core.runtime import get_runtime
-        runtime = get_runtime()
-        runtime.start(timeout=10)
-    except Exception as e:  # noqa: BLE001
-        log.warning("runtime did not start (%s); orb runs in a degraded, local-only mode", e)
+    # 1. production startup: runtime, brains, memory, executive, voice, wake word, orb.
+    launcher = Launcher(profile="production", headless=False, start_runtime=True)
+    report = launcher.run()
+    runtime = launcher.components.get("runtime")
+    controller = launcher.components.get("orb")
 
-    # 2. controller on the runtime bus
-    controller = OrbController(bus=runtime)
+    # 2. controller on the runtime bus. If startup degraded before the orb stage, keep the
+    # native orb available as the recovery surface.
+    if controller is None:
+        controller = OrbController(bus=runtime)
+        controller.start()
 
-    # 3. also reflect the live 3.0 global bus (where the running app emits expression signals)
+    # 3. also reflect the live 3.0 global bus (where the running app emits expression
+    # signals). StartupSequence already does this for the normal path; this is harmless.
     try:
         from core.infra.friday_signal import get_bus
         controller.add_source_bus(get_bus())
@@ -56,13 +58,9 @@ def main() -> int:
     # 4. native window + view
     window = OrbWindow(controller, controller.settings)
     controller.attach_view(OrbView(window))
-    controller.start()
-
-    log.info("FRIDAY Orb ready (mode: %s). Opening the native window...", controller.mode)
     if not window.start():                    # blocks until the window closes
         return 1
-    log.info("FRIDAY Orb closed.")
-    return 0
+    return 0 if report.get("friday") == "ready" else 1
 
 
 if __name__ == "__main__":

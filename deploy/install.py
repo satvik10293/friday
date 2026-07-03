@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from core.launcher.platform_adapter import PlatformAdapter
+from core.launcher.first_run import FirstRunWizard
 
 from .version import metadata, python_ok
 
@@ -109,6 +110,36 @@ class Installer:
         self.platform.ensure_dirs()
         return {"ok": True, "log_dir": str(self.platform.log_dir())}
 
+    def run_first_run_checks(self, *, groq_key: Optional[str] = None) -> dict:
+        wizard = FirstRunWizard(root=self.root, platform=self.platform)
+        if self.dry_run:
+            checks = [c.to_dict() for c in wizard.run_checks()]
+            ok = next((c["status"] == "ok" for c in checks if c["name"] == "runtime"), False)
+            return {"ok": ok, "dry_run": True, "checks": checks,
+                    "config_written": False, "secret_configured": False}
+        report = wizard.run(groq_key=groq_key, force=True).to_dict()
+        return {"ok": report.get("ok", False), **report}
+
+    def prepare_databases(self) -> dict:
+        data = self.platform.data_dir()
+        if self.dry_run:
+            return {"ok": True, "dry_run": True, "data_dir": str(data)}
+        try:
+            data.mkdir(parents=True, exist_ok=True)
+            return {"ok": True, "data_dir": str(data)}
+        except OSError as e:
+            return {"ok": False, "reason": str(e)}
+
+    def verify_models(self) -> dict:
+        registry = self.root / "models" / "registry.json"
+        if not registry.exists():
+            return {"ok": False, "reason": "models/registry.json missing"}
+        try:
+            payload = json.loads(registry.read_text(encoding="utf-8"))
+        except ValueError as e:
+            return {"ok": False, "reason": f"invalid model registry: {e}"}
+        return {"ok": True, "registry": str(registry), "models": len(payload)}
+
     # ── orchestration ────────────────────────────────────────────────────────────
     def run(self, *, groq_key: Optional[str] = None, env_path: Optional[Path] = None) -> dict:
         steps = {
@@ -116,6 +147,9 @@ class Installer:
             "dependencies": self.install_dependencies(),
             "config": self.validate_config(),
             "secret": self.configure_secret(groq_key=groq_key, env_path=env_path),
+            "first_run": self.run_first_run_checks(groq_key=groq_key),
+            "databases": self.prepare_databases(),
+            "models": self.verify_models(),
             "shortcut": self.create_shortcut(),
             "logs": self.prepare_logs(),
             "uninstall": self.write_uninstall_info(),
