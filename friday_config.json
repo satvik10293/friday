@@ -9,6 +9,11 @@
   "elevenlabs_api_key": "",
   "owner_name": "Satvik",
   "friday_version": "3.0",
+  "wake_words": [
+    "friday",
+    "hey friday",
+    "okay friday"
+  ],
   "voice": {
     "engine": "edge-tts",
     "voice_id": "en-US-GuyNeural"

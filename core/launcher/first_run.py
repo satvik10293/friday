@@ -164,8 +164,21 @@ class FirstRunWizard:
         if cfg.exists():
             return True
         try:
-            cfg.write_text(json.dumps({"owner_name": "Satvik", "environment": "production"},
-                                      indent=2), encoding="utf-8")
+            cfg.write_text(json.dumps({
+                "owner_name": "Satvik",
+                "environment": "production",
+                "wake_words": ["friday", "hey friday", "okay friday"],
+                "ui": {
+                    "primary_interface": "orb",
+                    "voice_mode_default": True,
+                    "speech_panel_enabled": True,
+                    "speech_panel_auto_hide": True,
+                    "orb_always_on_top": True,
+                    "remember_position": True,
+                    "remember_size": True,
+                    "animation_quality": "high",
+                },
+            }, indent=2), encoding="utf-8")
             return True
         except OSError:
             return False
