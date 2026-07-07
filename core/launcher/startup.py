@@ -22,7 +22,7 @@ log = logging.getLogger("friday.launcher.startup")
 
 STARTUP_STAGES = ("configuration", "kernel", "runtime", "brains", "memory", "knowledge",
                   "perception", "simulation", "coordinator", "executive", "plugins",
-                  "intelligence", "voice", "wake_word", "ui", "ready")
+                  "intelligence", "mind", "voice", "wake_word", "ui", "ready")
 
 
 @dataclass
@@ -197,6 +197,31 @@ class StartupSequence:
         loaded = ios.health_report().get("models_loaded", 0)
         return "ok", f"intelligence OS online ({loaded} local models)"
 
+    def _stage_mind(self):
+        """Internal Mind (M23): thought stream + self model + background cognition."""
+        from core.cognition.background import BackgroundCognition
+        from core.cognition.thoughts import ThoughtStream
+        from core.observability.decision_log import get_decision_log
+        from core.self_model import SelfModel
+
+        thoughts = ThoughtStream()
+        self.components["thoughts"] = thoughts
+        self_model = SelfModel(ios=self.components.get("intelligence"),
+                               decision_log=get_decision_log(),
+                               runtime=self.components.get("runtime"),
+                               thoughts=thoughts)
+        self.components["self_model"] = self_model
+        background = BackgroundCognition(
+            thoughts=thoughts, memory=self.components.get("memory_service"),
+            self_model=self_model)
+        self.components["background_cognition"] = background
+        runtime = self.components.get("runtime")
+        if runtime is not None and self.start_runtime:
+            background.attach(runtime)
+        thoughts.think("observation", "I'm awake. Systems are coming online.",
+                       source="startup")
+        return "ok", "thought stream + self model + background cognition online"
+
     def _stage_voice(self):
         if self.headless:
             return "skipped", "headless"
@@ -210,8 +235,12 @@ class StartupSequence:
         if ios is not None:
             from .conversation import ConversationBridge
             bridge = ConversationBridge(
-                ios, memory=self.components.get("memory_service"))
+                ios, memory=self.components.get("memory_service"),
+                self_model=self.components.get("self_model"))
             self.components["conversation"] = bridge
+            self_model = self.components.get("self_model")
+            if self_model is not None:
+                self_model._conversation = bridge
         service = get_listening_service(
             microphone=LiveMicrophone(), intelligence_os=bridge,
             wake_required=False, store_audio=False)

@@ -139,11 +139,12 @@ class ConversationBridge:
     spoken asynchronously, uncertainty handled instead of ignored."""
 
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
-                 memory=None, speak_answers: bool = True,
+                 memory=None, self_model=None, speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
         self.ios = ios
         self.memory = memory                # M2 MemoryService (One Memory, Phase C)
+        self.self_model = self_model        # Self Model (Internal Mind, M23)
         self.speech = speech if speech is not None else _SpeechOutput()
         self.speak_answers = speak_answers
         self.clarify_threshold = clarify_threshold
@@ -185,6 +186,33 @@ class ConversationBridge:
         except Exception:  # noqa: BLE001 — observability must not break a turn
             log.debug("decision log write failed", exc_info=True)
 
+    def _introspect(self, command: str) -> Optional[str]:
+        """Truthful first-person answers straight from the Self Model."""
+        if self.self_model is None:
+            return None
+        q = (command or "").lower()
+        try:
+            if re.search(r"\bwhat (are you|r u) doing\b", q):
+                return self.self_model.what_am_i_doing()
+            if re.search(r"\bwhat can you (do|help)\b", q):
+                return self.self_model.what_can_i_do()
+            if re.search(r"\bwhat (can'?t|cannot) you do\b", q):
+                return self.self_model.what_cant_i_do()
+        except Exception:  # noqa: BLE001
+            log.debug("self model introspection failed", exc_info=True)
+        return None
+
+    def _respond_directly(self, turn: int, source: str, answer: str, t0: float):
+        from core.intelligence.router import RouterResponse
+        response = RouterResponse(task=source, complexity="trivial",
+                                  strategy=source, ok=True, answer=answer,
+                                  confidence=0.95)
+        self._record(turn=turn, route=[source], response=response,
+                     latency_ms=int((time.perf_counter() - t0) * 1000))
+        if self.speak_answers:
+            self.speech.say(answer)
+        return response
+
     def _clarify(self, turn: int, heard: float, t0: float):
         from core.intelligence.router import RouterResponse
         response = RouterResponse(task="clarify", complexity="trivial",
@@ -207,6 +235,11 @@ class ConversationBridge:
         heard = ctx.get("audio_confidence")
         if heard is not None and float(heard) < self.clarify_threshold:
             return self._clarify(turn, float(heard), t0)
+
+        # self-questions are answered from the Self Model, not a language model
+        introspective = self._introspect(command)
+        if introspective is not None:
+            return self._respond_directly(turn, "self_model", introspective, t0)
 
         # memory retrieval happens before reasoning (provenance for the DecisionLog)
         memory_used: list = []
