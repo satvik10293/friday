@@ -182,12 +182,18 @@ class StartupSequence:
         return "ok", f"plugin registry ready ({len(plugin.kinds())} kinds)"
 
     def _stage_intelligence(self):
+        from core.goals.service import get_goal_service
         from core.intelligence.service import get_intelligence_os
+        from core.user_model.service import get_user_model_service
         kernel = self.components.get("kernel")
+        self.components["goals"] = get_goal_service()
+        self.components["user_model"] = get_user_model_service()
         ios = get_intelligence_os(
             memory_service=self.components.get("memory_service") or
             (kernel.try_get("memory") if kernel is not None else None),
             knowledge_service=self.components.get("knowledge"),
+            goal_service=self.components.get("goals"),
+            user_model=self.components.get("user_model"),
             simulation_service=self.components.get("simulation"),
             discover_optional=not self.headless)   # flan-t5 when transformers is present
         self.components["intelligence"] = ios
@@ -209,11 +215,12 @@ class StartupSequence:
         self_model = SelfModel(ios=self.components.get("intelligence"),
                                decision_log=get_decision_log(),
                                runtime=self.components.get("runtime"),
+                               goals=self.components.get("goals"),
                                thoughts=thoughts)
         self.components["self_model"] = self_model
         background = BackgroundCognition(
             thoughts=thoughts, memory=self.components.get("memory_service"),
-            self_model=self_model)
+            goals=self.components.get("goals"), self_model=self_model)
         self.components["background_cognition"] = background
         runtime = self.components.get("runtime")
         if runtime is not None and self.start_runtime:
