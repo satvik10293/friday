@@ -179,6 +179,32 @@ class DecisionLog:
             "avg_confidence": round(avg_conf, 3) if avg_conf is not None else None,
         }
 
+    def independence(self) -> dict:
+        """Truthful independence: the share of decisions made without any
+        external model (a model name prefixed 'cloud:' or an 'external' route).
+        Measured from real rows — never hardcoded (fixes 3.0 defect #3)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT models_used, route, was_autonomous FROM decisions"
+            ).fetchall()
+        total = len(rows)
+        local = autonomous = 0
+        for r in rows:
+            models = json.loads(r["models_used"] or "[]")
+            route = json.loads(r["route"] or "[]")
+            external = any(str(m).startswith("cloud:") for m in models) or \
+                any("external" in str(step) or "cloud" in str(step) for step in route)
+            if not external:
+                local += 1
+            if r["was_autonomous"]:
+                autonomous += 1
+        return {
+            "total": total,
+            "local_turns": local,
+            "independence_pct": round(100.0 * local / total, 1) if total else None,
+            "autonomous_pct": round(100.0 * autonomous / total, 1) if total else None,
+        }
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

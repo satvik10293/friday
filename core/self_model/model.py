@@ -53,9 +53,12 @@ class SelfModel:
     def _performance(self) -> dict:
         try:
             stats = self._decision_log.stats()
-            return {"turns": stats.get("total", 0),
-                    "avg_confidence": stats.get("avg_confidence"),
-                    "avg_latency_ms": stats.get("avg_latency_ms")}
+            perf = {"turns": stats.get("total", 0),
+                    "avg_confidence": stats.get("avg_confidence")}
+            if hasattr(self._decision_log, "independence"):
+                perf["independence_pct"] = \
+                    self._decision_log.independence().get("independence_pct")
+            return perf
         except Exception:  # noqa: BLE001
             return {}
 
