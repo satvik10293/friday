@@ -15,7 +15,7 @@ from .embedder import Embedder, HashingEmbedder, MiniLMEmbedder, get_embedder
 from .index import VectorIndex, NumpyFlatIndex, FaissHNSWIndex, build_index
 from .working import WorkingMemory
 from .service import MemoryService, get_memory_service
-from .migrate import migrate_from_chronicle
+from .migrate import migrate_all, migrate_from_chronicle, migrate_local_qa, migrate_vault
 
 __all__ = [
     "MemoryStore", "TIERS",
@@ -23,5 +23,5 @@ __all__ = [
     "VectorIndex", "NumpyFlatIndex", "FaissHNSWIndex", "build_index",
     "WorkingMemory",
     "MemoryService", "get_memory_service",
-    "migrate_from_chronicle",
+    "migrate_all", "migrate_from_chronicle", "migrate_local_qa", "migrate_vault",
 ]

@@ -122,8 +122,23 @@ class StartupSequence:
     def _stage_memory(self):
         brains = self.components.get("brains", {})
         self.components["memory"] = brains.get("memory_brain")
-        return "ok", "memory brain online" if self.components["memory"] is not None \
-            else "skipped: no memory brain"
+        # One Memory (Phase C): the M2 service is the single long-term store.
+        from core.memory import get_memory_service, migrate_all
+        memory_service = get_memory_service()
+        self.components["memory_service"] = memory_service
+        imported: list = []
+        if not self.headless:                       # full boots migrate; tests don't
+            migration = migrate_all(memory_service)  # idempotent; legacy stores read-only
+            imported = [k for k, v in migration.items()
+                        if isinstance(v, dict) and v.get("status") == "ok"]
+        kernel = self.components.get("kernel")
+        if kernel is not None:
+            from core.services.memory_service import MemoryService as MemoryAdapter
+            kernel.register("memory", MemoryAdapter(memory_service))
+        detail = "memory service online"
+        if imported:
+            detail += " (migrated: " + ", ".join(imported) + ")"
+        return "ok", detail
 
     def _stage_knowledge(self):
         memory = self.components.get("memory")
@@ -170,7 +185,8 @@ class StartupSequence:
         from core.intelligence.service import get_intelligence_os
         kernel = self.components.get("kernel")
         ios = get_intelligence_os(
-            memory_service=(kernel.try_get("memory") if kernel is not None else None),
+            memory_service=self.components.get("memory_service") or
+            (kernel.try_get("memory") if kernel is not None else None),
             knowledge_service=self.components.get("knowledge"),
             simulation_service=self.components.get("simulation"),
             discover_optional=not self.headless)   # flan-t5 when transformers is present
@@ -193,7 +209,8 @@ class StartupSequence:
         ios = self.components.get("intelligence")
         if ios is not None:
             from .conversation import ConversationBridge
-            bridge = ConversationBridge(ios)
+            bridge = ConversationBridge(
+                ios, memory=self.components.get("memory_service"))
             self.components["conversation"] = bridge
         service = get_listening_service(
             microphone=LiveMicrophone(), intelligence_os=bridge,

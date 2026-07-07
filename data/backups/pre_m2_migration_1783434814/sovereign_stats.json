@@ -1,0 +1,29 @@
+{
+  "stats": {
+    "total_exchanges": 48,
+    "facts_extracted": 28,
+    "concepts_learned": 0,
+    "self_answered": 0,
+    "api_answered": 48,
+    "domains_active": 3,
+    "independence_pct": 0
+  },
+  "domains": {
+    "databases": {
+      "query_count": 1,
+      "fact_count": 5,
+      "confidence": 0.095
+    },
+    "ai_ml": {
+      "query_count": 1,
+      "fact_count": 5,
+      "confidence": 0.095
+    },
+    "python": {
+      "query_count": 1,
+      "fact_count": 3,
+      "confidence": 0.057
+    }
+  },
+  "updated_at": 1783151521.827285
+}

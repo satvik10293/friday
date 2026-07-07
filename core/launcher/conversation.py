@@ -139,10 +139,11 @@ class ConversationBridge:
     spoken asynchronously, uncertainty handled instead of ignored."""
 
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
-                 speak_answers: bool = True,
+                 memory=None, speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
         self.ios = ios
+        self.memory = memory                # M2 MemoryService (One Memory, Phase C)
         self.speech = speech if speech is not None else _SpeechOutput()
         self.speak_answers = speak_answers
         self.clarify_threshold = clarify_threshold
@@ -164,7 +165,8 @@ class ConversationBridge:
             self._turn += 1
             return self._turn
 
-    def _record(self, *, turn: int, route: list, response, latency_ms: int) -> None:
+    def _record(self, *, turn: int, route: list, response, latency_ms: int,
+                memory_used: Optional[list] = None) -> None:
         try:
             self._log().log(
                 trace_id=getattr(response, "trace_id", None) or None,
@@ -172,6 +174,7 @@ class ConversationBridge:
                 intent=getattr(response, "task", None),
                 route=route,
                 models_used=list(getattr(response, "models_used", []) or []),
+                memory_used=memory_used or [],
                 confidence=float(getattr(response, "confidence", 0.0) or 0.0),
                 latency_ms=latency_ms,
                 outcome=(getattr(response, "answer", "") or "")[:400],
@@ -205,6 +208,15 @@ class ConversationBridge:
         if heard is not None and float(heard) < self.clarify_threshold:
             return self._clarify(turn, float(heard), t0)
 
+        # memory retrieval happens before reasoning (provenance for the DecisionLog)
+        memory_used: list = []
+        if self.memory is not None:
+            try:
+                memory_used = [m.get("id") for m in self.memory.recall(command, k=5)
+                               if isinstance(m, dict) and m.get("id") is not None]
+            except Exception:  # noqa: BLE001
+                log.debug("memory recall failed", exc_info=True)
+
         response = self.ios.think(command, context=ctx)
         route = [getattr(response, "strategy", "") or "intelligence_os"]
 
@@ -226,7 +238,21 @@ class ConversationBridge:
                 self._escalations += 1
 
         self._record(turn=turn, route=route, response=response,
-                     latency_ms=int((time.perf_counter() - t0) * 1000))
+                     latency_ms=int((time.perf_counter() - t0) * 1000),
+                     memory_used=memory_used)
+
+        # the conversation itself becomes memory (episodic, per turn)
+        if self.memory is not None:
+            answer = getattr(response, "answer", "") or ""
+            try:
+                self.memory.remember("user", command, kind="conversation",
+                                     tier="episodic", metadata={"source": "voice"})
+                if answer:
+                    self.memory.remember("friday", answer, kind="conversation",
+                                         tier="episodic", metadata={"source": "voice"})
+            except Exception:  # noqa: BLE001
+                log.debug("conversation memory write failed", exc_info=True)
+
         if self.speak_answers and getattr(response, "ok", False):
             self.speech.say(getattr(response, "answer", ""))
         return response
