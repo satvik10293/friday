@@ -25,8 +25,12 @@ from .adapters.browser_adapter import BrowserAdapter
 
 log = logging.getLogger("friday.vision.server")
 
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"   # localhost by default — LAN exposure is explicit opt-in
 DEFAULT_PORT = 5000
+
+
+def _is_localhost(host: str) -> bool:
+    return host in ("127.0.0.1", "localhost", "::1")
 
 # Backward-compatible client page; adds a localStorage camera token + capture_time.
 HTML_PAGE = r"""<!doctype html><html><head><title>FRIDAY Vision — Stream Engine</title>
@@ -51,10 +55,22 @@ function send(){x.drawImage(v,0,0,c.width,c.height);s.emit('frame',{data:c.toDat
 
 class VisionTransportServer:
     def __init__(self, manager: CameraManager, *, host: str = DEFAULT_HOST,
-                 port: int = DEFAULT_PORT, use_ngrok: bool = False) -> None:
+                 port: int = DEFAULT_PORT, use_ngrok: bool = False,
+                 allow_lan: bool = False) -> None:
         self._manager = manager
+        # LAN binding (0.0.0.0 / a routable host) requires an explicit opt-in;
+        # otherwise the camera stream stays on localhost. This closes an
+        # unauthenticated-camera-server-on-the-LAN hole.
+        if not _is_localhost(host) and not allow_lan:
+            log.warning("vision transport: refusing to bind %s without allow_lan=True; "
+                        "falling back to 127.0.0.1", host)
+            host = DEFAULT_HOST
+        if not _is_localhost(host):
+            log.warning("vision transport bound to %s — the camera stream is reachable "
+                        "on your local network", host)
         self.host = host
         self.port = port
+        self._lan = not _is_localhost(host)
         self._use_ngrok = use_ngrok
         self._app = None
         self._socketio = None
@@ -76,7 +92,9 @@ class VisionTransportServer:
         from core.security.auth import security_headers
 
         app = Flask("friday_vision_transport")
-        socketio = SocketIO(app, cors_allowed_origins="*")
+        # Same-origin only: the client page is self-served, so it needs no
+        # cross-origin access. A wildcard would let any website drive the socket.
+        socketio = SocketIO(app, cors_allowed_origins=self._allowed_origins())
         mgr = self._manager
 
         @app.after_request
@@ -122,13 +140,23 @@ class VisionTransportServer:
         self._socketio = socketio
         return app
 
+    def _allowed_origins(self) -> list:
+        origins = [f"http://127.0.0.1:{self.port}", f"http://localhost:{self.port}"]
+        if self._lan:
+            origins.append(f"http://{self.host}:{self.port}")
+        return origins
+
     def run(self, *, debug: bool = False) -> None:  # pragma: no cover - blocking server
+        # The Werkzeug debugger is a remote-code-execution surface; it must never
+        # run on a server that can accept camera frames. Force it off.
+        if debug:
+            log.warning("vision transport: debug mode is not permitted; ignoring")
         app = self.build_app()
         self._manager.start()
         if self._use_ngrok:
             self._open_ngrok()
         log.info("Vision transport on http://%s:%d", self.host, self.port)
-        self._socketio.run(app, host=self.host, port=self.port, debug=debug,
+        self._socketio.run(app, host=self.host, port=self.port, debug=False,
                            allow_unsafe_werkzeug=True)
 
     def _open_ngrok(self) -> None:  # pragma: no cover - optional + network
