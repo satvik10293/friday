@@ -185,7 +185,9 @@ def migrate_all(service, *, chronicle_path=None, qa_path=None,
     report: dict = {"pending": pending}
     if pending:
         try:
-            backup = backup_data()
+            # back up the directory the sources actually live in
+            data_dir = Path(chronicle_path).parent if chronicle_path else None
+            backup = backup_data(data_dir)
             report["backup"] = str(backup) if backup else None
         except Exception as e:  # noqa: BLE001
             report["backup_error"] = str(e)

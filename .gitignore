@@ -89,3 +89,4 @@ build/
 # runtime logs (M20 launcher)
 *.log
 data/logs/
+data/backups/
