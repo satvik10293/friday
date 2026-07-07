@@ -65,7 +65,7 @@ def test_bootstrap_venv_python_path():
 
 
 def test_bootstrap_entries_cover_known_launchers():
-    assert set(bootstrap._ENTRIES) >= {"orb", "app", "launch", "spine"}
+    assert set(bootstrap._ENTRIES) >= {"app", "launch", "spine"}
     for entry in bootstrap._ENTRIES.values():
         assert entry.endswith(".py")
 

@@ -51,7 +51,7 @@ TEST_CHECKLIST = [
     "First-run wizard: verify OS/mic/speaker/camera detection and (optional) key capture.",
     "Startup: python friday_launch.py --json → all stages ok/skipped, health 'ok'.",
     "Diagnostics: python -m core.launcher.diagnostics → brains, provider, vitals shown.",
-    "Shutdown: close the app/orb; confirm no orphaned processes.",
+    "Shutdown: close the app; confirm no orphaned processes.",
     "Upgrade: install over an existing install; confirm config + .env are preserved.",
 ]
 
@@ -80,7 +80,7 @@ def release_notes(*, root: Optional[Path] = None) -> str:
         "and offers to launch.",
         "",
         "**Portable / any OS:** unzip the package and run `python deploy/bootstrap.py` — it "
-        "provisions the venv, runs the first-run wizard, and launches the floating orb.",
+        "provisions the venv, runs the first-run wizard, and launches FRIDAY.",
         "",
         "## What's included (milestones)",
         "",

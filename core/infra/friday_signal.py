@@ -47,6 +47,7 @@ class Signal(Enum):
     SPEAK_START         = auto()   # voice started speaking
     SPEAK_DONE          = auto()   # voice finished speaking
     UI_UPDATE           = auto()   # face should update display
+    UI_MODE             = auto()   # data: str voice|text
     ACTION_EXECUTE      = auto()   # action module should run a command
 
     # ── System signals
@@ -54,23 +55,6 @@ class Signal(Enum):
     MODULE_ERROR        = auto()   # a module hit a critical error
     SHUTDOWN            = auto()   # clean shutdown requested
     HEARTBEAT           = auto()   # periodic alive ping
-
-    # ── Orb UI signals (M20 revision) — FRIDAY -> Orb (visualisation only) ──────
-    ORB_STATE           = auto()   # data: str orb state (idle/listening/thinking/...)
-    ORB_EMOTION         = auto()   # data: str emotion overlay
-    ORB_SPEECH_SHOW     = auto()   # data: str text being spoken
-    ORB_SPEECH_HIDE     = auto()   # speech finished -> hide panel
-    ORB_AMPLITUDE       = auto()   # data: float [0,1] real audio amplitude
-    ORB_NOTIFY          = auto()   # data: {"kind": message|reminder|warning|error}
-    ORB_DASHBOARD_OPEN  = auto()   # request the dashboard overlay open
-    ORB_DASHBOARD_CLOSE = auto()   # request the dashboard overlay close
-    ORB_MODE            = auto()   # data: str voice|text (mode changed)
-
-    # ── Orb UI signals — Orb -> FRIDAY (user interactions; no AI logic in the UI)
-    ORB_WAKE            = auto()   # single click: wake / start listening
-    ORB_DASHBOARD_TOGGLE = auto()  # double click: toggle dashboard
-    ORB_COMMAND         = auto()   # data: {"action": settings|diagnostics|plugins|restart|exit}
-    ORB_MODE_SET        = auto()   # data: str voice|text (user requested a mode)
 
 
 # ── Event ─────────────────────────────────────────────────────────────────────

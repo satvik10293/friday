@@ -23,7 +23,6 @@ python -m deploy.install        # one-time installer (deps, config, optional Gro
 # Run ────────────────────────────────────────────────────────────────────────
 Launch-FRIDAY.bat               # Windows: start via the provisioned venv
 python friday_launch.py         # production launcher: ordered startup + health report
-python friday_orb.py            # minimal floating-orb launcher (click to start)
 python friday_app.py            # desktop HUD (native window)
 python friday_spine.py          # full voice-mode boot
 
@@ -37,9 +36,8 @@ python -m pytest -q                    # run the test suite
 The first **installable** build is **Release Candidate 1** (`0.20.0-rc1`) — see
 `docs/RC1_RELEASE.md`. FRIDAY ships as source + a self-provisioning bootstrap (it creates
 its own `.venv` on first run); a native `Setup.exe` can be compiled via
-`deploy/windows/friday.iss` (Inno Setup). The **floating orb** (`friday_orb.py`) is a tiny,
-always-on-top launcher (pure stdlib Tkinter, cross-platform): drag it anywhere, click to
-launch FRIDAY, right-click for a menu.
+`deploy/windows/friday.iss` (Inno Setup). The installed app uses the standard launcher
+and keeps the heavy runtime Python-source based for reliability.
 
 ---
 
@@ -69,12 +67,62 @@ layer** — no subsystem imports another's internals.
 | Perception | `core/vision` (M14), `core/audio` (M15), `core/spatial` (M16), `core/perception` | visual / auditory / spatial perception |
 | Hub & coordination | `core/perception/hub` (M17), `core/coordinator` (M17-rev) | multimodal fusion, situation coordination |
 | Services | `core/services` (M16) | dependency-injected service interfaces |
-| I/O & UI | `core/io`, `core/mission_control`, `friday_app.py`, `friday_orb.py` | HUD, cockpit, launcher |
+| I/O & UI | `core/io`, `core/mission_control`, `friday_app.py`, `friday_launch.py` | HUD, cockpit, launcher |
 | Voice | `core/voice` | STT (faster-whisper) + TTS (edge-tts) |
 
 The package `core` is **side-effect-free to import** (no I/O, no threads, no model loads
 at import). Detailed design docs live in `docs/` (`M1`…`M17`) and
 `FRIDAY_4.0_CHANGES.md`.
+
+---
+
+## Roadmap — FRIDAY 5.x
+
+Full document (canonical plan): [`docs/FRIDAY_5X_ROADMAP.md`](docs/FRIDAY_5X_ROADMAP.md) ·
+cognitive-systems spec: [`docs/FRIDAY_5X_COGNITIVE_EVOLUTION.md`](docs/FRIDAY_5X_COGNITIVE_EVOLUTION.md).
+
+> **Prime rule — cognition is internal and totally local.** All reasoning, planning,
+> simulation, memory retrieval, verification, and decision-making are internal FRIDAY
+> subsystems running on this machine. The production path makes no external LLM calls;
+> when local reasoning is not confident, FRIDAY thinks harder locally (a deeper
+> collaborative pass) or asks for clarification — she never outsources cognition.
+
+**Vision:** an artificial cognitive system, not a chatbot — perceive → think internally
+(memory → attention → reasoning → simulation → decision) → act through governed skills →
+observe → learn, with the Executive Brain as the single decision-maker and the LLM
+eventually reduced to a language generator.
+
+**Baseline:** the 4.0/5.x architecture (runtime, memory service, skills + security,
+goals, executive, brains, coordinator, cognition loop, world/user models) is already
+built in `core/`. The remaining work is integration and proof, not construction — so
+each phase below is gated by explicit **exit criteria**, and no phase starts while the
+previous one's criteria fail.
+
+| Phase | Focus | Exit criteria (summary) |
+|---|---|---|
+| **A — Cutover & Consolidation** *(current)* | One boot path: `friday_launch.py` becomes the single entry (`start_runtime=True`); voice turns flow through the Master Cognition Loop; retire the 3.0 pipeline and its known defects | One entry point; mic → perception → cognition loop → executive → skill/answer → TTS with a DecisionLog row per turn; no 3.0 brain modules on the boot path |
+| **B — Verification Net** *(parallel with A; blocks all later phases)* | Restore the test suite from git history; add launcher smoke + end-to-end cognition-cycle tests; add a boot/RAM/latency benchmark script | `pytest` green; baseline performance numbers recorded in the repo |
+| **C — One Memory** | Migrate `chronicle.db` + vault + `local_qa` into the M2 MemoryService (episodic/semantic/procedural via existing `kind`/`tier`); wire decay/reinforcement; retrieval mandatory before reasoning | Old stores read-only; recall spot-checked; every cycle logs the memories it used |
+| **D — Internal Mind** | The only large new build: Thought Generator / internal monologue, Self Model (aggregated from health/observability), autonomous goal generation (human-gated) | Inspectable thoughts between turns; Self Model answers "what can't I do and why"; one self-generated goal completes end-to-end |
+| **E — Executive Supremacy & Skills** | Convert FridayAction's 30+ commands into registered Skills behind the M3 security pipeline; Simulation Brain consulted for uncertain/high-impact decisions | Every side-effecting action in `audit.db` with a DecisionLog trace; no direct action calls |
+| **F — Live Models** | World / User / Self models continuously fed by the Perception Hub and injected into the Executive's context each cycle | "What's happening right now?" answered from the models, not the LLM |
+| **G — Learning Flywheel** | observe → reflect → lesson → memory → behavior on the Runtime scheduler (never blocking); independence % measured truthfully from DecisionLog | Independence rises measurably over a week; lessons visible in the knowledge graph |
+| **H — Performance & Local Intelligence** | Profile boot/RAM; lazy-load via ModelRegistry; tiered local stack (small quantized local reasoner + cloud fallback) | Cold boot < 10 s · simple voice reply < 700 ms · ≥ 50% of turns fully local at equal quality |
+| **I — Research Track** *(unscheduled)* | Emotion modeling, curiosity, multi-agent debate, robotics, home automation | Each item enters only through a phase with its own exit criteria |
+
+**Immediate order:** P0 = Phase A cutover + Phase B verification net · P1 = memory
+migration, attention + working memory, internal thought stream · P2 = executive skill
+routing, simulation gating · P3 = Self/User/World models live, learning flywheel ·
+P4 = local reasoning stack.
+
+**Cross-cutting rules:** cognition is internal (prime rule above); the Runtime owns every
+singleton; all communication goes through the event bus; nothing bypasses the Executive;
+memory retrieval precedes reasoning; learning never blocks a response; every phase lands
+with tests, observability, and a milestone commit + tag.
+
+**Top risks:** dual-path drift while both boot paths exist (why Phase A is first),
+testless regressions (why Phase B blocks everything), RAM exhaustion from eager model
+loading, and data loss during the memory migration (back up `data/` first).
 
 ---
 

@@ -114,7 +114,12 @@ class LiveMicrophone(MicrophoneSource):
     def read(self) -> Optional[np.ndarray]:  # pragma: no cover - hardware
         if not self._enabled or self._stream is None:
             return self._silence()
-        data, _ = self._stream.read(self.frame_size)
+        try:
+            data, _ = self._stream.read(self.frame_size)
+        except Exception as e:  # noqa: BLE001 - backend can stop during shutdown
+            log.debug("microphone read failed: %s", e)
+            self._open = False
+            return None
         return data.reshape(-1).astype(np.float32, copy=False)
 
     def close(self) -> None:  # pragma: no cover - hardware

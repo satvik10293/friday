@@ -16,16 +16,16 @@
   },
   "emotional": {
     "mood": "neutral",
-    "energy": 0.9100000000000001,
+    "energy": 1.0,
     "focus": 0.6,
-    "trust": 0.8420000000000001,
+    "trust": 0.8800000000000001,
     "curiosity": 0.6,
-    "mood_since": 1781089702.882372,
-    "mood_streak": 21,
-    "total_turns": 21,
-    "positive_turns": 21,
-    "last_updated": 1782193484.4737346
+    "mood_since": 1783151468.5264513,
+    "mood_streak": 5,
+    "total_turns": 40,
+    "positive_turns": 40,
+    "last_updated": 1783151521.8237736
   },
-  "boot_count": 12,
+  "boot_count": 18,
   "created_at": 1781089702.882372
 }

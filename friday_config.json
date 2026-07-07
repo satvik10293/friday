@@ -44,11 +44,10 @@
     }
   },
   "ui": {
-    "primary_interface": "orb",
+    "primary_interface": "dashboard",
     "voice_mode_default": true,
     "speech_panel_enabled": true,
     "speech_panel_auto_hide": true,
-    "orb_always_on_top": true,
     "remember_position": true,
     "remember_size": true,
     "animation_quality": "high"

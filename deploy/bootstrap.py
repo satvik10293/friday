@@ -10,9 +10,9 @@ This is the correct packaging model for a heavy, CPU-first ML application (media
 faster-whisper / faiss / torch): rather than freezing gigabytes into a brittle single
 binary, we provision a clean, reproducible environment the user never has to touch.
 
-    python deploy/bootstrap.py                 # provision (if needed) then launch the orb
+    python deploy/bootstrap.py                 # provision (if needed) then launch FRIDAY
     python deploy/bootstrap.py --provision-only
-    python deploy/bootstrap.py --entry app     # launch friday_app.py instead of the orb
+    python deploy/bootstrap.py --entry app     # launch friday_app.py instead of friday_launch.py
 
 Only the *system* Python is needed to start this; everything else is provisioned here.
 """
@@ -31,9 +31,8 @@ _ROOT = Path(__file__).resolve().parents[1]
 _VENV = _ROOT / ".venv"
 
 _ENTRIES = {
-    "orb": "friday_orb.py",
-    "app": "friday_app.py",
     "launch": "friday_launch.py",
+    "app": "friday_app.py",
     "spine": "friday_spine.py",
 }
 
@@ -89,9 +88,9 @@ def run_first_run(venv_dir: Path = _VENV, *, root: Path = _ROOT) -> None:
         print(f"[bootstrap] first-run wizard skipped: {e}")
 
 
-def launch(entry: str = "orb", venv_dir: Path = _VENV, *, root: Path = _ROOT) -> int:
+def launch(entry: str = "launch", venv_dir: Path = _VENV, *, root: Path = _ROOT) -> int:
     py = _venv_python(venv_dir)
-    target = root / _ENTRIES.get(entry, _ENTRIES["orb"])
+    target = root / _ENTRIES.get(entry, _ENTRIES["launch"])
     if not target.exists():
         target = root / _ENTRIES["launch"]
     print(f"[bootstrap] launching {target.name} ...")
@@ -118,7 +117,7 @@ def provision(venv_dir: Path = _VENV, *, root: Path = _ROOT) -> bool:
 def main(argv: Optional[list] = None) -> int:
     p = argparse.ArgumentParser(prog="friday-bootstrap",
                                 description="Provision + launch FRIDAY")
-    p.add_argument("--entry", default=os.environ.get("FRIDAY_ENTRY", "orb"),
+    p.add_argument("--entry", default=os.environ.get("FRIDAY_ENTRY", "launch"),
                    choices=list(_ENTRIES))
     p.add_argument("--provision-only", action="store_true")
     p.add_argument("--venv", default=str(_VENV))

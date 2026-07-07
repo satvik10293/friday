@@ -89,7 +89,7 @@ class Installer:
     def create_shortcut(self) -> dict:
         if self.dry_run:
             return {"ok": True, "dry_run": True}
-        created = self.platform.create_shortcut(target=str(self.root / "friday_orb.py"),
+        created = self.platform.create_shortcut(target=str(self.root / "friday_launch.py"),
                                                 name="FRIDAY")
         return {"ok": created, "created": created}
 

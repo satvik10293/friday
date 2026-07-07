@@ -169,11 +169,10 @@ class FirstRunWizard:
                 "environment": "production",
                 "wake_words": ["friday", "hey friday", "okay friday"],
                 "ui": {
-                    "primary_interface": "orb",
+                    "primary_interface": "dashboard",
                     "voice_mode_default": True,
                     "speech_panel_enabled": True,
                     "speech_panel_auto_hide": True,
-                    "orb_always_on_top": True,
                     "remember_position": True,
                     "remember_size": True,
                     "animation_quality": "high",

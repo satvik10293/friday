@@ -22,7 +22,7 @@ log = logging.getLogger("friday.launcher.startup")
 
 STARTUP_STAGES = ("configuration", "kernel", "runtime", "brains", "memory", "knowledge",
                   "perception", "simulation", "coordinator", "executive", "plugins",
-                  "voice", "wake_word", "orb", "ui", "ready")
+                  "intelligence", "voice", "wake_word", "ui", "ready")
 
 
 @dataclass
@@ -166,6 +166,21 @@ class StartupSequence:
             return "skipped", "no plugin service"
         return "ok", f"plugin registry ready ({len(plugin.kinds())} kinds)"
 
+    def _stage_intelligence(self):
+        from core.intelligence.service import get_intelligence_os
+        kernel = self.components.get("kernel")
+        ios = get_intelligence_os(
+            memory_service=(kernel.try_get("memory") if kernel is not None else None),
+            knowledge_service=self.components.get("knowledge"),
+            simulation_service=self.components.get("simulation"),
+            discover_optional=not self.headless)   # flan-t5 when transformers is present
+        self.components["intelligence"] = ios
+        runtime = self.components.get("runtime")
+        if runtime is not None:
+            ios.attach(runtime)
+        loaded = ios.health_report().get("models_loaded", 0)
+        return "ok", f"intelligence OS online ({loaded} local models)"
+
     def _stage_voice(self):
         if self.headless:
             return "skipped", "headless"
@@ -174,12 +189,23 @@ class StartupSequence:
             return "skipped", "no audio device backend"
         from core.audio.listener.microphone import LiveMicrophone
         from core.audio.listener.service import get_listening_service
+        bridge = None
+        ios = self.components.get("intelligence")
+        if ios is not None:
+            from .conversation import ConversationBridge
+            bridge = ConversationBridge(ios)
+            self.components["conversation"] = bridge
         service = get_listening_service(
-            microphone=LiveMicrophone(), wake_required=True, store_audio=False)
+            microphone=LiveMicrophone(), intelligence_os=bridge,
+            wake_required=False, store_audio=False)
         runtime = self.components.get("runtime")
         if runtime is not None:
             service.attach(runtime)
             self._wire_voice_controls(runtime, service)
+            if bridge is not None:
+                self._wire_speech_output(runtime, bridge)
+        if bridge is not None:
+            self._wire_barge_in(service, bridge)
         try:
             service.start()
         except Exception as e:  # noqa: BLE001
@@ -200,21 +226,6 @@ class StartupSequence:
             log.debug("wake word configuration failed", exc_info=True)
         return "ok", "wake words active: " + ", ".join(voice.pipeline.wake.words())
 
-    def _stage_orb(self):
-        if self.headless:
-            return "skipped", "headless"
-        from core.io.orb import OrbController
-        runtime = self.components.get("runtime")
-        controller = OrbController(bus=runtime)
-        try:
-            from core.infra.friday_signal import get_bus
-            controller.add_source_bus(get_bus())
-        except Exception:  # noqa: BLE001
-            log.debug("global expression bus unavailable", exc_info=True)
-        controller.start()
-        self.components["orb"] = controller
-        return "ok", f"orb controller online ({controller.mode} mode)"
-
     def _stage_ui(self):
         if self.headless:
             return "skipped", "headless"
@@ -228,43 +239,65 @@ class StartupSequence:
 
     def _wire_voice_controls(self, runtime, service) -> None:
         from core.infra.friday_signal import Signal
-        from core.audio.listener.pipeline import ListeningState
-        from core.io.orb.state import InteractionMode
-
-        async def on_orb_wake(_event):
-            try:
-                service.pipeline.wake_required = False
-                service.pipeline._set_state(ListeningState.LISTENING)
-            except Exception:  # noqa: BLE001
-                log.debug("orb wake bridge failed", exc_info=True)
 
         async def on_mode(event):
             mode = str(getattr(event, "data", "") or "").lower()
             try:
-                if mode == InteractionMode.TEXT.value:
+                if mode == "text":
                     service.set_privacy(True)
-                elif mode == InteractionMode.VOICE.value:
+                elif mode == "voice":
                     service.set_privacy(False)
-                    service.pipeline.wake_required = True
+                    service.pipeline.wake_required = False
             except Exception:  # noqa: BLE001
                 log.debug("voice mode bridge failed", exc_info=True)
 
         try:
-            runtime.on(Signal.ORB_WAKE, on_orb_wake)
-            runtime.on(Signal.ORB_MODE, on_mode)
-            runtime.on(Signal.ORB_MODE_SET, on_mode)
+            if hasattr(Signal, "UI_MODE"):
+                runtime.on(Signal.UI_MODE, on_mode)
         except Exception:  # noqa: BLE001
             log.debug("voice control subscription failed", exc_info=True)
 
+    def _wire_barge_in(self, service, bridge) -> None:
+        """The user starting to speak stops FRIDAY mid-answer."""
+        from core.audio.listener.events import AudioEvent
+
+        def on_user_speech(_event) -> None:
+            bridge.interrupt()
+
+        try:
+            service.bus.on(AudioEvent.SPEECH_DETECTED, on_user_speech)
+            service.bus.on(AudioEvent.INTERRUPT_REQUESTED, on_user_speech)
+        except Exception:  # noqa: BLE001
+            log.debug("barge-in wiring failed", exc_info=True)
+
+    def _wire_speech_output(self, runtime, bridge) -> None:
+        """SPEAK_START on the runtime bus → spoken aloud via the bridge."""
+        from core.infra.friday_signal import Signal
+
+        async def on_speak(event):
+            try:
+                bridge.announce(str(getattr(event, "data", "") or ""))
+            except Exception:  # noqa: BLE001
+                log.debug("speech output failed", exc_info=True)
+
+        try:
+            runtime.on(Signal.SPEAK_START, on_speak)
+        except Exception:  # noqa: BLE001
+            log.debug("speech output subscription failed", exc_info=True)
+
     def _announce_ready(self) -> None:
         runtime = self.components.get("runtime")
-        if runtime is None:
-            return
-        try:
-            from core.infra.friday_signal import Signal
-            from core.io.orb.speech_bridge import SpeechBridge
-            text = "Hello. I'm FRIDAY. I'm ready."
-            SpeechBridge(runtime).emit_speech(text, block=False)
-            runtime.emit(Signal.SPEAK_START, text, "startup")
-        except Exception:  # noqa: BLE001
-            log.debug("ready announcement failed", exc_info=True)
+        text = "Hello. I'm FRIDAY. I'm ready."
+        if runtime is not None and self.start_runtime:
+            try:
+                from core.infra.friday_signal import Signal
+                runtime.emit(Signal.SPEAK_START, text, "startup")
+                return
+            except Exception:  # noqa: BLE001
+                log.debug("ready announcement failed", exc_info=True)
+        bridge = self.components.get("conversation")
+        if bridge is not None:
+            try:
+                bridge.announce(text)
+            except Exception:  # noqa: BLE001
+                log.debug("ready announcement failed", exc_info=True)
