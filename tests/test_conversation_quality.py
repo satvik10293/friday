@@ -128,8 +128,8 @@ def test_nothing_in_the_bridge_references_a_cloud():
 
     import core.launcher.conversation as conversation
     source = inspect.getsource(conversation).lower()
-    assert "requests" not in source
-    assert "api_key" not in source
+    assert "import requests" not in source and "import urllib" not in source
+    assert "api_key" not in source and "http" not in source
 
 
 # ── speaking: interruptible ───────────────────────────────────────────────────

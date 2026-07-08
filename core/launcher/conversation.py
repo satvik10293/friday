@@ -145,6 +145,8 @@ class ConversationBridge:
         self.ios = ios
         self.memory = memory                # M2 MemoryService (One Memory, Phase C)
         self.self_model = self_model        # Self Model (Internal Mind, M23)
+        from core.memory.learning_gate import LearningGate
+        self.gate = LearningGate()          # selective learning (M27)
         self.speech = speech if speech is not None else _SpeechOutput()
         self.speak_answers = speak_answers
         self.clarify_threshold = clarify_threshold
@@ -274,17 +276,14 @@ class ConversationBridge:
                      latency_ms=int((time.perf_counter() - t0) * 1000),
                      memory_used=memory_used)
 
-        # the conversation itself becomes memory (episodic, per turn)
-        if self.memory is not None:
-            answer = getattr(response, "answer", "") or ""
-            try:
-                self.memory.remember("user", command, kind="conversation",
-                                     tier="episodic", metadata={"source": "voice"})
-                if answer:
-                    self.memory.remember("friday", answer, kind="conversation",
-                                         tier="episodic", metadata={"source": "voice"})
-            except Exception:  # noqa: BLE001
-                log.debug("conversation memory write failed", exc_info=True)
+        # selective learning: the gate decides what (if anything) becomes memory —
+        # explicit requests + personal info stored (private, local), noise dropped
+        answer = getattr(response, "answer", "") or ""
+        decision = self.gate.decide(
+            command, answer,
+            confidence=float(getattr(response, "confidence", 0.0) or 0.0),
+            route=tuple(route))
+        self.gate.apply(self.memory, decision, command, answer)
 
         if self.speak_answers and getattr(response, "ok", False):
             self.speech.say(getattr(response, "answer", ""))
@@ -303,7 +302,8 @@ class ConversationBridge:
                 "dropped": self.speech.dropped,
                 "interrupted": self.speech.interrupted,
                 "clarifications": self._clarifications,
-                "escalations": self._escalations}
+                "escalations": self._escalations,
+                "learning": self.gate.status()}
 
     def close(self) -> None:
         self.speech.stop()
