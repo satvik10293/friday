@@ -156,6 +156,7 @@ class ConversationBridge:
         self._turn = 0
         self._escalations = 0
         self._clarifications = 0
+        self._pending_approval: Optional[tuple] = None   # (goal_id, title, expires_at)
         self._lock = threading.Lock()
 
     def _log(self):
@@ -205,12 +206,38 @@ class ConversationBridge:
             log.debug("self model introspection failed", exc_info=True)
         return None
 
+    _APPROVAL_TTL_S = 60.0
+
     def _proposals(self, command: str) -> Optional[str]:
         """Voice gate for FRIDAY's self-proposed goals (M28): list, approve,
-        reject — always the oldest open proposal first."""
+        reject — always the oldest open proposal first.
+
+        Adversarial hardening (M29): approval is two-step — FRIDAY names the
+        proposal and waits for an explicit 'confirm' within 60 s, so a stray
+        phrase from a guest, a video, or her own speaker output can't wave a
+        goal through. Any other command cancels the pending confirmation;
+        rejection stays one-step (fail-safe direction)."""
         if self.goals is None:
             return None
         q = (command or "").lower()
+
+        # a pending approval waits for exactly one thing: an explicit confirm
+        pending = self._pending_approval
+        if pending is not None:
+            self._pending_approval = None            # single-shot, always cleared
+            goal_id, title, expires_at = pending
+            if time.time() <= expires_at:
+                if re.search(r"\b(confirm|confirmed|go ahead|do it)\b", q):
+                    try:
+                        if self.goals.approve_proposal(goal_id) is not None:
+                            return f"Confirmed — I'll start working on: {title}."
+                    except Exception:  # noqa: BLE001
+                        log.debug("proposal approval failed", exc_info=True)
+                    return "I couldn't approve that proposal — it's no longer open."
+                if re.search(r"\b(cancel|no|don'?t|never ?mind|stop)\b", q):
+                    return f"Okay, I'll leave the proposal '{title}' waiting."
+            # anything else falls through to normal handling, confirmation dropped
+
         wants_list = re.search(r"\b(any|your|what|list|pending)\b.*\bpropos", q) or \
             re.search(r"\bpropos\w*\b.*\b(goals?|anything)\b", q)
         wants_approve = re.search(r"\b(approve|accept|go ahead with)\b.*\bpropos", q)
@@ -224,8 +251,10 @@ class ConversationBridge:
                     return "I have no open proposals right now."
                 goal = open_props[0]
                 if wants_approve:
-                    self.goals.approve_proposal(goal.goal_id)
-                    return f"Approved — I'll start working on: {goal.title}."
+                    self._pending_approval = (goal.goal_id, goal.title,
+                                              time.time() + self._APPROVAL_TTL_S)
+                    return (f"Just to be sure — approve '{goal.title}'? "
+                            f"Say 'confirm' and I'll start on it.")
                 self.goals.reject_proposal(goal.goal_id, reason="rejected by voice")
                 return f"Understood, I've dropped the proposal: {goal.title}."
             if not open_props:

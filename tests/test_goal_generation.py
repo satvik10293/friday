@@ -205,8 +205,12 @@ def test_voice_can_list_and_approve_proposals(svc):
     assert "tidy the download folder" in listed.answer
     assert bridge._decision_log.rows[0]["route"] == ["goal_proposals"]
 
-    approved = bridge.think("approve the proposal")
-    assert "Approved" in approved.answer
+    asked = bridge.think("approve the proposal")     # two-step gate (M29)
+    assert "confirm" in asked.answer.lower()
+    assert len(svc.list_proposals()) == 1            # not approved yet
+
+    confirmed = bridge.think("confirm")
+    assert "Confirmed" in confirmed.answer
     assert svc.list_proposals() == []
     assert svc.get_goal(svc.list_goals(GoalStatus.PENDING)[0].goal_id) is not None
 

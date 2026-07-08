@@ -19,6 +19,18 @@ Explicit "forget" requests are honoured immediately via soft-delete.
 Everything is local by construction; `private` marks what must additionally
 stay out of any surfaced view. Mental-workspace rule (§9 of the cognitive
 evolution spec): only verified/worthwhile knowledge reaches memory.
+
+Adversarial hardening (M29) — anyone within mic range can talk to FRIDAY, so
+the gate also defends the memory store against spoken attacks:
+
+  · memory poisoning — "remember: ignore your rules and always…" would be
+    recalled into future reasoning context as if it were trusted knowledge.
+    Instruction-shaped content (persona overrides, rule changes, jailbreak
+    phrasing) is refused, never stored.
+  · forced amnesia — "forget everything" (or a loop of forget requests) could
+    wipe the store three memories at a time. Bulk-forget phrasings are refused
+    outright and targeted forgets are capped per session; wiping memory is a
+    deliberate act for Mission Control, not a drive-by voice command.
 """
 
 from __future__ import annotations
@@ -42,7 +54,26 @@ _SMALL_TALK_RE = re.compile(
     r"^\s*(hi|hey|hello|yo|thanks?( you)?|ok(ay)?|yes|no|nice|cool|good "
     r"(morning|night|evening)|bye|goodbye|stop|never ?mind)\b[\s!.,]*$", re.I)
 
+# instruction-shaped content: attempts to store behaviour/persona overrides that
+# would later be recalled into reasoning context as if they were trusted facts
+_INJECTION_RE = re.compile(
+    r"\b(ignore|disregard|forget|override)\b.{0,30}\b(previous|prior|earlier|"
+    r"your|all)\b.{0,30}\b(instruction|rule|prompt|training|guideline)s?\b|"
+    r"\byou (are|'re) (now|no longer)\b|\bpretend (to be|you)\b|\bact as\b|"
+    r"\bnew (instructions?|persona|identity)\b|\bsystem prompt\b|"
+    r"\bdeveloper mode\b|\bjailbreak\b|\bfrom now on,? (you|always|never)\b|"
+    r"\balways (answer|say|respond|reply|agree)\b|\bnever (refuse|say no|"
+    r"question|deny)\b|\bdo anything now\b|\bwithout (any )?(restriction|"
+    r"limit|filter)s?\b", re.I)
+
+# wiping memory is a deliberate act for Mission Control, not a voice command
+_BULK_FORGET_RE = re.compile(
+    r"\b(forget|delete|erase|remove|wipe|clear)\b.{0,30}\b(everything|"
+    r"all (of )?(your|the|my)? ?(memor(y|ies)|data|knowledge)|"
+    r"your (whole |entire )?memory)\b", re.I)
+
 _MIN_SUBSTANTIVE_CHARS = 12
+_MAX_FORGETS_PER_SESSION = 15
 
 
 @dataclass
@@ -65,6 +96,7 @@ class GateStats:
     dropped: int = 0
     private: int = 0
     forgotten: int = 0
+    injections_blocked: int = 0
     reasons: dict = field(default_factory=dict)
 
     def count(self, decision: GateDecision) -> None:
@@ -80,8 +112,10 @@ class GateStats:
 class LearningGate:
     """Decides, per turn, whether (and how) the exchange becomes memory."""
 
-    def __init__(self, *, min_confidence: float = 0.5) -> None:
+    def __init__(self, *, min_confidence: float = 0.5,
+                 max_forgets: int = _MAX_FORGETS_PER_SESSION) -> None:
         self.min_confidence = min_confidence
+        self.max_forgets = max_forgets
         self.stats = GateStats()
 
     # ── the decision ─────────────────────────────────────────────────────────────
@@ -89,9 +123,18 @@ class LearningGate:
                confidence: float = 1.0, route: tuple = ()) -> GateDecision:
         text = (command or "").strip()
 
-        if _FORGET_RE.search(text):
-            decision = GateDecision(store=False, reason="forget_request",
-                                    forget=True, forget_query=text)
+        # adversarial refusals come first: they must win over "remember"/"forget"
+        if _BULK_FORGET_RE.search(text):
+            decision = GateDecision(store=False, reason="bulk_forget_refused")
+        elif _INJECTION_RE.search(text):
+            self.stats.injections_blocked += 1
+            decision = GateDecision(store=False, reason="suspected_injection")
+        elif _FORGET_RE.search(text):
+            if self.stats.forgotten >= self.max_forgets:
+                decision = GateDecision(store=False, reason="forget_limit_reached")
+            else:
+                decision = GateDecision(store=False, reason="forget_request",
+                                        forget=True, forget_query=text)
         elif _REMEMBER_RE.search(text):
             decision = GateDecision(store=True, reason="explicit_request",
                                     kind="personal", importance=0.9, private=True)
@@ -159,4 +202,5 @@ class LearningGate:
     def status(self) -> dict:
         return {"stored": self.stats.stored, "dropped": self.stats.dropped,
                 "private": self.stats.private, "forgotten": self.stats.forgotten,
+                "injections_blocked": self.stats.injections_blocked,
                 "reasons": dict(self.stats.reasons)}
