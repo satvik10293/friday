@@ -14,6 +14,7 @@ import argparse
 import importlib.util
 import json
 import logging
+import threading
 from typing import Optional
 
 from .first_run import FirstRunWizard
@@ -149,4 +150,17 @@ def main(argv: Optional[list] = None) -> int:
             mark = {"ok": "+", "skipped": "-", "failed": "!"}.get(stage["status"], "?")
             print(f"  [{mark}] {stage['stage']:<14} {stage['status']:<8} {stage['detail']}")
         print(f"  health: {report['health']['status']}")
-    return 0 if report["friday"] == "ready" else 1
+
+    ready = report["friday"] == "ready"
+    # non-headless boots stay resident: the voice loop, runtime scheduler and
+    # background cognition live on daemon threads and die with the process,
+    # so exiting after the report would silently take FRIDAY down with it
+    if ready and not args.headless:
+        ui = launcher.start_ui()
+        print(f"  ui window: {'launched' if ui else 'not started'}")
+        print("  FRIDAY is listening - press Ctrl+C to shut down.", flush=True)
+        try:
+            threading.Event().wait()
+        except KeyboardInterrupt:
+            print("shutting down.")
+    return 0 if ready else 1
