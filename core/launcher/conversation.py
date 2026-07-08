@@ -139,12 +139,13 @@ class ConversationBridge:
     spoken asynchronously, uncertainty handled instead of ignored."""
 
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
-                 memory=None, self_model=None, speak_answers: bool = True,
+                 memory=None, self_model=None, goals=None, speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
         self.ios = ios
         self.memory = memory                # M2 MemoryService (One Memory, Phase C)
         self.self_model = self_model        # Self Model (Internal Mind, M23)
+        self.goals = goals                  # GoalService (proposal gate, M28)
         from core.memory.learning_gate import LearningGate
         self.gate = LearningGate()          # selective learning (M27)
         self.speech = speech if speech is not None else _SpeechOutput()
@@ -204,6 +205,39 @@ class ConversationBridge:
             log.debug("self model introspection failed", exc_info=True)
         return None
 
+    def _proposals(self, command: str) -> Optional[str]:
+        """Voice gate for FRIDAY's self-proposed goals (M28): list, approve,
+        reject — always the oldest open proposal first."""
+        if self.goals is None:
+            return None
+        q = (command or "").lower()
+        wants_list = re.search(r"\b(any|your|what|list|pending)\b.*\bpropos", q) or \
+            re.search(r"\bpropos\w*\b.*\b(goals?|anything)\b", q)
+        wants_approve = re.search(r"\b(approve|accept|go ahead with)\b.*\bpropos", q)
+        wants_reject = re.search(r"\b(reject|decline|dismiss)\b.*\bpropos", q)
+        if not (wants_list or wants_approve or wants_reject):
+            return None
+        try:
+            open_props = self.goals.list_proposals()
+            if wants_approve or wants_reject:
+                if not open_props:
+                    return "I have no open proposals right now."
+                goal = open_props[0]
+                if wants_approve:
+                    self.goals.approve_proposal(goal.goal_id)
+                    return f"Approved — I'll start working on: {goal.title}."
+                self.goals.reject_proposal(goal.goal_id, reason="rejected by voice")
+                return f"Understood, I've dropped the proposal: {goal.title}."
+            if not open_props:
+                return "I have no goal proposals at the moment."
+            titles = "; ".join(g.title for g in open_props[:3])
+            return (f"I have {len(open_props)} proposal"
+                    f"{'s' if len(open_props) != 1 else ''} waiting for your "
+                    f"approval: {titles}.")
+        except Exception:  # noqa: BLE001
+            log.debug("proposal handling failed", exc_info=True)
+            return None
+
     def _respond_directly(self, turn: int, source: str, answer: str, t0: float):
         from core.intelligence.router import RouterResponse
         response = RouterResponse(task=source, complexity="trivial",
@@ -242,6 +276,11 @@ class ConversationBridge:
         introspective = self._introspect(command)
         if introspective is not None:
             return self._respond_directly(turn, "self_model", introspective, t0)
+
+        # goal proposals (M28): list / approve / reject straight from the store
+        proposal_answer = self._proposals(command)
+        if proposal_answer is not None:
+            return self._respond_directly(turn, "goal_proposals", proposal_answer, t0)
 
         # memory retrieval happens before reasoning (provenance for the DecisionLog)
         memory_used: list = []

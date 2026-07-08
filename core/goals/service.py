@@ -75,6 +75,57 @@ class GoalService:
         self._emit(GoalEvent.CREATED, tree.root)
         return tree.root
 
+    # ── self-generated proposals (M28) — human-gated like codex proposals ───────
+    def propose_goal(self, title: str, *, description: str = "", source: str = "",
+                     evidence: str = "", priority: int = 4) -> Goal:
+        """FRIDAY proposes a goal for herself. It is stored PENDING but the
+        scheduler will never activate it until `approve_proposal()`."""
+        g = self.create_goal(
+            title, description=description, priority=priority, owner="friday",
+            metadata={"proposed_by": "friday", "proposal_status": "proposed",
+                      "source": source, "evidence": evidence})
+        with self._lock:
+            self._metrics.proposed += 1
+        self._observe("goal.propose", g, "proposed", detail=f"{source}: {evidence}")
+        self._emit(GoalEvent.PROPOSED, g, extra={"source": source})
+        return g
+
+    def list_proposals(self) -> list[Goal]:
+        """Open (unapproved, unrejected) self-generated proposals."""
+        return [g for g in self._store.list_goals(status=GoalStatus.PENDING)
+                if g.metadata.get("proposal_status") == "proposed"]
+
+    def approve_proposal(self, goal_id: str, by: str = "satvik") -> Optional[Goal]:
+        g = self._store.get_goal(goal_id)
+        if g is None or g.metadata.get("proposal_status") != "proposed":
+            return None
+        g.metadata["proposal_status"] = "approved"
+        g.metadata["approved_by"] = by
+        self._store.update_goal(g)
+        self._store.add_event(goal_id, "proposal_approved", f"approved by {by}", {})
+        with self._lock:
+            self._metrics.proposals_approved += 1
+        self._observe("goal.approve_proposal", g, "approved", detail=f"by {by}")
+        self._emit(GoalEvent.PROPOSAL_APPROVED, g)
+        return g
+
+    def reject_proposal(self, goal_id: str, reason: str = "") -> Optional[Goal]:
+        """Rejected proposals are archived (kept, so the generator never
+        proposes the same goal twice)."""
+        g = self._store.get_goal(goal_id)
+        if g is None or g.metadata.get("proposal_status") != "proposed":
+            return None
+        g.metadata["proposal_status"] = "rejected"
+        g.metadata["rejection_reason"] = reason
+        g.status = GoalStatus.ARCHIVED
+        self._store.update_goal(g)
+        self._store.add_event(goal_id, "proposal_rejected", reason, {})
+        with self._lock:
+            self._metrics.proposals_rejected += 1
+        self._observe("goal.reject_proposal", g, "rejected", detail=reason)
+        self._emit(GoalEvent.PROPOSAL_REJECTED, g, extra={"reason": reason})
+        return g
+
     # ── lifecycle ──────────────────────────────────────────────────────────────
     def activate_goal(self, goal_id: str) -> Optional[Goal]:
         g = self._transition(goal_id, GoalStatus.ACTIVE, "activated")
@@ -187,6 +238,7 @@ class GoalService:
             "counts": counts,
             "metrics": self._metrics.snapshot(),
             "next_actions": [g.title for g in self._scheduler.next_actions(5)],
+            "proposals": [g.title for g in self.list_proposals()],
         }
 
     def health(self) -> dict:

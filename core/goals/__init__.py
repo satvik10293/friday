@@ -15,7 +15,8 @@ Import is side-effect free (no DB or runtime is opened at import time).
 """
 
 from .models import Goal, GoalStatus, ReflectionRecord, TERMINAL_STATUSES
-from .goal import new_goal, validate_goal, is_ready, is_blocked, is_terminal
+from .goal import (new_goal, validate_goal, is_ready, is_blocked, is_terminal,
+                   is_awaiting_approval)
 from .events import GoalEvent
 from .metrics import GoalMetrics
 from .storage import GoalStore
@@ -23,13 +24,15 @@ from .planner import Planner, GoalTree, default_decompose
 from .progress import ProgressEngine
 from .scheduler import GoalScheduler
 from .reflection import ReflectionEngine
+from .generator import GoalGenerator
 from .service import GoalService, get_goal_service
 
 __all__ = [
     "Goal", "GoalStatus", "ReflectionRecord", "TERMINAL_STATUSES",
     "new_goal", "validate_goal", "is_ready", "is_blocked", "is_terminal",
+    "is_awaiting_approval",
     "GoalEvent", "GoalMetrics", "GoalStore",
     "Planner", "GoalTree", "default_decompose",
-    "ProgressEngine", "GoalScheduler", "ReflectionEngine",
+    "ProgressEngine", "GoalScheduler", "ReflectionEngine", "GoalGenerator",
     "GoalService", "get_goal_service",
 ]

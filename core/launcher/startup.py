@@ -218,9 +218,14 @@ class StartupSequence:
                                goals=self.components.get("goals"),
                                thoughts=thoughts)
         self.components["self_model"] = self_model
+        generator = None
+        if self.components.get("goals") is not None:
+            from core.goals.generator import GoalGenerator
+            generator = GoalGenerator(self.components["goals"], thoughts=thoughts)
         background = BackgroundCognition(
             thoughts=thoughts, memory=self.components.get("memory_service"),
-            goals=self.components.get("goals"), self_model=self_model)
+            goals=self.components.get("goals"), self_model=self_model,
+            generator=generator)
         self.components["background_cognition"] = background
         runtime = self.components.get("runtime")
         if runtime is not None and self.start_runtime:
@@ -243,7 +248,8 @@ class StartupSequence:
             from .conversation import ConversationBridge
             bridge = ConversationBridge(
                 ios, memory=self.components.get("memory_service"),
-                self_model=self.components.get("self_model"))
+                self_model=self.components.get("self_model"),
+                goals=self.components.get("goals"))
             self.components["conversation"] = bridge
             self_model = self.components.get("self_model")
             if self_model is not None:

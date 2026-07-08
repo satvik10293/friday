@@ -36,11 +36,12 @@ def _active_goals(goals) -> list:
 
 class BackgroundCognition:
     def __init__(self, *, thoughts, memory=None, goals=None, self_model=None,
-                 interval_s: float = 300.0) -> None:
+                 generator=None, interval_s: float = 300.0) -> None:
         self.thoughts = thoughts
         self.memory = memory
         self.goals = goals
         self.self_model = self_model
+        self.generator = generator          # GoalGenerator (M28)
         self.interval_s = interval_s
         self.ticks = 0
         self.last_report: dict = {}
@@ -67,6 +68,7 @@ class BackgroundCognition:
         if budget == "full":
             report["consolidation"] = self._consolidate()
             report["curiosity"] = self._wonder()
+            report["proposals"] = self._propose()
 
         self.ticks += 1
         report["ms"] = round((time.perf_counter() - t0) * 1000.0, 1)
@@ -114,6 +116,21 @@ class BackgroundCognition:
                     "deeper local reasoning is being used often.",
                     source="background", confidence=0.7)
             return {"status": "ok"}
+        except Exception as e:  # noqa: BLE001
+            return {"status": "failed", "error": str(e)}
+
+    def _propose(self) -> dict:
+        """Autonomous goal generation (M28): turn lessons, curiosity and
+        concerns into human-gated goal proposals."""
+        if self.generator is None:
+            return {"status": "no-generator"}
+        try:
+            report = self.generator.propose()
+            for title in report.get("proposed", []):
+                self.thoughts.think("planning", f"I proposed a goal for myself: "
+                                    f"{title} (awaiting Satvik's approval).",
+                                    source="background", confidence=0.6)
+            return {"status": "ok", **report}
         except Exception as e:  # noqa: BLE001
             return {"status": "failed", "error": str(e)}
 

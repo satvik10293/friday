@@ -16,6 +16,9 @@ class GoalMetrics:
     failed: int = 0
     blocked: int = 0
     reflected: int = 0
+    proposed: int = 0
+    proposals_approved: int = 0
+    proposals_rejected: int = 0
 
     def snapshot(self, store=None) -> dict:
         d = asdict(self)

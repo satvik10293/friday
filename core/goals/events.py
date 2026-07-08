@@ -17,3 +17,6 @@ class GoalEvent(str, Enum):
     FAILED = "goal.failed"
     BLOCKED = "goal.blocked"
     REFLECTED = "goal.reflected"
+    PROPOSED = "goal.proposed"
+    PROPOSAL_APPROVED = "goal.proposal_approved"
+    PROPOSAL_REJECTED = "goal.proposal_rejected"

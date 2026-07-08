@@ -45,10 +45,17 @@ def validate_goal(goal: Goal) -> None:
         raise ValueError("goal confidence must be in [0, 1]")
 
 
+def is_awaiting_approval(goal: Goal) -> bool:
+    """FRIDAY-proposed goals (M28) are human-gated: they sit PENDING but are
+    never ready until Satvik approves them."""
+    return goal.metadata.get("proposal_status") == "proposed"
+
+
 def is_ready(goal: Goal, by_id: dict) -> bool:
     """A PENDING goal is ready when every dependency is COMPLETED (missing
-    dependencies are treated as satisfied)."""
-    if goal.status != GoalStatus.PENDING:
+    dependencies are treated as satisfied). Unapproved proposals are never
+    ready."""
+    if goal.status != GoalStatus.PENDING or is_awaiting_approval(goal):
         return False
     for dep_id in goal.dependencies:
         dep = by_id.get(dep_id)
