@@ -42,18 +42,45 @@ class ReasonerModel(BaseModel):
                           TaskType.WRITING.value, TaskType.SIMULATION.value},
             ram_mb=8.0, avg_speed_ms=2.0, avg_accuracy=0.6, context_length=4096))
 
+    @staticmethod
+    def _best_snippets(request: InferenceRequest, k: int = 2) -> list[str]:
+        """The most relevant content the context builder retrieved (memories +
+        knowledge), ranked by keyword overlap with the prompt."""
+        kws = set(_keywords(request.prompt, k=8))
+        candidates: list[str] = []
+        for m in request.context.get("memories", []) or []:
+            text = m.get("content") if isinstance(m, dict) else str(m)
+            if text:
+                candidates.append(text)
+        for e in request.context.get("knowledge", []) or []:
+            text = e.get("content") if isinstance(e, dict) else str(e)
+            if text:
+                candidates.append(text)
+        scored = sorted(candidates,
+                        key=lambda t: -len(kws & set(_keywords(t, k=12))))
+        return [t.strip()[:300] for t in scored[:k]
+                if kws & set(_keywords(t, k=12))]
+
     def _run(self, request: InferenceRequest):
         kws = _keywords(request.prompt)
-        ctx_bits = list(request.context.get("knowledge", []))[:3]
+        snippets = self._best_snippets(request)
         steps = [f"Identify the core of: {request.prompt[:80]}",
                  f"Key concepts: {', '.join(kws) or 'n/a'}",
-                 "Relate to known context" + (f" ({len(ctx_bits)} items)" if ctx_bits else " (none)"),
-                 "Synthesise a conclusion"]
-        conclusion = (f"Reasoned over {len(kws)} concepts"
-                      + (f" using {len(ctx_bits)} context items" if ctx_bits else "")
-                      + ".")
-        confidence = 0.5 + 0.1 * min(3, len(ctx_bits))
-        return (conclusion, {"steps": steps, "keywords": kws}, round(confidence, 3))
+                 f"Recall relevant knowledge ({len(snippets)} matches)",
+                 "Answer from what I actually know"]
+        if snippets:
+            # speak the recalled content itself — never narrate the reasoning
+            answer = " ".join(snippets)
+            confidence = 0.7
+        else:
+            # honesty over theater: admit the gap at low confidence so the
+            # deeper pass / learning loop kicks in instead of a fake answer
+            topic = ", ".join(kws[:3]) or "that"
+            answer = (f"I don't know enough about {topic} yet — "
+                      "it isn't in my knowledge or memories so far.")
+            confidence = 0.3
+        return (answer, {"steps": steps, "keywords": kws,
+                         "snippets_used": len(snippets)}, confidence)
 
 
 class ResearchModel(BaseModel):

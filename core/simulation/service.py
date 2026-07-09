@@ -71,6 +71,7 @@ class _SimStore:
     def count(self) -> int:
         return self._conn().execute("SELECT COUNT(*) FROM simulations").fetchone()[0]
 
+
     def close(self) -> None:
         c = getattr(self._local, "c", None)
         if c is not None:

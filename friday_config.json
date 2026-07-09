@@ -18,6 +18,11 @@
     "engine": "edge-tts",
     "voice_id": "en-US-AriaNeural"
   },
+  "teacher": {
+    "enabled": true,
+    "provider": "groq",
+    "model": "llama-3.3-70b-versatile"
+  },
   "stt": {
     "model": "base",
     "device": "cpu",

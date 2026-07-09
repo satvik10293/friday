@@ -246,10 +246,16 @@ class StartupSequence:
         ios = self.components.get("intelligence")
         if ios is not None:
             from .conversation import ConversationBridge
+            teacher = None
+            try:                             # temporary cloud teacher (M30)
+                from core.intelligence.teacher import get_teacher
+                teacher = get_teacher()      # None unless enabled + key present
+            except Exception:  # noqa: BLE001 — the teacher is always optional
+                pass
             bridge = ConversationBridge(
                 ios, memory=self.components.get("memory_service"),
                 self_model=self.components.get("self_model"),
-                goals=self.components.get("goals"))
+                goals=self.components.get("goals"), teacher=teacher)
             self.components["conversation"] = bridge
             self_model = self.components.get("self_model")
             if self_model is not None:

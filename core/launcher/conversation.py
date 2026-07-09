@@ -6,11 +6,14 @@ intelligence protocol (`think(command, context)`), delegates to the Intelligence
 OS, records one DecisionLog row per voice turn, and speaks the answer aloud —
 without ever blocking the real-time audio thread.
 
-Uncertainty rules (docs/FRIDAY_5X_COGNITIVE_EVOLUTION.md §6) — FRIDAY is
-TOTALLY LOCAL; no external services are ever called:
+Uncertainty rules (docs/FRIDAY_5X_COGNITIVE_EVOLUTION.md §6):
   · heard badly  → ask for clarification instead of guessing
   · thought badly → think harder locally (a second, collaborative reasoning
     pass over the local model team), visible in the DecisionLog route
+  · still unsure → the temporary teacher (M30): an owner-enabled, config-gated
+    cloud consult whose answer is learned back into memory so the next similar
+    question is answered locally — the teacher tier is scaffolding that is
+    meant to fall out of use, and every consult shows in the route
 
 Speech is interruptible: sentences are spoken one at a time and barge-in
 (the user starting to speak) stops FRIDAY mid-answer.
@@ -139,13 +142,15 @@ class ConversationBridge:
     spoken asynchronously, uncertainty handled instead of ignored."""
 
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
-                 memory=None, self_model=None, goals=None, speak_answers: bool = True,
+                 memory=None, self_model=None, goals=None, teacher=None,
+                 speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
         self.ios = ios
         self.memory = memory                # M2 MemoryService (One Memory, Phase C)
         self.self_model = self_model        # Self Model (Internal Mind, M23)
         self.goals = goals                  # GoalService (proposal gate, M28)
+        self.teacher = teacher              # temporary cloud teacher (M30)
         from core.memory.learning_gate import LearningGate
         self.gate = LearningGate()          # selective learning (M27)
         self.speech = speech if speech is not None else _SpeechOutput()
@@ -156,6 +161,7 @@ class ConversationBridge:
         self._turn = 0
         self._escalations = 0
         self._clarifications = 0
+        self._teacher_turns = 0
         self._pending_approval: Optional[tuple] = None   # (goal_id, title, expires_at)
         self._lock = threading.Lock()
 
@@ -340,6 +346,25 @@ class ConversationBridge:
                 route.append("deep_reasoning")
                 self._escalations += 1
 
+        # still unsure after both local passes → consult the temporary teacher
+        # (M30); its answer replaces hers AND is learned back into memory below,
+        # so this branch is designed to fire less and less over time
+        still_weak = (not getattr(response, "ok", False)
+                      or float(getattr(response, "confidence", 0.0) or 0.0)
+                      < self.escalate_threshold)
+        if still_weak and self.teacher is not None and self.teacher.available():
+            taught = self.teacher.ask(command)
+            if taught.ok:
+                from core.intelligence.router import RouterResponse
+                response = RouterResponse(
+                    task=getattr(response, "task", "general") or "general",
+                    complexity="taught", strategy="groq_teacher", ok=True,
+                    answer=taught.answer, confidence=0.85,
+                    models_used=[f"groq:{taught.model}"],
+                    latency_ms=taught.latency_ms)
+                route.append("groq_teacher")
+                self._teacher_turns += 1
+
         self._record(turn=turn, route=route, response=response,
                      latency_ms=int((time.perf_counter() - t0) * 1000),
                      memory_used=memory_used)
@@ -371,6 +396,8 @@ class ConversationBridge:
                 "interrupted": self.speech.interrupted,
                 "clarifications": self._clarifications,
                 "escalations": self._escalations,
+                "teacher_turns": self._teacher_turns,
+                "teacher": self.teacher.status() if self.teacher else {"enabled": False},
                 "learning": self.gate.status()}
 
     def close(self) -> None:
