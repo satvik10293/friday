@@ -260,9 +260,16 @@ class StartupSequence:
             self_model = self.components.get("self_model")
             if self_model is not None:
                 self_model._conversation = bridge
+        # human-level listening (M31): require the wake word, verify transcripts,
+        # and hold a short follow-up window so natural conversation flows without
+        # re-waking — so she stops answering TV, ambient speech, and herself
+        lc = self.config.get("listening") or {}
         service = get_listening_service(
             microphone=LiveMicrophone(), intelligence_os=bridge,
-            wake_required=False, store_audio=False)
+            wake_required=lc.get("require_wake", True),
+            verify=lc.get("verify", True),
+            conversation_window_s=lc.get("conversation_window_s", 8.0),
+            store_audio=False)
         runtime = self.components.get("runtime")
         if runtime is not None:
             service.attach(runtime)

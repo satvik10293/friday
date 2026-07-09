@@ -28,6 +28,11 @@
     "device": "cpu",
     "compute_type": "int8"
   },
+  "listening": {
+    "require_wake": true,
+    "verify": true,
+    "conversation_window_s": 8.0
+  },
   "gesture": {
     "enabled": true,
     "window_actions": true,

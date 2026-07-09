@@ -25,6 +25,7 @@ class AudioEvent(str, Enum):
     COMMAND_STARTED = "command.started"
     COMMAND_FINISHED = "command.finished"
     TRANSCRIPT_READY = "transcript.ready"
+    TRANSCRIPT_VERIFIED = "transcript.verified"
     SPEAKER_CHANGED = "speaker.changed"
     LANGUAGE_CHANGED = "language.changed"
     EMOTION_DETECTED = "emotion.detected"

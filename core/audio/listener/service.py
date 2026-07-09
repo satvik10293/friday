@@ -19,10 +19,17 @@ log = logging.getLogger("friday.audio.service")
 
 class ListeningService:
     def __init__(self, *, intelligence_os=None, microphone=None, wake_required: bool = True,
-                 store_audio: bool = False) -> None:
+                 store_audio: bool = False, verify: bool = False,
+                 conversation_window_s: float = 8.0) -> None:
+        verifier = None
+        if verify:
+            from .verifier import ConversationState, TranscriptVerifier
+            verifier = TranscriptVerifier(
+                require_wake=wake_required,
+                conversation=ConversationState(window_s=conversation_window_s))
         self.pipeline = ListeningPipeline(
             microphone=microphone, intelligence_os=intelligence_os,
-            wake_required=wake_required, store_audio=store_audio)
+            verifier=verifier, wake_required=wake_required, store_audio=store_audio)
 
     @property
     def bus(self):

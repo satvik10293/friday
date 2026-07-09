@@ -34,6 +34,7 @@ from .speaker import SpeakerRecognizer
 from .speech_segmenter import Segment, SpeechSegmenter
 from .transcription import Transcriber, get_transcriber
 from .vad import AudioClass, NoiseSuppressor, VoiceActivityDetector, rms
+from .verifier import TranscriptVerifier, VerdictAction
 from .wake_word import WakeWordEngine
 
 log = logging.getLogger("friday.audio.pipeline")
@@ -52,6 +53,7 @@ class ListeningPipeline:
                  transcriber: Optional[Transcriber] = None,
                  wake_engine: Optional[WakeWordEngine] = None,
                  segmenter: Optional[SpeechSegmenter] = None,
+                 verifier: Optional[TranscriptVerifier] = None,
                  wake_required: bool = True, store_audio: bool = False,
                  buffer_seconds: float = 8.0) -> None:
         self.mic = microphone if microphone is not None else ArraySource()
@@ -69,6 +71,8 @@ class ListeningPipeline:
         self.emotion = EmotionEstimator()
         self.interruption = InterruptionController()
         self.metrics = ListeningMetrics()
+        # optional human-level verification gate (M31); None → legacy routing
+        self.verifier = verifier
 
         self.wake_required = wake_required
         self.store_audio = store_audio          # raw audio retained only if True (privacy)
@@ -183,7 +187,20 @@ class ListeningPipeline:
             self._stored.append(segment.audio)
 
         command = self.wake.strip_wake_word(text) if hit else text
-        routed = (not self.wake_required) or hit
+
+        # verification gate (M31): decide, like a human, whether this was meant
+        # for her and whether it was finished — before cognition ever sees it
+        verdict = None
+        if self.verifier is not None:
+            self.stage = "verification"
+            verdict = self.verifier.verify(
+                command, audio_confidence=conf.overall, wake_hit=hit,
+                speaker=spk.label, speaker_known=spk.known)
+            routed = verdict.action == VerdictAction.ACCEPT
+            self.bus.emit(AudioEvent.TRANSCRIPT_VERIFIED, verdict.to_dict())
+        else:
+            routed = (not self.wake_required) or hit
+
         response = None
         if routed and command.strip() and self.ios is not None:
             self.stage = "intelligence"
@@ -191,6 +208,8 @@ class ListeningPipeline:
                 response = self.ios.think(command, context={
                     "source": "voice", "emotion": emo.emotion, "speaker": spk.label,
                     "language": lang.language, "audio_confidence": conf.overall})
+                if self.verifier is not None:
+                    self.verifier.note_response(spk.label)   # open follow-up window
             except Exception as e:  # noqa: BLE001 — IOS failure must not break listening
                 log.debug("IOS routing failed: %s", e)
 
@@ -202,6 +221,7 @@ class ListeningPipeline:
         result = {"text": text, "command": command, "routed": routed,
                   "wake": hit, "speaker": spk.label, "language": lang.language,
                   "emotion": emo.emotion, "confidence": conf.to_dict(),
+                  "verdict": verdict.to_dict() if verdict is not None else None,
                   "latency_ms": self.last_latency_ms, "duration_s": segment.duration_s,
                   "response": response.to_dict() if response is not None and
                   hasattr(response, "to_dict") else None}
