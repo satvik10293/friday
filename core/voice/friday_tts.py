@@ -1,7 +1,7 @@
 import asyncio
 import edge_tts
 
-VOICE = "en-US-GuyNeural"
+VOICE = "en-US-AriaNeural"
 
 
 async def speak_to_file(text: str, output_file: str = "friday_reply.mp3"):

@@ -118,7 +118,7 @@ if not config.exists():
         "friday_version":      "3.0",
         "voice": {
             "engine":   "edge-tts",
-            "voice_id": "en-US-GuyNeural"
+            "voice_id": "en-US-AriaNeural"
         },
         "stt": {
             "model":        "base",
