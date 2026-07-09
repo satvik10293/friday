@@ -24,11 +24,13 @@ for `friday_brain.respond()`.
 
 from __future__ import annotations
 
+import difflib
 import logging
 import queue
 import re
 import threading
 import time
+from collections import deque
 from typing import Callable, Optional
 
 log = logging.getLogger("friday.launcher.conversation")
@@ -162,6 +164,10 @@ class ConversationBridge:
         self._escalations = 0
         self._clarifications = 0
         self._teacher_turns = 0
+        self._echoes_dropped = 0
+        self._noise_dropped = 0
+        self._last_clarify_ts = 0.0
+        self._recent_speech: deque = deque(maxlen=8)   # (normalized text, ts)
         self._pending_approval: Optional[tuple] = None   # (goal_id, title, expires_at)
         self._lock = threading.Lock()
 
@@ -273,6 +279,48 @@ class ConversationBridge:
             log.debug("proposal handling failed", exc_info=True)
             return None
 
+    # ── keeping her own voice and room noise out of the conversation ─────────────
+    _ECHO_WINDOW_S = 45.0
+    _ECHO_RATIO = 0.72
+    _CLARIFY_COOLDOWN_S = 20.0
+
+    @staticmethod
+    def _norm(text: str) -> str:
+        return re.sub(r"[^a-z0-9 ]+", "", (text or "").lower()).strip()
+
+    def _say(self, text: str) -> None:
+        """All speech goes through here so the bridge remembers what SHE said —
+        the mic will hear it again, and she must not answer herself."""
+        text = (text or "").strip()
+        if not text:
+            return
+        self._recent_speech.append((self._norm(text), time.time()))
+        self.speech.say(text)
+
+    def _is_self_echo(self, command: str) -> bool:
+        cmd = self._norm(command)
+        if len(cmd) < 8:
+            return False
+        now = time.time()
+        for spoken, ts in self._recent_speech:
+            if now - ts > self._ECHO_WINDOW_S:
+                continue
+            if cmd in spoken:                          # STT caught a fragment
+                return True
+            if difflib.SequenceMatcher(None, cmd, spoken).ratio() > self._ECHO_RATIO:
+                return True
+        return False
+
+    def _drop(self, turn: int, kind: str, heard: float, t0: float):
+        """Silently ignore a turn (self-echo / repeated noise): logged for
+        observability, nothing spoken."""
+        from core.intelligence.router import RouterResponse
+        response = RouterResponse(task=kind, complexity="trivial", strategy=kind,
+                                  ok=True, answer="", confidence=heard)
+        self._record(turn=turn, route=[kind], response=response,
+                     latency_ms=int((time.perf_counter() - t0) * 1000))
+        return response
+
     def _respond_directly(self, turn: int, source: str, answer: str, t0: float):
         from core.intelligence.router import RouterResponse
         response = RouterResponse(task=source, complexity="trivial",
@@ -281,10 +329,16 @@ class ConversationBridge:
         self._record(turn=turn, route=[source], response=response,
                      latency_ms=int((time.perf_counter() - t0) * 1000))
         if self.speak_answers:
-            self.speech.say(answer)
+            self._say(answer)
         return response
 
     def _clarify(self, turn: int, heard: float, t0: float):
+        # ask once, then stay quiet: a noisy room must not become a nag loop
+        now = time.time()
+        if now - self._last_clarify_ts < self._CLARIFY_COOLDOWN_S:
+            self._noise_dropped += 1
+            return self._drop(turn, "noise", heard, t0)
+        self._last_clarify_ts = now
         from core.intelligence.router import RouterResponse
         response = RouterResponse(task="clarify", complexity="trivial",
                                   strategy="clarify", ok=True,
@@ -293,7 +347,7 @@ class ConversationBridge:
         self._record(turn=turn, route=["clarify"], response=response,
                      latency_ms=int((time.perf_counter() - t0) * 1000))
         if self.speak_answers:
-            self.speech.say(response.answer)
+            self._say(response.answer)
         return response
 
     # ── the pipeline's intelligence protocol ─────────────────────────────────────
@@ -302,7 +356,12 @@ class ConversationBridge:
         turn = self._next_turn()
         ctx = dict(context or {})
 
-        # heard badly → ask again instead of guessing
+        # the mic hears her too — never answer her own recent speech
+        if self._is_self_echo(command):
+            self._echoes_dropped += 1
+            return self._drop(turn, "self_echo", 1.0, t0)
+
+        # heard badly → ask again instead of guessing (once, then stay quiet)
         heard = ctx.get("audio_confidence")
         if heard is not None and float(heard) < self.clarify_threshold:
             return self._clarify(turn, float(heard), t0)
@@ -379,11 +438,12 @@ class ConversationBridge:
         self.gate.apply(self.memory, decision, command, answer)
 
         if self.speak_answers and getattr(response, "ok", False):
-            self.speech.say(getattr(response, "answer", ""))
+            self._say(getattr(response, "answer", ""))
         return response
 
     # ── announcements (runtime SPEAK_START handler) ──────────────────────────────
     def announce(self, text: str) -> bool:
+        self._recent_speech.append((self._norm(text), time.time()))
         return self.speech.say(text)
 
     def interrupt(self) -> None:
@@ -397,6 +457,8 @@ class ConversationBridge:
                 "clarifications": self._clarifications,
                 "escalations": self._escalations,
                 "teacher_turns": self._teacher_turns,
+                "echoes_dropped": self._echoes_dropped,
+                "noise_dropped": self._noise_dropped,
                 "teacher": self.teacher.status() if self.teacher else {"enabled": False},
                 "learning": self.gate.status()}
 

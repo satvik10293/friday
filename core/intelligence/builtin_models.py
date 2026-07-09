@@ -21,6 +21,20 @@ _WORD = re.compile(r"[a-z0-9']+")
 _MATH = re.compile(r"[-+*/()\d\s.%]+")
 
 
+def _strip_question_prefix(text: str) -> str:
+    """Stored conversation turns can begin with the user's question ("what is
+    X? X is …"). Spoken answers must never echo the question back."""
+    text = (text or "").strip()
+    q = text.find("?")
+    if 0 <= q < len(text) - 1:
+        first = text[:q]
+        if _keywords(first, k=3) and not text[:1].isdigit():
+            rest = text[q + 1:].strip()
+            if len(rest) >= 12:
+                return rest
+    return text
+
+
 def _keywords(text: str, k: int = 6) -> list[str]:
     stop = {"the", "a", "an", "to", "of", "and", "or", "is", "it", "how", "do",
             "i", "you", "what", "why", "this", "that", "with", "for", "in", "on"}
@@ -69,8 +83,9 @@ class ReasonerModel(BaseModel):
                  f"Recall relevant knowledge ({len(snippets)} matches)",
                  "Answer from what I actually know"]
         if snippets:
-            # speak the recalled content itself — never narrate the reasoning
-            answer = " ".join(snippets)
+            # speak the recalled content itself — never narrate the reasoning,
+            # never echo a stored question back at the user
+            answer = " ".join(_strip_question_prefix(s) for s in snippets)
             confidence = 0.7
         else:
             # honesty over theater: admit the gap at low confidence so the
@@ -108,7 +123,8 @@ class PlanningModel(BaseModel):
     def _run(self, request: InferenceRequest):
         kws = _keywords(request.prompt, 5) or ["objective"]
         plan = [f"Step {i+1}: address '{kw}'" for i, kw in enumerate(kws)]
-        return (f"Plan with {len(plan)} steps.",
+        spoken = "; then ".join(f"address {kw}" for kw in kws)
+        return (f"Here's my plan: first {spoken}.",
                 {"plan": plan, "estimated_steps": len(plan)}, 0.62)
 
 
@@ -159,9 +175,16 @@ class MemoryModel(BaseModel):
         know = request.context.get("knowledge", [])
         items = (mems + know)[:5]
         if not items:
-            return ("No relevant memories or knowledge in context.", {"items": []}, 0.2)
-        return (f"Recalled {len(items)} relevant item(s).",
-                {"items": items}, round(min(0.9, 0.4 + 0.1 * len(items)), 3))
+            return ("I don't have any memories about that yet.", {"items": []}, 0.2)
+        # speak the most relevant recalled content — never narrate the count
+        kws = set(_keywords(request.prompt, k=8))
+        texts = [(m.get("content") if isinstance(m, dict) else str(m)) or ""
+                 for m in items]
+        best = max(texts, key=lambda t: len(kws & set(_keywords(t, k=12))))
+        answer = _strip_question_prefix(best).strip()[:300] or \
+            "I don't have any memories about that yet."
+        return (answer, {"items": items},
+                round(min(0.9, 0.4 + 0.1 * len(items)), 3))
 
 
 def builtin_models() -> list[BaseModel]:

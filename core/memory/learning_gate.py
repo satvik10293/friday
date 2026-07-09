@@ -85,6 +85,7 @@ class GateDecision:
     private: bool = False
     forget: bool = False
     forget_query: str = ""
+    answer_only: bool = False       # store just the answer (taught knowledge)
 
     def to_dict(self) -> dict:
         return {k: v for k, v in self.__dict__.items()}
@@ -151,6 +152,12 @@ class LearningGate:
             decision = GateDecision(store=False, reason="low_confidence_answer")
         elif not (answer or "").strip():
             decision = GateDecision(store=False, reason="no_answer")
+        elif "groq_teacher" in route:
+            # taught by the temporary teacher (M30): keep only the answer, as
+            # knowledge — recalling it must never echo the question back
+            decision = GateDecision(store=True, reason="taught",
+                                    kind="knowledge", importance=0.7,
+                                    answer_only=True)
         else:
             decision = GateDecision(store=True, reason="substantive",
                                     kind="conversation", importance=0.5)
@@ -170,6 +177,11 @@ class LearningGate:
                 return []
             meta = {"source": "voice", "private": decision.private,
                     "gate": decision.reason}
+            if decision.answer_only:
+                return [memory.remember("friday", answer, kind=decision.kind,
+                                        tier="semantic",
+                                        importance=decision.importance,
+                                        metadata=meta)]
             ids = [memory.remember("user", command, kind=decision.kind,
                                    tier="episodic", importance=decision.importance,
                                    metadata=meta)]
