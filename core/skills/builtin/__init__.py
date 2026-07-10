@@ -10,6 +10,12 @@ from .health_check import HealthCheckSkill
 from .memory_search import MemorySearchSkill
 from .memory_store import MemoryStoreSkill
 from .system_status import SystemStatusSkill
+from .system_actions import (
+    ALL_ACTION_SPECS,
+    SystemActionSkill,
+    build_action_skills,
+    register_action_skills,
+)
 
 ALL_BUILTIN = [
     MemorySearchSkill,
@@ -24,10 +30,13 @@ def register_builtins(registry) -> object:
     for cls in ALL_BUILTIN:
         if not registry.has(cls.name):
             registry.register(cls())
+    # M34: the full FridayAction catalog as governed, tiered skills.
+    register_action_skills(registry)
     return registry
 
 
 __all__ = [
     "MemorySearchSkill", "MemoryStoreSkill", "HealthCheckSkill", "SystemStatusSkill",
-    "ALL_BUILTIN", "register_builtins",
+    "SystemActionSkill", "ALL_ACTION_SPECS", "build_action_skills",
+    "register_action_skills", "ALL_BUILTIN", "register_builtins",
 ]

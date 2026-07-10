@@ -108,7 +108,7 @@ New specialists are added here as task shapes recur.
 **Exit (met):** fast-path answers measured < 500 ms; misses fall through with
 zero behaviour change; cortex stats exposed. Tests: `test_mini_brains.py` (29).
 
-### M34 — Executive Supremacy & Skills  (`m34-executive-supremacy`)
+### M34 — Executive Supremacy & Skills  (`m34-executive-supremacy`) ✅
 
 Infrastructure already exists (`core/skills/`: registry, executor, manifests,
 permissions, audit; `core/security/`: roles, policies, approvals, sandbox,
@@ -140,6 +140,19 @@ validation, security_log) but only 4 builtin skills are registered while
 
 **Exit:** every side-effecting action in `audit.db` with a DecisionLog trace;
 zero ungoverned action invocations on the boot path; pytest green.
+
+**Landed (2026-07-10):** 37 skills in `core/skills/builtin/system_actions.py`
+(11 SAFE/LOW read-only · 17 SAFE/MEDIUM reversible · 4 USER_APPROVAL/HIGH ·
+5 ADMIN_ONLY/HIGH-CRITICAL), thin delegating wrappers over FridayAction,
+registered via `register_builtins`. `shell.run` stays hard-DENIED by the
+default policy — enabling it is an explicit owner act. Simulation advisory
+wired: `Orchestrator(deliberator=…)` consults the Executive Brain's
+`deliberate()` before HIGH/CRITICAL skills; `ask_user` stops autonomous
+execution before the approval gate; advisory failure never blocks. Honest
+note on item 4: no live voice→skill routing exists yet, so the two-step
+confirm applies when that path lands — until then the ApprovalManager blocks
+every Tier-3 invocation by construction (no auto-decider is wired). Tests:
+`test_system_action_skills.py` (15).
 
 ### M35 — Live World & Truthful Independence  (`m35-live-world`)
 

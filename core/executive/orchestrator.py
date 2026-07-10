@@ -23,12 +23,16 @@ log = logging.getLogger("friday.executive.orchestrator")
 
 class Orchestrator:
     def __init__(self, skill_executor=None, goal_service=None, memory_service=None,
-                 runtime=None, decision_log=None) -> None:
+                 runtime=None, decision_log=None, deliberator=None) -> None:
         self._executor = skill_executor
         self._goals = goal_service
         self._memory = memory_service
         self._runtime = runtime
         self._decision = decision_log
+        # M34: optional advisory hook — the Executive Brain's deliberate()
+        # (backed by the Simulation Brain). Consulted before HIGH/CRITICAL-risk
+        # skills; advisory only, and its absence changes nothing.
+        self._deliberator = deliberator
         self._executed = 0
 
     # ── decisions ──────────────────────────────────────────────────────────────
@@ -48,12 +52,25 @@ class Orchestrator:
     # ── execution ──────────────────────────────────────────────────────────────
     def execute_step(self, step: PlanStep, context=None) -> PlanStep:
         """Execute a single step. Routes through SkillExecutor when the step names a
-        skill and an executor is available; otherwise completes synthetically."""
+        skill and an executor is available; otherwise completes synthetically.
+        HIGH/CRITICAL-risk skills are deliberated first (M34): the Simulation
+        Brain advises, the Executive decides — an 'ask_user' verdict stops
+        autonomous execution before the approval gate is even reached."""
         step.status = PlanStepStatus.ACTIVE
         if step.skill and self._executor is not None:
+            advice = self._deliberate(step)
+            if advice is not None and advice.get("decision") == "ask_user":
+                step.result = {"success": False, "deliberation": advice,
+                               "reason": "simulation advised against autonomous execution"}
+                step.status = PlanStepStatus.FAILED
+                self._executed += 1
+                self._observe(step)
+                return step
             ctx = context or self._make_context()
             result = self._executor.execute(step.skill, step.args, ctx)
             step.result = result.to_dict() if hasattr(result, "to_dict") else {"raw": str(result)}
+            if advice is not None:
+                step.result["deliberation"] = advice
             step.status = PlanStepStatus.DONE if getattr(result, "success", False) \
                 else PlanStepStatus.FAILED
         else:
@@ -103,6 +120,26 @@ class Orchestrator:
                 "executor": self._executor is not None}
 
     # ── internals ──────────────────────────────────────────────────────────────
+    def _deliberate(self, step: PlanStep) -> Optional[dict]:
+        """Consult the deliberator for HIGH/CRITICAL-risk skills only. Advisory:
+        a missing or failing deliberator never blocks execution — the
+        permission/approval gate in the SkillExecutor still applies either way."""
+        if self._deliberator is None or self._executor is None:
+            return None
+        try:
+            from core.skills.permissions import RiskLevel
+            skill = self._executor.registry.get(step.skill)
+            if skill.risk_level < RiskLevel.HIGH:
+                return None
+            return self._deliberator(
+                step.action or step.skill,
+                context={"skill": step.skill, "args": dict(step.args or {}),
+                         "risk_level": skill.risk_level.name},
+            )
+        except Exception:  # noqa: BLE001 — advice is optional, execution is not
+            log.debug("deliberation failed for step %s", step.step_id, exc_info=True)
+            return None
+
     def _make_context(self):
         from core.skills.context import SkillContext
         return SkillContext(runtime=self._runtime, memory_service=self._memory,

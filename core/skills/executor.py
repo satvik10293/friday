@@ -161,6 +161,12 @@ class SkillExecutor:
     def metrics(self) -> dict:
         return dict(self._metrics)
 
+    @property
+    def registry(self):
+        """The skill registry this executor resolves from (read access for
+        callers that need skill metadata, e.g. risk-based deliberation)."""
+        return self._registry
+
     # ── internals ──────────────────────────────────────────────────────────────
     def _invoke(self, skill, context, args: dict):
         timeout = skill.timeout or self._default_timeout

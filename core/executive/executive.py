@@ -44,7 +44,7 @@ class ExecutiveBrain:
     def __init__(self, *, runtime=None, memory_service=None, goal_service=None,
                  skill_executor=None, decision_log=None, context_builder=None,
                  attention=None, world_model=None, reasoner=None, planner=None,
-                 orchestrator=None, state_store=None) -> None:
+                 orchestrator=None, state_store=None, deliberator=None) -> None:
         self._runtime = runtime
         self._memory = memory_service
         self._goals = goal_service
@@ -58,7 +58,8 @@ class ExecutiveBrain:
         self._planner = planner if planner is not None else ExecutivePlanner()
         self._orchestrator = orchestrator if orchestrator is not None else Orchestrator(
             skill_executor=skill_executor, goal_service=goal_service,
-            memory_service=memory_service, runtime=runtime, decision_log=decision_log)
+            memory_service=memory_service, runtime=runtime, decision_log=decision_log,
+            deliberator=deliberator)
         self._state_store = state_store
         self._state = state_store.load() if state_store is not None else CognitiveState()
 

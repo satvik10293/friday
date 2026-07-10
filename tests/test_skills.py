@@ -89,5 +89,7 @@ def test_register_builtins_and_find_by_permission():
 def test_register_builtins_idempotent():
     reg = SkillRegistry()
     register_builtins(reg)
+    count = len(reg)         # 4 reference skills + the M34 action catalog
     register_builtins(reg)   # second call must not raise
-    assert len(reg) == 4
+    assert len(reg) == count
+    assert count >= 41
