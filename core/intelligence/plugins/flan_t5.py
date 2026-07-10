@@ -32,8 +32,11 @@ class FlanT5Model(BaseModel):
     def _get(self):
         if self._pipe is None:
             from transformers import pipeline
-            log.info("loading flan-t5 pipeline %s", self._model_id)
-            self._pipe = pipeline("text2text-generation", model=self._model_id)
+            from core.intelligence.device import preferred_device
+            device = preferred_device("local_models")   # wizard's device plan (M35)
+            log.info("loading flan-t5 pipeline %s on %s", self._model_id, device)
+            self._pipe = pipeline("text2text-generation", model=self._model_id,
+                                  device=device)
         return self._pipe
 
     def _run(self, request: InferenceRequest):

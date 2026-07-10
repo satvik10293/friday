@@ -66,6 +66,11 @@ def _get_conn() -> sqlite3.Connection:
 
 
 _conn_lock  = threading.Lock()
+# Writers serialize process-wide: SQLite on Windows can return BUSY on some
+# lock upgrades without consulting the busy handler, so relying on timeouts
+# alone makes concurrent writes flaky. Reads stay lock-free (per-thread
+# connections + WAL).
+_write_lock = threading.Lock()
 _local      = threading.local()
 _schema_ready = False
 
@@ -80,8 +85,12 @@ def _db() -> sqlite3.Connection:
     global _schema_ready
     conn = getattr(_local, "conn", None)
     if conn is None:
-        conn = _get_conn()
+        # Connection CREATION is serialized, not just schema init: flipping a
+        # fresh DB to WAL (PRAGMA journal_mode) needs exclusive access and
+        # SQLite does not consult the busy handler for that transition — two
+        # threads opening first connections concurrently → "database is locked".
         with _conn_lock:
+            conn = _get_conn()
             if not _schema_ready:
                 _init_schema(conn)
                 _schema_ready = True
@@ -159,9 +168,11 @@ def _load_embedder():
         return True
     try:
         from sentence_transformers import SentenceTransformer
-        _embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+        from core.intelligence.device import preferred_device
+        device = preferred_device("embeddings")   # wizard's device plan (M35)
+        _embed_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
         _embed_ready = True
-        log.info("Embedding model loaded")
+        log.info("Embedding model loaded on %s", device)
         return True
     except ImportError:
         log.warning("sentence-transformers not installed — FAISS search disabled")
@@ -242,11 +253,12 @@ def start_session() -> str:
     import uuid
     sid = str(uuid.uuid4())[:8]
     db = _db()
-    db.execute(
-        "INSERT INTO sessions (id, started_at) VALUES (?, ?)",
-        (sid, time.time())
-    )
-    db.commit()
+    with _write_lock:
+        db.execute(
+            "INSERT INTO sessions (id, started_at) VALUES (?, ?)",
+            (sid, time.time())
+        )
+        db.commit()
     _current_session = sid
     log.info("Session started: %s", sid)
     return sid
@@ -256,11 +268,12 @@ def end_session(summary: Optional[str] = None) -> None:
     if not _current_session:
         return
     db = _db()
-    db.execute(
-        "UPDATE sessions SET ended_at=?, summary=? WHERE id=?",
-        (time.time(), summary, _current_session)
-    )
-    db.commit()
+    with _write_lock:
+        db.execute(
+            "UPDATE sessions SET ended_at=?, summary=? WHERE id=?",
+            (time.time(), summary, _current_session)
+        )
+        db.commit()
     log.info("Session ended: %s", _current_session)
 
 
@@ -289,14 +302,15 @@ def save_turn(
     meta = json.dumps(metadata or {})
     sid  = get_session()
 
-    cursor = db.execute(
-        """INSERT INTO memories
-           (type, role, content, topic, timestamp, session_id, importance, metadata)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (mem_type, role, content, topic, time.time(), sid, importance, meta)
-    )
-    mem_id = cursor.lastrowid
-    db.commit()
+    with _write_lock:
+        cursor = db.execute(
+            """INSERT INTO memories
+               (type, role, content, topic, timestamp, session_id, importance, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (mem_type, role, content, topic, time.time(), sid, importance, meta)
+        )
+        mem_id = cursor.lastrowid
+        db.commit()
 
     # Embed async-ish — don't block caller
     _index_memory(mem_id, content)
@@ -320,9 +334,10 @@ def _index_memory(mem_id: int, content: str) -> None:
             _embed_ids.append(mem_id)
             # Durable link: the row records its own FAISS position, so the
             # mapping survives a crash even if the .npy side list is stale.
-            _db().execute(
-                "UPDATE memories SET embed_id=? WHERE id=?", (position, mem_id))
-            _db().commit()
+            with _write_lock:
+                _db().execute(
+                    "UPDATE memories SET embed_id=? WHERE id=?", (position, mem_id))
+                _db().commit()
             # Save every 20 new vectors
             if len(_embed_ids) % 20 == 0:
                 _save_faiss()
@@ -349,14 +364,15 @@ def save_fact(
 ) -> int:
     """Store a structured fact triple: subject → predicate → object."""
     db = _db()
-    cursor = db.execute(
-        """INSERT INTO facts
-           (subject, predicate, object, source, confidence, timestamp, metadata)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (subject, predicate, object_, source, confidence, time.time(),
-         json.dumps(metadata or {}))
-    )
-    db.commit()
+    with _write_lock:
+        cursor = db.execute(
+            """INSERT INTO facts
+               (subject, predicate, object, source, confidence, timestamp, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (subject, predicate, object_, source, confidence, time.time(),
+             json.dumps(metadata or {}))
+        )
+        db.commit()
     log.debug("Fact saved: %s %s %s", subject, predicate, object_)
     return cursor.lastrowid
 
@@ -369,16 +385,17 @@ def save_preference(
 ) -> None:
     """Upsert a preference. Thread-safe."""
     db = _db()
-    db.execute(
-        """INSERT INTO preferences (category, key, value, weight, updated_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(category, key) DO UPDATE SET
-               value=excluded.value,
-               weight=excluded.weight,
-               updated_at=excluded.updated_at""",
-        (category, key, value, weight, time.time())
-    )
-    db.commit()
+    with _write_lock:
+        db.execute(
+            """INSERT INTO preferences (category, key, value, weight, updated_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(category, key) DO UPDATE SET
+                   value=excluded.value,
+                   weight=excluded.weight,
+                   updated_at=excluded.updated_at""",
+            (category, key, value, weight, time.time())
+        )
+        db.commit()
 
 
 # ── Core read operations ──────────────────────────────────────────────────────

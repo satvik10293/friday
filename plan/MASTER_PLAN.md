@@ -40,9 +40,13 @@ Three dependency-ordered tracks, plus one explicitly parked horizon:
 
 | Track | Theme | Milestones |
 |---|---|---|
-| **A — Perfect the core** | Upgrade the 2.0 base from the ground up (no deletions), then: nothing bypasses the Executive; reasoning becomes genuinely local | M32–M36 |
-| **B — The wrapper** | One stable boundary around the whole system: the Friday Core API | M37 |
-| **C — Resident autonomy** | She runs 24/7 as a governed, self-improving resident | M38 |
+| **A — Perfect the core** | Upgrade the 2.0 base from the ground up (no deletions), then: nothing bypasses the Executive; reasoning becomes genuinely local | M32–M35 ✅ + 2 open |
+| **B — The wrapper** | One stable boundary around the whole system: the Friday Core API | open |
+| **C — Resident autonomy** | She runs 24/7 as a governed, self-improving resident | open |
+
+> **Numbering rule (2026-07-10):** future milestones are numbered only when
+> they land — planned-but-unbuilt work is named, not numbered. This file was
+> renumbered three times in one day; never again.
 | *Horizon (parked)* | *Platform layer: CPU+GPU, Windows+macOS* | *unscheduled* |
 
 A track does not start until the previous track's exit criteria pass. Every
@@ -154,7 +158,29 @@ confirm applies when that path lands — until then the ApprovalManager blocks
 every Tier-3 invocation by construction (no auto-decider is wired). Tests:
 `test_system_action_skills.py` (15).
 
-### M35 — Live World & Truthful Independence  (`m35-live-world`)
+### M35 — Device Wizard  (`m35-device-wizard`) ✅ *(pulled from the platform horizon at Satvik's request, 2026-07-10)*
+
+For every user's machine — Mac, gaming PC, office laptop — the first-run
+wizard decides her CPU/GPU split honestly:
+
+- `core/launcher/device_plan.py`: detect backends (CUDA / Apple-Metal MPS /
+  OpenVINO-GPU) → **measure** a ~10 s MiniLM-shaped micro-benchmark on CPU vs
+  each measurable GPU → classify: `good_gpu` (≥2.0× measured) = local models
+  + perception on GPU · `average_gpu` (≥1.2×) = perception only · `cpu_only`.
+  Unmeasured backends (OpenVINO today) are recorded but NEVER selected —
+  unproven is unused. Plan written to `friday_config.json:device_plan`.
+- `core/intelligence/device.py`: the ONLY reader — `preferred_device()`
+  always returns a safe torch device; anything unknown degrades to cpu.
+  Consumers wired: flan-t5 pipeline + chronicle embedder.
+- Wizard: `gpu` check + `plan_devices()` step in `first_run.py`;
+  `python -m core.launcher.device_plan --write` is the diagnostics re-run.
+- Honest note: Satvik's own box (Iris Xe, torch-cpu) measures `cpu_only` —
+  correct behaviour. OpenVINO measurement is future horizon work.
+
+**Exit (met):** wizard writes a measured plan; readers degrade safely; 16 new
+tests (`test_device_plan.py`) + first-run/launcher regressions green.
+
+### Live World & Truthful Independence  *(open — numbered when it lands)*
 
 1. World Model continuously fed by the Perception Hub (observations already
    emitted — connect the pipe). Proof: "what's happening right now?" answered
@@ -164,7 +190,7 @@ every Tier-3 invocation by construction (no auto-decider is wired). Tests:
 
 **Exit:** both proofs demonstrated and logged.
 
-### M36 — Local Intelligence  (`m36-local-intelligence`)
+### Local Intelligence  *(open — numbered when it lands)*
 
 **Scope correction (Satvik, 2026-07-10): no new local reasoning models.**
 The only big-model tier is the Groq teacher (M30) — FRIDAY learns from Groq
@@ -186,7 +212,7 @@ entirely stays the prime-rule end state; the date is Satvik's call.)
 
 ---
 
-## 4. Track B — The wrapper (M37, `m37-core-api`)
+## 4. Track B — The wrapper: the Friday Core API *(open)*
 
 The "layer that wraps around Friday 2.0": a single stable boundary — the
 **Friday Core API** — through which *every* consumer talks to her. Nothing
@@ -213,7 +239,7 @@ makes "runs anywhere" a swap instead of a rewrite.
 
 ---
 
-## 5. Track C — Resident autonomy (M38, `m38-resident`)
+## 5. Track C — Resident autonomy *(open)*
 
 1. FRIDAY runs 24/7 as a resident process: starts with Windows, survives
    sleep/wake, degrades gracefully (mic/camera loss ≠ crash).
@@ -271,7 +297,7 @@ Tracks A–C are done. Recorded so the intent isn't lost:
 7. Every milestone lands with tests, observability, commit + tag.
 8. Performance is measured continuously, never optimized blind.
 9. Spoken input is an attack surface (m29); new skills inherit that posture.
-10. **New:** nothing consumes the core except through the Core API once M37
+10. **New:** nothing consumes the core except through the Core API once it
     lands; new Windows-only code goes behind the platform adapter.
 11. **New (Satvik, 2026-07-10):** the base is upgraded, never deleted —
     repairs happen in place; `legacy/` quarantine is the only exception.

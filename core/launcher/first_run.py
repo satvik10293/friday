@@ -50,6 +50,8 @@ class FirstRunReport:
     checks: list = field(default_factory=list)
     secret_configured: bool = False
     config_written: bool = False
+    device_plan: Optional[dict] = None
+    device_plan_written: bool = False
     marker: str = ""
 
     def ok(self) -> bool:
@@ -60,7 +62,10 @@ class FirstRunReport:
     def to_dict(self) -> dict:
         return {"completed": self.completed, "already_done": self.already_done,
                 "ok": self.ok(), "secret_configured": self.secret_configured,
-                "config_written": self.config_written, "marker": self.marker,
+                "config_written": self.config_written,
+                "device_plan": self.device_plan,
+                "device_plan_written": self.device_plan_written,
+                "marker": self.marker,
                 "checks": [c.to_dict() for c in self.checks]}
 
 
@@ -128,9 +133,34 @@ class FirstRunWizard:
         except Exception as e:  # noqa: BLE001
             return CheckResult(name, "unknown", f"probe error: {type(e).__name__}")
 
+    def check_gpu(self) -> CheckResult:
+        """Fast detection only (the measured benchmark runs in plan_devices)."""
+        try:
+            from .device_plan import detect_backends
+            backends = detect_backends()
+            if not backends:
+                return CheckResult("gpu", "absent", "no GPU backend — CPU only")
+            detail = ", ".join(f"{b['backend']} ({b.get('detail', '')})" for b in backends)
+            return CheckResult("gpu", "ok", detail)
+        except Exception as e:  # noqa: BLE001
+            return CheckResult("gpu", "unknown", f"probe error: {type(e).__name__}")
+
     def run_checks(self) -> list:
         return [self.check_os(), self.check_runtime(), self.check_microphone(),
-                self.check_speakers(), self.check_camera()]
+                self.check_speakers(), self.check_camera(), self.check_gpu()]
+
+    # ── device split policy (M35) ────────────────────────────────────────────────
+    def plan_devices(self, *, quick: bool = False) -> tuple[Optional[dict], bool]:
+        """Measure CPU vs GPU (~10 s) and write the split policy into
+        friday_config.json. Never raises; worst case is a cpu_only plan."""
+        try:
+            from .device_plan import build_device_plan, write_device_plan
+            plan = build_device_plan(quick=quick)
+            written = write_device_plan(plan, self.root / "friday_config.json")
+            return plan.to_dict(), written
+        except Exception:  # noqa: BLE001
+            log.warning("[FirstRun] device planning failed", exc_info=True)
+            return None, False
 
     # ── secure key capture + config ──────────────────────────────────────────────
     def configure_secret(self, groq_key: Optional[str], *,
@@ -206,6 +236,7 @@ class FirstRunWizard:
         self.platform.ensure_dirs()
         report = FirstRunReport(checks=self.run_checks())
         report.config_written = self.write_config()
+        report.device_plan, report.device_plan_written = self.plan_devices()
         if groq_key is None and key_prompt is not None:
             try:
                 groq_key = key_prompt()
@@ -225,6 +256,13 @@ def _render(report: FirstRunReport) -> str:
     for c in report.checks:
         lines.append(f"  [{icon.get(c.status, '?')}] {c.name:<11} {c.detail}")
     lines.append("-" * 32)
+    if report.device_plan:
+        tier = report.device_plan.get("tier", "cpu_only")
+        speedup = report.device_plan.get("measured", {}).get("speedup", 0)
+        label = {"good_gpu": f"GPU split (measured {speedup}x faster)",
+                 "average_gpu": f"perception on GPU (measured {speedup}x)",
+                 "cpu_only": "CPU only (no measured GPU benefit)"}.get(tier, tier)
+        lines.append(f"  compute plan:  {label}")
     lines.append(f"  reasoning key: {'configured' if report.secret_configured else 'skipped'}")
     lines.append("FRIDAY Ready." if report.ok() else "FRIDAY needs Python 3.10+ to run.")
     return "\n".join(lines)
