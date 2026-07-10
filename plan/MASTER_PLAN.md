@@ -210,12 +210,27 @@ self-generated goal completed end-to-end during it; resource budgets held.
 Not scheduled; enters the plan only as a track with exit criteria when
 Tracks A–C are done. Recorded so the intent isn't lost:
 
-- **Compute:** CPU + GPU backends behind the ModelRegistry (llama.cpp CUDA /
-  DirectML / Metal later); models declare requirements, registry picks.
+- **Compute (spec'd by Satvik, 2026-07-10):** CPU + GPU load splitting for
+  every user's machine, decided by the **first-run wizard** (RC1
+  `core/launcher/first_run.py` is the hook point):
+  1. *Detect* available backends: Metal (Apple Silicon), CUDA (NVIDIA),
+     Vulkan/OpenVINO (Intel/AMD iGPU), else CPU.
+  2. *Measure, don't guess:* a ~10-second micro-benchmark (embedding batch +
+     short generation) on CPU vs each GPU backend — spec sheets lie; an iGPU
+     that benchmarks slower than CPU is classified "no useful GPU".
+  3. *Classify into a tier and write a `device_plan` to `friday_config.json`:*
+     · **good GPU** → reasoner layer-offload (llama.cpp `n_gpu_layers`) +
+       perception (STT/embeddings/vision) on GPU;
+     · **average GPU** → perception offload only, reasoning stays on CPU;
+     · **none** → pure CPU (today's behaviour).
+  4. The **ModelRegistry is the only reader** of the device plan — it places
+     models; cognition code never references devices. Re-run detection from
+     the diagnostics screen when hardware changes (eGPU, new drivers).
 - **OS:** Windows + macOS via the platform adapter (seed exists:
   `core/launcher/platform_adapter.py`). Windows-only code (pycaw, WebView2,
   startup registry) isolated behind it during Tracks A–B as a side effect of
   the skill wrappers and Core API — so the port is contained, not a rewrite.
+  Apple Silicon is the flagship GPU case: unified memory + llama.cpp Metal.
 
 ---
 
