@@ -13,7 +13,10 @@ and the 2026-07-10 morning revision of this file.
 
 > **Prime rule (unchanged):** cognition is internal and local. External LLMs
 > are temporary teachers or fallback language tools, never the permanent
-> brain. The M30 Groq teacher is a temporary exception, retired in Track A.
+> brain. The M30 Groq teacher is the ONLY big-model tier (Satvik, 2026-07-10:
+> no new local reasoning models — she learns from Groq for now); it is
+> retired when the learn-back flywheel makes it unnecessary — Satvik's call,
+> consult rate tracked in M36.
 
 ---
 
@@ -150,15 +153,23 @@ zero ungoverned action invocations on the boot path; pytest green.
 
 ### M36 — Local Intelligence  (`m36-local-intelligence`)
 
-1. Tiered local reasoning stack: small quantized instruct model
-   (llama.cpp/Ollama, CPU today) as main local reasoner; flan-t5 + rule-based
-   team beneath; deeper collaborative passes on low confidence.
-2. Retire the Groq teacher once local matches its critic-scored quality.
+**Scope correction (Satvik, 2026-07-10): no new local reasoning models.**
+The only big-model tier is the Groq teacher (M30) — FRIDAY learns from Groq
+for now; a local instruct model (llama.cpp/Ollama) is NOT added. Local
+quality rises through the learning flywheel instead:
+
+1. The Groq learn-back loop is the quality engine: every teacher consult is
+   gated (M27 selective learning), stored, and retrained into `local_qa` on
+   schedule — the next similar question is answered locally without Groq.
+2. Grow the mini-brain cortex (M33) and the rule-based team as recurring
+   task shapes appear; deeper collaborative passes on low confidence stay
+   local.
 3. Lazy-load every model behind the ModelRegistry; profile boot + RAM.
 
 **Exit (per the Phase-B benchmark script):** cold boot < 10 s · simple voice
 reply < 700 ms · ≥ 50% of turns fully local at equal critic-scored quality ·
-Groq off the production path.
+Groq consult rate measurably declining week over week. (Retiring the teacher
+entirely stays the prime-rule end state; the date is Satvik's call.)
 
 ---
 
@@ -219,8 +230,10 @@ Tracks A–C are done. Recorded so the intent isn't lost:
      short generation) on CPU vs each GPU backend — spec sheets lie; an iGPU
      that benchmarks slower than CPU is classified "no useful GPU".
   3. *Classify into a tier and write a `device_plan` to `friday_config.json`:*
-     · **good GPU** → reasoner layer-offload (llama.cpp `n_gpu_layers`) +
-       perception (STT/embeddings/vision) on GPU;
+     · **good GPU** → her existing local models (flan-t5, embeddings,
+       whisper STT) plus perception on GPU — there is no local big reasoner
+       to layer-offload (see M36 scope correction); if one is ever approved,
+       llama.cpp layer-offload slots in here;
      · **average GPU** → perception offload only, reasoning stays on CPU;
      · **none** → pure CPU (today's behaviour).
   4. The **ModelRegistry is the only reader** of the device plan — it places
@@ -260,5 +273,5 @@ Tracks A–C are done. Recorded so the intent isn't lost:
 | `run_shell` as a governed skill | Tier 3 + sandbox + two-step voice confirm + audit + allowlist |
 | Core API becomes a god-interface | Surface kept small and versioned; contract tests block breakage |
 | RAM exhaustion (resident + local models, CPU box) | Lazy-load via ModelRegistry; resource governor in M36; benchmark-tracked |
-| Groq teacher permanent by inertia | M34 exit criterion removes it |
+| Groq teacher permanent by inertia | consult rate tracked in `BENCHMARKS.md`; M36 exit requires it declining; retirement date is Satvik's explicit call |
 | Platform work sneaks in early | Horizon is parked; only isolation-behind-adapters allowed in A–B |
