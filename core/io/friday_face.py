@@ -29,6 +29,7 @@ import time
 import uuid
 import queue
 import socket
+import secrets
 import logging
 import threading
 import webbrowser
@@ -55,12 +56,32 @@ _state_lock = threading.Lock()
 # Async job store {job_id: {"status": "running"|"done"|"error", ...}}
 _jobs: dict = {}
 _jobs_lock = threading.Lock()
+_JOB_TTL_S = 600.0    # completed jobs linger 10 min for late polls
+_JOBS_MAX  = 200      # hard cap — the dict used to grow unbounded
+
+
+def _evict_jobs() -> None:
+    """Drop completed jobs past TTL and enforce the cap. Running jobs stay."""
+    now = time.time()
+    with _jobs_lock:
+        for jid in [j for j, job in _jobs.items()
+                    if job.get("status") != "running"
+                    and now - job.get("done_at", now) > _JOB_TTL_S]:
+            _jobs.pop(jid, None)
+        if len(_jobs) > _JOBS_MAX:
+            finished = sorted(
+                (j for j, job in _jobs.items() if job.get("status") != "running"),
+                key=lambda j: _jobs[j].get("done_at", 0.0))
+            for jid in finished[: len(_jobs) - _JOBS_MAX]:
+                _jobs.pop(jid, None)
 
 # SSE subscribers (one queue per connected client)
 _sse_subscribers: list = []
 _sse_lock = threading.Lock()
 
-# Mini-brain specialists — Friday 3.0's real reasoning modules.
+# Mini-brain roster — HONEST FRAMING: these are the real stages of the single
+# respond() pipeline, surfaced for the HUD. Selecting "agents" changes which
+# names light up, not how the answer is computed (there is one pipeline call).
 _ROSTER = [
     {"id": "neural",    "name": "Neural",    "role": "Cloud reasoning chain (Groq→Gemini→OpenAI)", "tier": "elite"},
     {"id": "local",     "name": "Local",     "role": "On-device retrieval QA (flan-t5)",           "tier": "elite"},
@@ -235,16 +256,73 @@ def status_snapshot() -> dict:
 _brain = None
 
 
+class _CognitionAdapter:
+    """
+    HUD → Intelligence OS. The desktop UI answers through the same cognition
+    stack the voice path uses (m21 cutover) — the legacy friday_brain pipeline
+    is no longer imported here. Every HUD turn writes one DecisionLog row,
+    exactly like a voice turn.
+    """
+
+    def __init__(self):
+        from core.intelligence.service import get_intelligence_os
+        self.ios = get_intelligence_os()
+        self._session_len = 0
+        self._lock = threading.Lock()
+
+    def respond(self, text: str) -> str:
+        t0 = time.perf_counter()
+        response = self.ios.think(text)
+        with self._lock:
+            self._session_len += 1
+            turn = self._session_len
+        self._log_turn(turn, response, t0)
+        answer = (getattr(response, "answer", "") or "").strip()
+        return answer or "I don't have a good answer for that yet."
+
+    def greeting(self) -> str:
+        return "FRIDAY online. The HUD is live."
+
+    def status(self) -> dict:
+        try:
+            return {"ready": True, **self.ios.status()}
+        except Exception:  # noqa: BLE001
+            return {"ready": True}
+
+    def clear_history(self) -> None:
+        with self._lock:
+            self._session_len = 0
+
+    def _log_turn(self, turn: int, response, t0: float) -> None:
+        try:
+            from core.observability.decision_log import get_decision_log
+            get_decision_log().log(
+                trace_id=getattr(response, "trace_id", None) or None,
+                turn_id=turn,
+                intent=getattr(response, "task", None),
+                route=[getattr(response, "strategy", "") or "intelligence_os"],
+                models_used=list(getattr(response, "models_used", []) or []),
+                memory_used=[],
+                confidence=float(getattr(response, "confidence", 0.0) or 0.0),
+                latency_ms=int((time.perf_counter() - t0) * 1000),
+                outcome=(getattr(response, "answer", "") or "")[:400],
+                rationale="HUD turn routed through the Intelligence OS",
+                was_autonomous=False,
+                source="hud",
+            )
+        except Exception:  # noqa: BLE001 — observability must not break a turn
+            log.debug("decision log write failed", exc_info=True)
+
+
 def _get_brain(explicit=None):
     global _brain
     if explicit is not None:
         _brain = explicit
     if _brain is None:
         try:
-            from core.brain.friday_brain import get_brain
-            _brain = get_brain()
+            _brain = _CognitionAdapter()
         except Exception as e:
-            log.warning("Brain not available: %s", e)
+            log.warning("Cognition stack not available: %s", e)
     return _brain
 
 
@@ -324,6 +402,7 @@ def _run_agents(task: str, agent_ids: Optional[list]) -> dict:
         "kind": "agents",
         "message": answer,
         "agents": names,
+        "execution": "single-pipeline",   # honest: one respond() call, staged names
         "elapsed_ms": elapsed,
         "command": f"use agents {task}",
     }
@@ -365,13 +444,14 @@ def create_app(brain=None):
         raise ImportError("Flask not installed. Run: pip install flask")
 
     app = Flask(__name__)
-    app.config["SECRET_KEY"] = "friday-face-secret"
+    app.config["SECRET_KEY"] = secrets.token_hex(32)   # per-process, never a constant
     if brain is not None:
         _get_brain(brain)
 
     MAX_LEN = 2000
 
     def _enqueue(label: str, runner):
+        _evict_jobs()
         job_id = str(uuid.uuid4())
         with _jobs_lock:
             _jobs[job_id] = {"status": "running", "command": label}
@@ -382,6 +462,7 @@ def create_app(brain=None):
             except Exception as exc:
                 log.error("Job %s failed: %s", jid, exc, exc_info=True)
                 outcome = {"status": "error", "ok": False, "message": str(exc)}
+            outcome["done_at"] = time.time()
             with _jobs_lock:
                 _jobs[jid] = outcome
             push_event("job_done", {"job_id": jid})
@@ -557,8 +638,9 @@ def create_app(brain=None):
     @app.route("/clear", methods=["POST"])
     def clear():
         try:
-            from core.brain.friday_neural import clear_history
-            clear_history()
+            b = _get_brain()
+            if b is not None and hasattr(b, "clear_history"):
+                b.clear_history()
         except Exception:
             pass
         return jsonify({"ok": True})

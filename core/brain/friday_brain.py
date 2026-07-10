@@ -198,6 +198,7 @@ class FridayBrain:
                 task_type   = getattr(packet, "intent", "chat"),
                 max_tokens  = getattr(packet, "max_tokens", 400),
                 temperature = getattr(packet, "temperature", 0.45),
+                extract_knowledge = False,   # this brain owns extraction (stage 8)
             )
 
         except Exception as e:
@@ -284,11 +285,15 @@ class FridayBrain:
         """Stage 8: Background knowledge extraction."""
         try:
             from core.knowledge.friday_sovereign import run_background
+            from core.brain.friday_neural import last_answer_was_local
+            # Truthful independence signal: used_api was hardcoded True, which
+            # kept independence_pct pinned at ~0 no matter how often the local
+            # module answered.
             run_background(
                 user_input      = user_text,
                 friday_response = response,
                 intent          = getattr(packet, "intent", "chat"),
-                used_api        = True,
+                used_api        = not last_answer_was_local(),
             )
         except Exception as e:
             log.debug("Sovereign extract failed: %s", e)

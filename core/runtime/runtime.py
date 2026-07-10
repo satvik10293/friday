@@ -64,6 +64,10 @@ class Runtime:
         self._sched_meta: dict[str, dict] = {}
         self._health_providers: dict[str, Callable[[], Any]] = {}
 
+    @property
+    def is_running(self) -> bool:
+        return self._started and not self._stopped.is_set() and self._thread.is_alive()
+
     # ── lifecycle ──────────────────────────────────────────────────────────────
     def start(self, timeout: float = 10.0) -> "Runtime":
         with self._lock:
@@ -270,6 +274,11 @@ def get_runtime() -> Runtime:
     with _runtime_lock:
         if _runtime is None:
             _runtime = Runtime()
+    return _runtime
+
+
+def peek_runtime() -> Optional[Runtime]:
+    """Return the global runtime if one exists — never constructs one."""
     return _runtime
 
 

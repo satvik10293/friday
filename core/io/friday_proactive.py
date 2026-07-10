@@ -132,15 +132,16 @@ class ProactiveWatcher:
         short = (title or "this").strip()[:60]
         if USE_LLM:
             try:
-                from core.brain.friday_neural import think
-                return think(
+                from core.intelligence.service import think_text
+                nudge = think_text(
                     f"The user has been on this window a while and may be stuck: "
                     f"'{title}'. In ONE short friendly sentence, proactively offer "
                     f"specific help. No preamble.",
-                    temperature=0.5, max_tokens=60,
-                ).strip()
+                )
+                if nudge:
+                    return nudge[:200]
             except Exception as e:
-                log.debug("LLM nudge failed: %s", e)
+                log.debug("nudge generation failed: %s", e)
         return f"You've been on “{short}” for a while — looks like an error. Want me to take a look or search it?"
 
     @staticmethod

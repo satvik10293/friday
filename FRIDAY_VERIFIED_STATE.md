@@ -11,9 +11,46 @@
 
 ---
 
+## ✅ M32 Repair Log (2026-07-10 — Base Perfection)
+
+Every headline defect below was repaired in place (no code deleted), each with
+pinning tests. Status against the five headline truths:
+
+1. **Real pipeline in `think_with_context`** — still true by design; the brain
+   remains a thin wrapper. Unchanged (not a defect).
+2. **Sovereign's neural-path call** — FIXED: correct signature via
+   `run_background`, single ownership (`extract_knowledge=False` on the brain
+   path prevents double extraction). Tests: `test_neural_signals.py`.
+3. **Independence % stuck** — FIXED: `last_answer_source()` (thread-local) in
+   `friday_neural`; `used_api` is now truthful on both call paths;
+   `concepts_learned` accounted. Tests: `test_neural_signals.py`,
+   `test_chronicle_upgrade.py`.
+4. **Event bus never started** — FIXED: self-starting owned dispatch loop on a
+   daemon thread (`ensure_running()`, bridged `emit_sync`), plus a one-way
+   mirror onto the Runtime bus so legacy emitters reach the live nervous
+   system. Tests: `test_signal_bus.py`.
+5. **FridayAction unwired from reasoning** — DEFERRED to M33
+   (Executive Supremacy & Skills, per `plan/MASTER_PLAN.md`): actions become
+   governed Skills behind the security pipeline, not ad-hoc brain calls.
+   The `threading` import bug in `start_battery_alert` is FIXED
+   (`test_io_hardening.py`).
+
+Additional repairs: Chronicle per-thread connections + busy timeout (the
+declared-but-never-acquired lock is now real protection), durable
+`memories.embed_id` + side-list recovery from the DB, flush-at-exit; Psyche
+receives Empath's computed tone and an honest positive/negative turn signal;
+Face/HUD per-process SECRET_KEY, `_jobs` TTL+cap eviction, honest
+single-pipeline labelling; **HUD/proactive/PDF/app re-pointed off the legacy
+brain onto the Intelligence OS** with a DecisionLog row per HUD turn
+(`test_hud_cutover.py`). No module outside `legacy/` imports
+`friday_brain`/`friday_neural` any more.
+
+---
+
 ## ⚠️ Headline Truths (read first)
 
-These five facts override several optimistic claims in the older docs:
+These five facts override several optimistic claims in the older docs
+(**historical — see the M32 repair log above for current status**):
 
 1. **`VERIFIED` — The real pipeline lives in `friday_neural.think_with_context`, not `friday_brain`.** `friday_brain.respond` orchestrates signals + context packet + critic, but the actual chain (world → memory → psyche → empath → local-first → save → mood → sovereign → visual) is all inside `think_with_context` (`friday_neural.py:381–496`). The brain is a thin wrapper around it.
 

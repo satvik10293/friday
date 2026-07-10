@@ -166,3 +166,14 @@ def get_intelligence_os(**kw) -> IntelligenceOS:
         if _os is None:
             _os = IntelligenceOS(**kw)
     return _os
+
+
+def think_text(prompt: str, *, task: Optional[str] = None,
+               context: Optional[dict] = None) -> str:
+    """
+    One-shot think through the Intelligence OS, returning plain text. The
+    drop-in replacement for the legacy `friday_neural.think()` in callers that
+    just want an answer string (proactive nudges, PDF notes, HUD turns).
+    """
+    response = get_intelligence_os().think(prompt, task=task, context=context)
+    return (getattr(response, "answer", "") or "").strip()

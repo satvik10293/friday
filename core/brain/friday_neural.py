@@ -299,6 +299,30 @@ _history_lock  = threading.Lock()
 _HISTORY_CAP   = 30
 
 
+# ── Answer-source signal ───────────────────────────────────────────────────────
+# Thread-local because think() runs on spine, Flask-job and daemon threads
+# concurrently. This is the truthful signal behind the independence metric:
+# consumers (sovereign, DecisionLog) must know whether the cloud was used.
+
+_last_source = threading.local()
+
+
+def _set_answer_source(source: str) -> None:
+    _last_source.value = source
+
+
+def last_answer_source() -> str:
+    """
+    Where the last think() answer on THIS thread came from:
+    'local' | 'cloud:<endpoint>' | 'unknown'.
+    """
+    return getattr(_last_source, "value", "unknown")
+
+
+def last_answer_was_local() -> bool:
+    return last_answer_source() == "local"
+
+
 # ── Core think function ────────────────────────────────────────────────────────
 
 def think(
@@ -320,11 +344,14 @@ def think(
     """
     global _history
 
+    _set_answer_source("unknown")
+
     # ── Local-first: answer from Friday's own knowledge before hitting the cloud.
     if allow_local and not force_endpoint:
         local_resp = _try_local(user_input)
         if local_resp:
             log.info("✓ local_qa answered (cloud skipped)")
+            _set_answer_source("local")
             _emit_notice("Answered locally")
             _record_turn(user_input, local_resp)
             return local_resp
@@ -353,6 +380,7 @@ def think(
             t0       = time.time()
             response = _call_endpoint(ep, messages, temperature, max_tokens)
             elapsed  = round((time.time() - t0) * 1000)
+            _set_answer_source(f"cloud:{ep.name}")
             log.info("✓ %s responded in %dms", ep.name, elapsed)
 
             # Notify UI if not using primary
@@ -385,6 +413,7 @@ def think_with_context(
     task_type:   str   = "conversation",
     max_tokens:  int   = 500,
     temperature: float = 0.45,
+    extract_knowledge: bool = True,
 ) -> str:
     """
     Full pipeline think:
@@ -433,12 +462,14 @@ def think_with_context(
     system = _build_full_system()
 
     # 5. Empath signal — tone, temperature, token budget (Layer 5)
+    empath_tone = tone   # falls back to the caller's packet tone
     try:
         from core.persona.friday_empath import analyze, build_tone_prompt
         signal      = analyze(user_input)
         tone_hint   = build_tone_prompt(signal)
         temperature = signal.response_temperature
         max_tokens  = signal.response_max_tokens
+        empath_tone = signal.tone
         if tone_hint:
             system += f"\n\n{tone_hint}"
     except Exception as e:
@@ -470,12 +501,14 @@ def think_with_context(
     except Exception as e:
         log.debug("Chronicle save failed: %s", e)
 
-    # 8. Update psyche
+    # 8. Update psyche — Empath's computed tone drives mood (a default
+    #    "neutral" used to be passed instead), and the turn feedback is honest:
+    #    a frustrated/stressed Satvik is a negative signal, so trust can fall.
     try:
         from core.persona.friday_psyche import record_turn, infer_mood_from_context, update_mood
-        record_turn(positive=True)
+        record_turn(positive=empath_tone not in ("frustrated", "stressed"))
         new_mood = infer_mood_from_context(
-            satvik_tone = tone,
+            satvik_tone = empath_tone,
             task_type   = task_type,
             session_len = len(_history) // 2,
         )
@@ -483,12 +516,22 @@ def think_with_context(
     except Exception as e:
         log.debug("Psyche update failed: %s", e)
 
-    # 9. Sovereign — extract knowledge from this exchange (Layer 8)
-    try:
-        from core.knowledge.friday_sovereign import extract_and_store
-        extract_and_store(user_input, response)
-    except Exception as e:
-        log.debug("Sovereign extraction failed: %s", e)
+    # 9. Sovereign — extract knowledge from this exchange (Layer 8).
+    #    friday_brain owns extraction on its path (it has intent + the
+    #    critic-reviewed response) and passes extract_knowledge=False; this
+    #    call covers standalone use of think_with_context. The old call here
+    #    had a missing `intent` argument and threw on every turn since 3.0.
+    if extract_knowledge:
+        try:
+            from core.knowledge.friday_sovereign import run_background
+            run_background(
+                user_input      = user_input,
+                friday_response = response,
+                intent          = task_type,
+                used_api        = not last_answer_was_local(),
+            )
+        except Exception as e:
+            log.debug("Sovereign extraction failed: %s", e)
 
     # 10. Emit signal
     _emit_signal("THINKING_DONE", response)

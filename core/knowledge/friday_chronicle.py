@@ -8,6 +8,7 @@ Episodic memory: conversations, facts, preferences, outcomes.
 import os
 import json
 import time
+import atexit
 import logging
 import sqlite3
 import hashlib
@@ -55,25 +56,37 @@ class Memory:
 # ── DB setup ──────────────────────────────────────────────────────────────────
 
 def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
+    conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False, timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=10000")   # wait out writer contention, don't throw
     return conn
 
 
 _conn_lock  = threading.Lock()
-_db_conn:   Optional[sqlite3.Connection] = None
+_local      = threading.local()
+_schema_ready = False
 
 
 def _db() -> sqlite3.Connection:
-    """Thread-safe connection accessor — initializes schema on first call."""
-    global _db_conn
-    if _db_conn is None:
-        _db_conn = _get_conn()
-        _init_schema(_db_conn)
-    return _db_conn
+    """
+    Connection accessor — one connection per thread. Chronicle is written from
+    at least three threads (FAISS indexer, sovereign daemon, Flask job workers);
+    WAL mode makes per-thread connections safe where the old single shared
+    connection raced. Schema init happens exactly once, under the lock.
+    """
+    global _schema_ready
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        conn = _get_conn()
+        with _conn_lock:
+            if not _schema_ready:
+                _init_schema(conn)
+                _schema_ready = True
+        _local.conn = conn
+    return conn
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
@@ -165,9 +178,20 @@ def _load_faiss():
     try:
         import faiss
         import numpy as np
-        if _FAISS_PATH.exists() and _EMBED_PATH.exists():
+        if _FAISS_PATH.exists():
             _faiss_index = faiss.read_index(str(_FAISS_PATH))
-            _embed_ids   = list(np.load(str(_EMBED_PATH)))
+            if _EMBED_PATH.exists():
+                _embed_ids = list(np.load(str(_EMBED_PATH)))
+            else:
+                _embed_ids = []
+            # The .npy side list can lag the index after a crash (it used to be
+            # saved only every 20 inserts). memories.embed_id is the durable
+            # source of truth — recover the mapping from the DB on mismatch.
+            if len(_embed_ids) != _faiss_index.ntotal:
+                _embed_ids = _embed_ids_from_db()
+                log.warning(
+                    "FAISS side list desynced (%d vs %d vectors) — recovered %d from embed_id",
+                    len(_embed_ids), _faiss_index.ntotal, len(_embed_ids))
             log.info("FAISS index loaded: %d vectors", _faiss_index.ntotal)
         else:
             _faiss_index = faiss.IndexFlatL2(384)   # all-MiniLM-L6-v2 dim
@@ -180,6 +204,14 @@ def _load_faiss():
     except Exception as e:
         log.warning("FAISS load failed: %s", e)
         return False
+
+
+def _embed_ids_from_db() -> list[int]:
+    """Rebuild the FAISS-position → memory-id mapping from memories.embed_id."""
+    rows = _db().execute(
+        "SELECT id, embed_id FROM memories WHERE embed_id IS NOT NULL ORDER BY embed_id"
+    ).fetchall()
+    return [r["id"] for r in rows]
 
 
 def _embed(text: str):
@@ -283,13 +315,28 @@ def _index_memory(mem_id: int, content: str) -> None:
             vec = _embed(content)
             if vec is None:
                 return
+            position = _faiss_index.ntotal
             _faiss_index.add(vec.reshape(1, -1).astype("float32"))
             _embed_ids.append(mem_id)
+            # Durable link: the row records its own FAISS position, so the
+            # mapping survives a crash even if the .npy side list is stale.
+            _db().execute(
+                "UPDATE memories SET embed_id=? WHERE id=?", (position, mem_id))
+            _db().commit()
             # Save every 20 new vectors
             if len(_embed_ids) % 20 == 0:
                 _save_faiss()
         except Exception as e:
             log.warning("FAISS index failed for id=%d: %s", mem_id, e)
+
+
+def flush() -> None:
+    """Persist the FAISS index + side list now. Called at shutdown."""
+    with _embed_lock:
+        _save_faiss()
+
+
+atexit.register(flush)
 
 
 def save_fact(
@@ -563,36 +610,36 @@ if __name__ == "__main__":
 
     # Start session
     sid = start_session()
-    print(f"  ✓ Session started: {sid}")
+    print(f"  OK Session started: {sid}")
 
     # Save turns
     id1 = save_turn("user",   "I'm building an AI called Friday",      topic="friday_project", importance=0.9)
     id2 = save_turn("friday", "Sounds amazing — what's the core idea?", topic="friday_project", importance=0.8)
     id3 = save_turn("user",   "She should be independent and learn",    topic="friday_project", importance=0.9)
-    print(f"  ✓ Saved 3 turns: ids {id1}, {id2}, {id3}")
+    print(f"  OK Saved 3 turns: ids {id1}, {id2}, {id3}")
 
     # Save facts
     save_fact("Satvik", "is_building", "Friday AI")
     save_fact("Friday", "runs_on",     "Windows 11")
     save_fact("Friday", "uses",        "Groq API")
-    print("  ✓ Saved 3 facts")
+    print("  OK Saved 3 facts")
 
     # Save preferences
     save_preference("ui", "theme",    "glassmorphism dark")
     save_preference("voice", "style", "warm and direct")
-    print("  ✓ Saved 2 preferences")
+    print("  OK Saved 2 preferences")
 
     # Keyword search
     results = search_keyword("AI Friday")
-    print(f"  ✓ Keyword search returned {len(results)} results")
+    print(f"  OK Keyword search returned {len(results)} results")
 
     # Context block
     ctx = build_context_block("what is Friday?")
-    print(f"  ✓ Context block built: {len(ctx)} chars")
+    print(f"  OK Context block built: {len(ctx)} chars")
 
     # Stats
     s = stats()
-    print(f"  ✓ Stats: {s}")
+    print(f"  OK Stats: {s}")
 
     end_session("Test session completed")
-    print("\n[friday_chronicle] All tests passed ✓\n")
+    print("\n[friday_chronicle] All tests passed OK\n")

@@ -8,8 +8,9 @@ import sys
 import os
 import time
 import logging
-import subprocess
 import platform
+import subprocess
+import threading
 from pathlib import Path
 from typing import Optional
 

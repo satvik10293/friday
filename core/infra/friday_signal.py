@@ -7,6 +7,7 @@ Nothing is hardwired. Nothing blocks.
 
 import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -101,10 +102,22 @@ class EventBus:
     def __init__(self, queue_size: int = 256):
         self._subscribers: dict[Signal, list[Handler]] = defaultdict(list)
         self._wildcard:    list[Handler]                = []
-        self._queue:       asyncio.PriorityQueue        = asyncio.PriorityQueue(maxsize=queue_size)
+        self._queue_size:  int                          = queue_size
+        self._queue:       Optional[asyncio.PriorityQueue] = None
         self._running:     bool                         = False
         self._task:        Optional[asyncio.Task]       = None
         self._stats:       dict[str, int]               = defaultdict(int)
+        self._loop:        Optional[asyncio.AbstractEventLoop] = None
+        self._thread:      Optional[threading.Thread]   = None
+        self._lifecycle_lock                            = threading.Lock()
+
+    def _q(self) -> asyncio.PriorityQueue:
+        # Created lazily so the queue binds to the loop that actually runs the
+        # bus, never to whatever loop happened to be current at import time
+        # (the root cause of the 3.0 dead bus).
+        if self._queue is None:
+            self._queue = asyncio.PriorityQueue(maxsize=self._queue_size)
+        return self._queue
 
     # ── Subscribe ─────────────────────────────────────────────────────────────
 
@@ -139,34 +152,56 @@ class EventBus:
     ) -> None:
         """Publish an event. Non-blocking — drops to queue."""
         event = Event(signal=signal, data=data, source=source, priority=priority)
+        self._mirror_to_runtime(signal, data, source, priority)
         try:
-            self._queue.put_nowait((priority, event))
+            self._q().put_nowait((priority, event))
             self._stats["emitted"] += 1
-            log.debug("→ %s from %s (p%d)", signal.name, source, priority)
+            log.debug("→ %s from %s (p%d)", getattr(signal, "name", signal), source, priority)
         except asyncio.QueueFull:
-            log.warning("Event bus full — dropped %s from %s", signal.name, source)
+            log.warning("Event bus full — dropped %s from %s", getattr(signal, "name", signal), source)
             self._stats["dropped"] += 1
 
     def emit_sync(self, signal: Signal, data: Any = None, source: str = "unknown", priority: int = 5) -> None:
         """
-        Fire-and-forget from sync code.
-        Ensures the signal is scheduled on the correct loop, even if called from a thread.
+        Fire-and-forget from sync code, from any thread.
+        Delivery is guaranteed: the owned dispatch loop is started on first use
+        and the emit is bridged onto it via run_coroutine_threadsafe. Never
+        spins throwaway loops (the 3.0 behaviour that dropped every event).
         """
         try:
             try:
-                loop = asyncio.get_event_loop()
+                running = asyncio.get_running_loop()
             except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            if loop.is_running():
-                # If the loop is already busy, schedule as a task
-                loop.create_task(self.emit(signal, data, source, priority))
-            else:
-                # If the loop isn't running, run it until this specific emit completes
-                loop.run_until_complete(self.emit(signal, data, source, priority))
+                running = None
+            if running is not None and running is self._loop:
+                # Already on the bus loop (e.g. a handler re-emitting).
+                running.create_task(self.emit(signal, data, source, priority))
+                return
+            self.ensure_running()
+            if self._loop is None:
+                raise RuntimeError("bus dispatch loop unavailable")
+            asyncio.run_coroutine_threadsafe(
+                self.emit(signal, data, source, priority), self._loop)
         except Exception as e:
-            log.error("Signal failed for %s: %s", signal.name, e)
+            log.error("Signal failed for %s: %s", getattr(signal, "name", signal), e)
+
+    def _mirror_to_runtime(self, signal: Signal, data: Any, source: str, priority: int) -> None:
+        """
+        One-way mirror onto the 4.0 Runtime bus so legacy emitters reach the
+        live nervous system when the runtime is up. Never constructs a runtime;
+        no echo risk (the runtime bus never mirrors back). SHUTDOWN stays local
+        — this bus's lifecycle must not leak into the runtime's.
+        """
+        if signal is Signal.SHUTDOWN:
+            return
+        try:
+            from core.runtime.runtime import peek_runtime
+            rt = peek_runtime()
+            if rt is not None and rt.is_running:
+                rt.emit(signal, data, source, priority)
+                self._stats["mirrored"] += 1
+        except Exception:
+            log.debug("runtime mirror failed", exc_info=True)
 
     # ── Dispatch loop ─────────────────────────────────────────────────────────
 
@@ -195,7 +230,7 @@ class EventBus:
         log.info("Signal bus online")
         while self._running:
             try:
-                _, event = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                _, event = await asyncio.wait_for(self._q().get(), timeout=1.0)
                 if event.signal == Signal.SHUTDOWN:
                     log.info("Signal bus received SHUTDOWN")
                     self._running = False
@@ -211,10 +246,41 @@ class EventBus:
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """Start the dispatch loop."""
+        """Start the dispatch loop on the caller's (already running) loop."""
         self._running = True
+        self._loop = asyncio.get_running_loop()
         self._task = asyncio.ensure_future(self._run_loop())
         log.info("EventBus started")
+
+    def ensure_running(self) -> None:
+        """
+        Start the dispatch loop on an owned daemon thread. Idempotent and
+        thread-safe. After this returns, emitted events are guaranteed a
+        consumer — the 3.0 defect was a bus that could exist without ever
+        running, silently dropping everything.
+        """
+        with self._lifecycle_lock:
+            if self._running and self._loop is not None and self._loop.is_running():
+                return
+            self._running = True
+            self._queue = None          # rebind fresh on the new loop
+            ready = threading.Event()
+
+            def _main() -> None:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                self._loop = loop
+                self._task = loop.create_task(self._run_loop())
+                ready.set()
+                try:
+                    loop.run_forever()
+                finally:
+                    loop.close()
+
+            self._thread = threading.Thread(target=_main, name="friday-signal-bus", daemon=True)
+            self._thread.start()
+            if not ready.wait(5.0):
+                log.error("Signal bus thread failed to start")
 
     async def stop(self) -> None:
         """Graceful shutdown."""
@@ -225,6 +291,22 @@ class EventBus:
             except asyncio.TimeoutError:
                 self._task.cancel()
         log.info("EventBus stopped | stats: %s", dict(self._stats))
+
+    def shutdown(self, timeout: float = 3.0) -> None:
+        """Sync counterpart of stop() for the owned-thread lifecycle."""
+        loop, thread = self._loop, self._thread
+        if loop is None or not loop.is_running():
+            self._running = False
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(self.stop(), loop).result(timeout)
+        except Exception:
+            log.warning("bus shutdown did not complete cleanly")
+        if thread is not None and thread is not threading.current_thread():
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout)
+        self._loop = None
+        self._thread = None
 
     # ── Utilities ─────────────────────────────────────────────────────────────
 
@@ -237,7 +319,7 @@ class EventBus:
         Block until a specific signal arrives or timeout.
         Useful for request/response patterns between modules.
         """
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
 
         async def _capture(event: Event) -> None:
             if not future.done():
@@ -266,6 +348,13 @@ def get_bus() -> EventBus:
     if _bus is None:
         _bus = EventBus()
     return _bus
+
+
+def ensure_bus() -> EventBus:
+    """Get the global bus with its dispatch loop guaranteed running."""
+    bus = get_bus()
+    bus.ensure_running()
+    return bus
 
 
 async def start_bus() -> EventBus:
@@ -313,11 +402,11 @@ if __name__ == "__main__":
         @listen(Signal.USER_TEXT)
         async def on_text(event: Event):
             received.append(event.data)
-            print(f"  ✓ Received USER_TEXT: '{event.data}' from '{event.source}'")
+            print(f"  OK Received USER_TEXT: '{event.data}' from '{event.source}'")
 
         @listen(Signal.THINKING_DONE)
         async def on_response(event: Event):
-            print(f"  ✓ Received THINKING_DONE: '{event.data}'")
+            print(f"  OK Received THINKING_DONE: '{event.data}'")
 
         print("\n[friday_signal] Running self-test...\n")
 
@@ -331,7 +420,7 @@ if __name__ == "__main__":
         assert received[0] == "Hello Friday"
 
         print(f"\n  Stats: {bus.stats()}")
-        print("\n[friday_signal] All tests passed ✓\n")
+        print("\n[friday_signal] All tests passed OK\n")
 
         await stop_bus()
 

@@ -54,32 +54,33 @@ def _chunks(text: str, size: int = _CHUNK_CHARS) -> list[str]:
     return [text[i:i + size] for i in range(0, len(text), size)] or [text]
 
 
-# ── summarisation (via her LLM; document text goes in context, not history) ─────
+# ── summarisation (via the Intelligence OS — same cognition stack as voice) ─────
 def summarize(text: str) -> str:
-    from core.brain.friday_neural import think
+    from core.intelligence.service import think_text
     parts = _chunks(text)
 
     if len(parts) == 1:
-        return think(
-            "Turn this document into the note.",
-            system=_NOTE_SYSTEM, context=parts[0],
-            temperature=0.3, max_tokens=600,
-        ).strip()
+        return think_text(
+            f"{_NOTE_SYSTEM}\n\nTurn this document into the note.\n\n"
+            f"Document:\n{parts[0]}",
+            task="summarize",
+        )
 
     # map-reduce for long documents
     partials = []
     for i, chunk in enumerate(parts[:_MAX_CHUNKS], 1):
-        s = think(
-            f"Summarize section {i} into 3-5 key bullet points.",
-            context=chunk, temperature=0.3, max_tokens=300,
-        ).strip()
+        s = think_text(
+            f"Summarize section {i} into 3-5 key bullet points.\n\n"
+            f"Section:\n{chunk}",
+            task="summarize",
+        )
         partials.append(s)
     combined = "\n".join(partials)
-    return think(
-        "Combine these section notes into one clean note.",
-        system=_NOTE_SYSTEM, context=combined,
-        temperature=0.3, max_tokens=700,
-    ).strip()
+    return think_text(
+        f"{_NOTE_SYSTEM}\n\nCombine these section notes into one clean note.\n\n"
+        f"Notes:\n{combined}",
+        task="summarize",
+    )
 
 
 def _title_from(md: str, fallback: str) -> str:

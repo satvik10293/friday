@@ -119,13 +119,18 @@ def test_announcements_route_through_the_bridge():
 # ── quarantine ────────────────────────────────────────────────────────────────
 
 def test_spine_shim_imports_no_30_brain_modules():
-    for mod in list(sys.modules):
-        if mod.startswith("friday_spine") or mod.startswith("legacy"):
-            del sys.modules[mod]
-    import friday_spine  # noqa: F401
     forbidden = {"core.brain.friday_brain", "core.brain.friday_neural",
                  "legacy.friday_spine_v3"}
-    assert not (set(sys.modules) & forbidden)
+    # Evict the shim AND the forbidden modules first: other tests may import
+    # the 3.0 brain legitimately (e.g. to test its repairs). What this guard
+    # proves is that importing the spine shim does not RE-import them.
+    for mod in list(sys.modules):
+        if mod.startswith("friday_spine") or mod.startswith("legacy") \
+                or mod in forbidden:
+            del sys.modules[mod]
+    import friday_spine  # noqa: F401
+    assert not (set(sys.modules) & forbidden), \
+        "importing friday_spine pulled in a 3.0 brain module"
 
 
 def test_spine_shim_delegates_to_the_launcher(monkeypatch):

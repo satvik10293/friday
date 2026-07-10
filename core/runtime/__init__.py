@@ -11,12 +11,13 @@ call start().
 """
 
 from .bus import AsyncEventBus
-from .runtime import Runtime, get_runtime, start_runtime, stop_runtime
+from .runtime import Runtime, get_runtime, peek_runtime, start_runtime, stop_runtime
 
 __all__ = [
     "AsyncEventBus",
     "Runtime",
     "get_runtime",
+    "peek_runtime",
     "start_runtime",
     "stop_runtime",
 ]

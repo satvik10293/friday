@@ -215,7 +215,7 @@ def extract_and_store(
     # Persist everything
     _persist_facts(facts, domains)
     _persist_concepts(concepts, domains)
-    _update_stats(used_api, len(facts), domains)
+    _update_stats(used_api, len(facts), domains, concepts_added=len(concepts))
 
     summary["elapsed_ms"] = round((time.time() - t0) * 1000, 1)
 
@@ -265,11 +265,13 @@ def _persist_concepts(concepts: list[str], domains: list[str]) -> None:
         log.warning("Concept persist failed: %s", e)
 
 
-def _update_stats(used_api: bool, facts_added: int, domains: list[str]) -> None:
+def _update_stats(used_api: bool, facts_added: int, domains: list[str],
+                  concepts_added: int = 0) -> None:
     """Update global stats and domain profiles."""
     with _stats_lock:
-        _stats.total_exchanges += 1
-        _stats.facts_extracted += facts_added
+        _stats.total_exchanges  += 1
+        _stats.facts_extracted  += facts_added
+        _stats.concepts_learned += concepts_added
 
         if used_api:
             _stats.api_answered  += 1
@@ -393,17 +395,17 @@ if __name__ == "__main__":
     """
 
     facts = _extract_facts(sample_response, source="test")
-    print(f"  ✓ Facts extracted: {len(facts)}")
+    print(f"  OK Facts extracted: {len(facts)}")
     for f in facts[:3]:
-        print(f"    [{f['predicate']:12}] {f['subject'][:25]} → {f['object'][:50]}")
+        print(f"    [{f['predicate']:12}] {f['subject'][:25]} -> {f['object'][:50]}")
 
     # Test concept extraction
     concepts = _extract_concepts(sample_response)
-    print(f"\n  ✓ Concepts extracted: {len(concepts)}: {concepts[:6]}")
+    print(f"\n  OK Concepts extracted: {len(concepts)}: {concepts[:6]}")
 
     # Test domain detection
     domains = _detect_domain(sample_response)
-    print(f"  ✓ Domains detected: {domains}")
+    print(f"  OK Domains detected: {domains}")
 
     # Test full pipeline
     summary = extract_and_store(
@@ -412,13 +414,13 @@ if __name__ == "__main__":
         intent          = "question",
         used_api        = True,
     )
-    print(f"\n  ✓ Full pipeline: {summary}")
+    print(f"\n  OK Full pipeline: {summary}")
 
     # Stats
     status = get_status()
-    print(f"  ✓ Status: independence={status['independence_pct']}% "
+    print(f"  OK Status: independence={status['independence_pct']}% "
           f"facts={status['facts_extracted']} domains={status['domains_active']}")
-    print(f"  ✓ Top domains: {status['top_domains']}")
+    print(f"  OK Top domains: {status['top_domains']}")
 
     # Background run
     run_background(
@@ -428,6 +430,6 @@ if __name__ == "__main__":
     )
     import time as t
     t.sleep(0.1)    # let the thread finish
-    print(f"  ✓ Background extraction ran (total exchanges: {_stats.total_exchanges})")
+    print(f"  OK Background extraction ran (total exchanges: {_stats.total_exchanges})")
 
-    print("\n[friday_sovereign] All tests passed ✓\n")
+    print("\n[friday_sovereign] All tests passed OK\n")

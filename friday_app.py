@@ -71,14 +71,16 @@ def main() -> None:
         return
     print("[FridayApp] Backend ready — opening the cinematic window.")
 
-    # Warm the brain in the background so the first question is snappy.
+    # Warm the cognition stack in the background so the first question is
+    # snappy. This is the Intelligence OS — the same stack voice uses — not
+    # the legacy 3.0 brain.
     def _warm():
         try:
-            from core.brain.friday_brain import get_brain
-            get_brain()
+            from core.intelligence.service import get_intelligence_os
+            get_intelligence_os()
         except Exception as e:
-            logging.getLogger("friday.app").debug("Brain warm-up skipped: %s", e)
-    threading.Thread(target=_warm, daemon=True, name="brain-warm").start()
+            logging.getLogger("friday.app").debug("Cognition warm-up skipped: %s", e)
+    threading.Thread(target=_warm, daemon=True, name="cognition-warm").start()
 
     webview.create_window(
         TITLE,
