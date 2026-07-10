@@ -37,9 +37,9 @@ Three dependency-ordered tracks, plus one explicitly parked horizon:
 
 | Track | Theme | Milestones |
 |---|---|---|
-| **A — Perfect the core** | Upgrade the 2.0 base from the ground up (no deletions), then: nothing bypasses the Executive; reasoning becomes genuinely local | M32, M33, M34, M35 |
-| **B — The wrapper** | One stable boundary around the whole system: the Friday Core API | M36 |
-| **C — Resident autonomy** | She runs 24/7 as a governed, self-improving resident | M37 |
+| **A — Perfect the core** | Upgrade the 2.0 base from the ground up (no deletions), then: nothing bypasses the Executive; reasoning becomes genuinely local | M32–M36 |
+| **B — The wrapper** | One stable boundary around the whole system: the Friday Core API | M37 |
+| **C — Resident autonomy** | She runs 24/7 as a governed, self-improving resident | M38 |
 | *Horizon (parked)* | *Platform layer: CPU+GPU, Windows+macOS* | *unscheduled* |
 
 A track does not start until the previous track's exit criteria pass. Every
@@ -88,7 +88,24 @@ Upgrade ledger, in dependency order (each stage: fix + tests + commit):
 formally waived in that doc; no module outside `legacy/` imports
 `friday_brain`/`friday_neural`; pytest green.
 
-### M33 — Executive Supremacy & Skills  (`m33-executive-supremacy`)
+### M33 — Mini-Brain Fast Path  (`m33-mini-brains`) ✅ *(inserted at Satvik's request, 2026-07-10)*
+
+Deterministic specialist mini brains in front of the model team
+(`core/intelligence/mini_brains.py` + wiring in `IntelligenceOS.think`):
+math, clock, units, system status, memory recall — each claims only the task
+shapes it can answer EXACTLY, answers in milliseconds, and refuses everything
+else (a wrong fast answer is worse than a slow correct one; intent gating is
+tested, e.g. "call 555-2368" never gets an arithmetic answer). Per-brain
+latency budgets (500 ms) are measured with violations counted in
+`status()["mini_brains"]`, never hidden. Honesty note: open-ended reasoning on
+a CPU box cannot promise <500 ms — the fast path is how *common* tasks meet
+the budget; the model team's latency is tracked against it in M36 instead.
+New specialists are added here as task shapes recur.
+
+**Exit (met):** fast-path answers measured < 500 ms; misses fall through with
+zero behaviour change; cortex stats exposed. Tests: `test_mini_brains.py` (29).
+
+### M34 — Executive Supremacy & Skills  (`m34-executive-supremacy`)
 
 Infrastructure already exists (`core/skills/`: registry, executor, manifests,
 permissions, audit; `core/security/`: roles, policies, approvals, sandbox,
@@ -121,7 +138,7 @@ validation, security_log) but only 4 builtin skills are registered while
 **Exit:** every side-effecting action in `audit.db` with a DecisionLog trace;
 zero ungoverned action invocations on the boot path; pytest green.
 
-### M34 — Live World & Truthful Independence  (`m34-live-world`)
+### M35 — Live World & Truthful Independence  (`m35-live-world`)
 
 1. World Model continuously fed by the Perception Hub (observations already
    emitted — connect the pipe). Proof: "what's happening right now?" answered
@@ -131,7 +148,7 @@ zero ungoverned action invocations on the boot path; pytest green.
 
 **Exit:** both proofs demonstrated and logged.
 
-### M35 — Local Intelligence  (`m35-local-intelligence`)
+### M36 — Local Intelligence  (`m36-local-intelligence`)
 
 1. Tiered local reasoning stack: small quantized instruct model
    (llama.cpp/Ollama, CPU today) as main local reasoner; flan-t5 + rule-based
@@ -145,7 +162,7 @@ Groq off the production path.
 
 ---
 
-## 4. Track B — The wrapper (M36, `m36-core-api`)
+## 4. Track B — The wrapper (M37, `m37-core-api`)
 
 The "layer that wraps around Friday 2.0": a single stable boundary — the
 **Friday Core API** — through which *every* consumer talks to her. Nothing
@@ -172,7 +189,7 @@ makes "runs anywhere" a swap instead of a rewrite.
 
 ---
 
-## 5. Track C — Resident autonomy (M37, `m37-resident`)
+## 5. Track C — Resident autonomy (M38, `m38-resident`)
 
 1. FRIDAY runs 24/7 as a resident process: starts with Windows, survives
    sleep/wake, degrades gracefully (mic/camera loss ≠ crash).
@@ -213,7 +230,7 @@ Tracks A–C are done. Recorded so the intent isn't lost:
 7. Every milestone lands with tests, observability, commit + tag.
 8. Performance is measured continuously, never optimized blind.
 9. Spoken input is an attack surface (m29); new skills inherit that posture.
-10. **New:** nothing consumes the core except through the Core API once M36
+10. **New:** nothing consumes the core except through the Core API once M37
     lands; new Windows-only code goes behind the platform adapter.
 11. **New (Satvik, 2026-07-10):** the base is upgraded, never deleted —
     repairs happen in place; `legacy/` quarantine is the only exception.

@@ -74,6 +74,10 @@ class IntelligenceOS:
         self.benchmark = BenchmarkSystem(self._store)
         self.optimizer = Optimizer(cache=self.cache, model_manager=self.models,
                                    health=self.health)
+        # M33: deterministic fast path — specialist mini brains answer common
+        # task shapes in milliseconds before the model team is consulted.
+        from .mini_brains import MiniBrainCortex
+        self.cortex = MiniBrainCortex()
         self._lock = threading.Lock()
         if bootstrap:
             self.models.bootstrap(discover_optional=discover_optional)
@@ -82,11 +86,35 @@ class IntelligenceOS:
     def think(self, prompt: str, *, task: Optional[str] = None,
               context: Optional[dict] = None, strategy: Optional[ReasoningStrategy] = None,
               collaborate: bool = False, learn: bool = True,
-              build_context: bool = True) -> RouterResponse:
-        """Build context → route through the model team → record a trace → reflect
-        and learn. The single way the rest of FRIDAY asks the IOS to think."""
+              build_context: bool = True, use_mini_brains: bool = True) -> RouterResponse:
+        """Mini-brain fast path → build context → route through the model team →
+        record a trace → reflect and learn. The single way the rest of FRIDAY
+        asks the IOS to think."""
         t0 = time.perf_counter()
         ctx = dict(context or {})
+
+        # M33 fast path: a specialist that can answer EXACTLY does so in
+        # milliseconds, before context building or model routing. Misses fall
+        # through with zero behaviour change.
+        if use_mini_brains and not collaborate:
+            mini = self.cortex.try_answer(prompt)
+            if mini is not None:
+                classified_task = task or self.router.classify(prompt)[0]
+                trace = self.traces.start(prompt, classified_task, context=ctx)
+                response = RouterResponse(
+                    task=classified_task, complexity="trivial",
+                    strategy=f"mini:{mini.brain}", ok=True, answer=mini.answer,
+                    confidence=mini.confidence, models_used=[],
+                    latency_ms=mini.elapsed_ms)
+                elapsed = (time.perf_counter() - t0) * 1000.0
+                self.traces.finish(trace, outcome=response.answer,
+                                   confidence=response.confidence,
+                                   models=[], execution_ms=elapsed,
+                                   reasoning={"strategy": response.strategy,
+                                              "complexity": "trivial"})
+                response.trace_id = trace.id
+                return response
+
         if build_context:
             ctx = {**self.context_builder.build(prompt), **ctx}
         classified_task = task or self.router.classify(prompt)[0]
@@ -139,7 +167,8 @@ class IntelligenceOS:
     def status(self) -> dict:
         return {"models": self.models.status(), "cache": self.cache.stats(),
                 "traces": self._store.counts()["traces"],
-                "registry": self.registry.health()}
+                "registry": self.registry.health(),
+                "mini_brains": self.cortex.stats()}
 
     def health_report(self) -> dict:
         return {"status": "ok", "local_first": True,
