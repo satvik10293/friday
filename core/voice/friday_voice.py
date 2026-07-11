@@ -1,11 +1,30 @@
+"""
+core/voice/friday_voice.py — Friday 3.0
+Friday's spoken voice. edge-tts (neural voice, needs network) synthesizes to a
+per-process temp file; pygame plays it on a PERSISTENT mixer — initialized
+once, never quit between sentences, so there is no per-sentence device churn
+and barge-in's `pygame.mixer.music.stop()` always finds a live mixer.
+
+She never goes silent just because the internet is down: when edge-tts fails,
+Windows SAPI (built into the OS, no dependencies) speaks the sentence instead.
+
+Imports of edge_tts / pygame are lazy — this module is cheap to import and
+testable without audio hardware.
+"""
+
+from __future__ import annotations
+
 import asyncio
 import json
-import edge_tts
-import pygame
+import logging
+import subprocess
+import sys
 import time
 from pathlib import Path
 
 from core.voice.friday_audio import get_temp_audio_file
+
+log = logging.getLogger("friday.voice")
 
 DEFAULT_VOICE = "en-US-AriaNeural"
 _CONFIG_PATH = Path(__file__).resolve().parents[2] / "friday_config.json"
@@ -25,31 +44,80 @@ class FridayVoice:
         self.voice = voice or _config_voice() or DEFAULT_VOICE
         self.temp_file = get_temp_audio_file()
 
-    async def _generate(self, text):
-        tts = edge_tts.Communicate(text, self.voice)
-        await tts.save(self.temp_file)
+    # ── synthesis (cloud neural voice) ────────────────────────────────────────
+    def _generate(self, text: str) -> bool:
+        """Synthesize to the temp file. False (never raises) on any failure —
+        offline, DNS, service down — so say() can fall back."""
+        try:
+            import edge_tts
 
-    def say(self, text):
+            async def _run():
+                await edge_tts.Communicate(text, self.voice).save(self.temp_file)
 
-        print(f"\n[Friday] {text}")
+            asyncio.run(_run())
+            return Path(self.temp_file).exists() and audio_nonempty(self.temp_file)
+        except Exception:  # noqa: BLE001 — synthesis failure means fallback, not crash
+            log.warning("edge-tts synthesis failed (offline?)", exc_info=True)
+            return False
 
-        asyncio.run(self._generate(text))
+    # ── playback (persistent mixer) ───────────────────────────────────────────
+    @staticmethod
+    def _ensure_mixer():
+        import pygame
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+        return pygame
 
-        pygame.init()
-        pygame.mixer.init()
-
-        pygame.mixer.music.load(self.temp_file)
+    def _play(self, path: str) -> None:
+        pygame = self._ensure_mixer()
+        pygame.mixer.music.load(path)
         pygame.mixer.music.play()
-
         while pygame.mixer.music.get_busy():
-            time.sleep(0.1)
+            time.sleep(0.05)
+        pygame.mixer.music.unload()      # release the file handle (Windows)
 
-        pygame.mixer.quit()
+    # ── offline fallback (Windows SAPI — built in, no dependencies) ───────────
+    @staticmethod
+    def _speak_offline(text: str) -> bool:
+        if sys.platform != "win32":
+            return False
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Add-Type -AssemblyName System.Speech; "
+                 "(New-Object System.Speech.Synthesis.SpeechSynthesizer)"
+                 ".Speak([Console]::In.ReadToEnd())"],
+                input=text, text=True, timeout=60, check=True,
+                capture_output=True)
+            return True
+        except Exception:  # noqa: BLE001
+            log.debug("SAPI fallback failed", exc_info=True)
+            return False
+
+    # ── the public voice ──────────────────────────────────────────────────────
+    def say(self, text):
+        text = (text or "").strip()
+        if not text:
+            return
+        print(f"\n[Friday] {text}")
+        if self._generate(text):
+            try:
+                self._play(self.temp_file)
+                return
+            except Exception:  # noqa: BLE001 — audio device trouble → fallback
+                log.warning("playback failed", exc_info=True)
+        if not self._speak_offline(text):
+            log.error("all speech paths failed for %r — staying silent", text[:60])
+
+
+def audio_nonempty(path: str) -> bool:
+    try:
+        return Path(path).stat().st_size > 0
+    except OSError:
+        return False
 
 
 if __name__ == "__main__":
-
     voice = FridayVoice()
-
     voice.say("Hello Satvik. Voice systems are online.")
     voice.say("Phase one brain modules are operational.")

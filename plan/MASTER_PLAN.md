@@ -214,6 +214,46 @@ rewritten:
 mini_brains / teacher / learning_gate / context_builder / intelligence_os`;
 end-to-end smoke over the real `IntelligenceOS.think()` (6 checks) green.
 
+### M37 — Brain Tranche 2  (`m37-brain-tranche-2`) ✅
+
+- **flan-t5 reads evidence:** the optional plugin outranked the builtin
+  reasoner for GENERAL tasks on real boots yet ignored `request.context`
+  and stamped a flat 0.7 — a base-model hallucination could clear the
+  escalation threshold, blocking both taught memories and the teacher. Now:
+  retrieved evidence is stitched into an extractive-QA prompt, confidence is
+  honest (0.75 grounded / 0.4 free generation), and the ~1 GB pipeline warms
+  on a background thread instead of hanging the first user turn.
+- **Memory dedup:** `remember()` reinforces an existing (≥0.97 cosine) row —
+  touch + max importance — instead of piling near-identical taught answers
+  into the index; `amend()` can no longer supersede a memory with itself.
+- **DateMathBrain:** "what day is it in 10 days", "how many days until
+  December 25", "what day of the week is March 3 2027" — exact-or-silent.
+
+**Exit (met):** full suite green + 13 new tests.
+
+### M38 — Voice Layer Repair  (`m38-voice-repair`) ✅ *(the "weakest part" pass, Satvik 2026-07-11)*
+
+`core/voice/` was the weakest production-path code: zero tests, three import
+landmines, and a bug that killed the voice under an installed (Program Files)
+deployment. Repaired in place:
+
+- `friday_audio`/`friday_tts`/`friday_voice`: audio temp files live under the
+  SYSTEM temp dir (per-process), never the CWD — a read-only install dir no
+  longer silences her.
+- `friday_voice.say()`: persistent pygame mixer (no per-sentence init/quit
+  churn; barge-in's `music.stop()` always finds a live mixer), lazy imports,
+  and an OFFLINE fallback — edge-tts needs network, so on failure Windows
+  SAPI (built into the OS) speaks instead; every path guarded, never raises
+  on the speech worker.
+- `friday_mic_test`: no longer loads whisper AND records 5 s of audio AT
+  IMPORT (the documented 3.0 gotcha) — everything behind `main()`.
+- `friday_voice_loop`: the file had been accidentally overwritten with a copy
+  of `setup.py` — importing it ran pip installs and a blocking `input()`.
+  Restored to its documented role: the minimal senses → IOS → voice dev loop.
+
+**Exit (met):** new `tests/test_voice_output.py` (10) + conversation/teacher
+regressions green; full suite green.
+
 ### Live World & Truthful Independence  *(open — numbered when it lands)*
 
 1. World Model continuously fed by the Perception Hub (observations already
