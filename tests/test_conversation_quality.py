@@ -123,6 +123,51 @@ def test_deep_pass_failure_keeps_the_first_answer():
     assert response.ok
 
 
+def test_deep_pass_reasons_over_the_same_retrieved_context():
+    """The escalation pass must see the memories/knowledge the first pass
+    retrieved — a deeper pass with LESS information is not deeper."""
+    class ContextIOS(_IOS):
+        def think(self, prompt, context=None, collaborate=False, **kw):
+            self.calls.append({"prompt": prompt, "collaborate": collaborate,
+                               "context": context})
+            r = _Response(self._deep if collaborate else self._confidence,
+                          self._ok,
+                          answer="deeper local answer" if collaborate
+                          else "local answer")
+            if not collaborate:
+                r.context_used = {"query": prompt,
+                                  "memories": [{"id": 7, "content": "a fact",
+                                                "score": 0.9}],
+                                  "knowledge": [{"title": "t", "content": "k"}]}
+            return r
+
+    ios = ContextIOS(confidence=0.3, deep_confidence=0.7)
+    bridge = _bridge(ios=ios)
+    bridge.think("hard question")
+    deep_call = ios.calls[1]
+    assert deep_call["collaborate"]
+    assert deep_call["context"]["memories"][0]["id"] == 7
+    assert deep_call["context"]["knowledge"]
+
+
+def test_memory_provenance_comes_from_the_reasoned_context():
+    """DecisionLog memory_used lists the ids of the memories the models
+    actually reasoned over — no separate (duplicate) retrieval."""
+    class ContextIOS(_IOS):
+        def think(self, prompt, context=None, collaborate=False, **kw):
+            self.calls.append({"prompt": prompt, "collaborate": collaborate})
+            r = _Response(0.9)
+            r.context_used = {"memories": [{"id": 3, "content": "x", "score": 0.8},
+                                           {"id": 5, "content": "y", "score": 0.7},
+                                           {"content": "no id"}]}
+            return r
+
+    bridge = _bridge(ios=ContextIOS())
+    bridge.think("what do you know")
+    row = bridge._decision_log.rows[0]
+    assert row["memory_used"] == [3, 5]
+
+
 def test_nothing_in_the_bridge_references_a_cloud():
     import inspect
 

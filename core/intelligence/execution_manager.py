@@ -39,8 +39,13 @@ class ExecutionManager:
 
     # ── single model (the reasoning engine's executor) ──────────────────────────
     def run(self, model: Model, request: InferenceRequest) -> InferenceResult:
+        # the FULL context is part of the key — models reason over retrieved
+        # memories/knowledge, so the same prompt with different evidence is a
+        # different computation. Keying on context key-names only would serve
+        # stale answers after FRIDAY learns something new (breaking the
+        # teacher → memory → local-next-time flywheel).
         key = cache_key("infer", model.info.name, request.task, request.prompt,
-                        sorted(request.context.keys()))
+                        request.context)
         cached = self._cache.get(key)
         if cached is not None:
             return cached

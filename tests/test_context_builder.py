@@ -48,3 +48,41 @@ def test_resilient_to_failing_service():
 def test_token_estimate_present():
     ctx = ContextBuilder().build("hello")
     assert "_tokens" in ctx and ctx["_tokens"] >= 1
+
+
+# ── anaphora-aware retrieval ──────────────────────────────────────────────────
+
+class _RecordingMemory:
+    def __init__(self):
+        self.queries = []
+
+    def recall(self, query, k=8):
+        self.queries.append(query)
+        return []
+
+
+def test_followup_prompts_anchor_retrieval_to_the_previous_turn():
+    memory = _RecordingMemory()
+    cb = ContextBuilder(memory_service=memory)
+    seed = {"recent_turns": [
+        {"role": "user", "text": "how far away is the moon"},
+        {"role": "friday", "text": "About 384,400 kilometres."},
+    ]}
+    ctx = cb.build("what about in miles?", seed=seed)
+    assert "moon" in memory.queries[0]           # the anchor rode along
+    assert "miles" in memory.queries[0]
+    assert "moon" in ctx["query"]
+
+
+def test_standalone_prompts_retrieve_on_their_own_words():
+    memory = _RecordingMemory()
+    cb = ContextBuilder(memory_service=memory)
+    seed = {"recent_turns": [{"role": "user", "text": "how far away is the moon"}]}
+    cb.build("what is the tallest mountain on earth today", seed=seed)
+    assert memory.queries[0] == "what is the tallest mountain on earth today"
+
+
+def test_no_window_means_plain_retrieval():
+    memory = _RecordingMemory()
+    ContextBuilder(memory_service=memory).build("what about it?")
+    assert memory.queries[0] == "what about it?"

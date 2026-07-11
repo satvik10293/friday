@@ -21,10 +21,14 @@ from .critic import CriticEngine
 from .reasoning_engine import ReasoningEngine, ReasoningStrategy
 from .registry import IntelligenceRegistry
 
-# task → keywords for classification
+# task → keywords for classification. Words/phrases match on word boundaries
+# (so "say" never fires inside "essay", "plan" never inside "airplane");
+# bare regexes are allowed for shapes words can't express (arithmetic operators
+# must sit between digits, or "2+2" and "C++" would both look like math).
 _TASK_KEYWORDS = {
     TaskType.CODING.value: ("code", "bug", "debug", "function", "python", "compile", "refactor"),
-    TaskType.MATH.value: ("calculate", "compute", "solve", "equation", "+", "*", "integral"),
+    TaskType.MATH.value: ("calculate", "compute", "solve", "equation",
+                          re.compile(r"\d\s*[+*/^]\s*\d"), "integral"),
     TaskType.PLANNING.value: ("plan", "schedule", "roadmap", "steps", "milestone", "organize"),
     TaskType.RESEARCH.value: ("research", "find out", "investigate", "paper", "explain how"),
     TaskType.WRITING.value: ("write", "draft", "compose", "essay", "summary"),
@@ -39,6 +43,16 @@ _TASK_KEYWORDS = {
     TaskType.WEB.value: ("search the web", "browse", "url", "website"),
     TaskType.ROBOTICS.value: ("move", "actuate", "motor", "navigate"),
 }
+
+def _compile_keywords(kws: tuple) -> tuple:
+    return tuple(kw if isinstance(kw, re.Pattern)
+                 else re.compile(r"\b" + re.escape(kw) + r"\b")
+                 for kw in kws)
+
+_TASK_PATTERNS = {task: _compile_keywords(kws) for task, kws in _TASK_KEYWORDS.items()}
+
+_COMPLEXITY_MARKERS = _compile_keywords(
+    ("and", "then", "compare", "why", "how", "design", "multiple"))
 
 
 @dataclass
@@ -55,9 +69,15 @@ class RouterResponse:
     trace_id: str = ""
     latency_ms: float = 0.0
     error: str = ""
+    # the exact context the models reasoned over (memories with ids, knowledge,
+    # …). Callers reuse it for escalation passes and provenance instead of
+    # retrieving again; excluded from to_dict() so traces/logs stay lean.
+    context_used: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return dict(self.__dict__)
+        d = dict(self.__dict__)
+        d.pop("context_used", None)
+        return d
 
 
 class IntelligenceRouter:
@@ -73,8 +93,8 @@ class IntelligenceRouter:
     def classify(self, prompt: str) -> tuple[str, str]:
         p = (prompt or "").lower()
         best_task, best_hits = TaskType.GENERAL.value, 0
-        for task, kws in _TASK_KEYWORDS.items():
-            hits = sum(1 for kw in kws if kw in p)
+        for task, patterns in _TASK_PATTERNS.items():
+            hits = sum(1 for pat in patterns if pat.search(p))
             if hits > best_hits:
                 best_task, best_hits = task, hits
         return best_task, self._complexity(prompt)
@@ -82,8 +102,8 @@ class IntelligenceRouter:
     @staticmethod
     def _complexity(prompt: str) -> str:
         n = len(prompt or "")
-        markers = sum(1 for m in ("and", "then", "compare", "why", "how", "design", "multiple")
-                      if m in (prompt or "").lower())
+        p = (prompt or "").lower()
+        markers = sum(1 for pat in _COMPLEXITY_MARKERS if pat.search(p))
         if n < 24 and markers == 0:
             return Complexity.TRIVIAL.value
         if n < 80 and markers <= 1:
@@ -140,4 +160,5 @@ class IntelligenceRouter:
             ok=result.ok, answer=result.answer, structured=result.structured,
             confidence=final_conf, models_used=result.models_used,
             agreement=result.agreement, trace_id=request.trace_id,
-            latency_ms=round((time.perf_counter() - t0) * 1000.0, 3), error=result.error)
+            latency_ms=round((time.perf_counter() - t0) * 1000.0, 3), error=result.error,
+            context_used=context)

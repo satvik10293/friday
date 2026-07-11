@@ -64,6 +64,28 @@ def test_no_learn_when_disabled(ios, knowledge_service):
     assert knowledge_service.stats()["total"] == before
 
 
+def test_routine_reflections_do_not_pollute_knowledge():
+    """Per-turn reflections used to store a formulaic 'the approach worked'
+    lesson into the vault on EVERY think() — retrieved later as knowledge,
+    self-amplifying noise. Only reflections with concrete mistakes persist."""
+    from core.intelligence.reflection_engine import ReflectionEngine
+
+    stored = []
+
+    class _Knowledge:
+        def promote_reflection(self, d):
+            stored.append(d)
+
+    eng = ReflectionEngine(_Knowledge())
+    ref = eng.reflect(task="general", success=True, outcome="the moon is far")
+    assert ref.lesson and stored == []            # telemetry yes, vault no
+    eng.reflect(task="general", success=False)    # generic failure: still noise
+    assert stored == []
+    eng.reflect(task="coding", success=False,
+                mistakes=["used a deprecated API"])
+    assert len(stored) == 1                       # real mistakes become lessons
+
+
 # ── planning ───────────────────────────────────────────────────────────────────────
 def test_plan(ios):
     plan = ios.plan("build a web app with auth database and tests")

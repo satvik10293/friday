@@ -59,8 +59,9 @@ class ReasonerModel(BaseModel):
     @staticmethod
     def _best_snippets(request: InferenceRequest, k: int = 2) -> list[str]:
         """The most relevant content the context builder retrieved (memories +
-        knowledge), ranked by keyword overlap with the prompt."""
-        kws = set(_keywords(request.prompt, k=8))
+        knowledge), ranked by keyword overlap with the effective retrieval
+        query (which, for follow-up prompts, includes the previous turn)."""
+        kws = set(_keywords(request.context.get("query") or request.prompt, k=8))
         candidates: list[str] = []
         for m in request.context.get("memories", []) or []:
             text = m.get("content") if isinstance(m, dict) else str(m)

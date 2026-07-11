@@ -116,8 +116,20 @@ class _Response:
 
 
 class _IOS:
+    """Emulates the real IOS contract: retrieval happens INSIDE think() (one
+    retrieval per turn) and the reasoned-over memories ride back on
+    `context_used` — the bridge takes DecisionLog provenance from there."""
+
+    def __init__(self, memory=None):
+        self.memory = memory
+
     def think(self, prompt, context=None, **kw):
-        return _Response()
+        r = _Response()
+        if self.memory is not None:
+            r.context_used = {"memories": [
+                {"id": m["id"], "content": m["content"], "score": m.get("score")}
+                for m in self.memory.recall(prompt, k=5)]}
+        return r
 
 
 class _Log:
@@ -133,7 +145,7 @@ def test_voice_turns_recall_before_reasoning_and_become_memory(service):
     service.remember("system", "Satvik prefers Python", kind="fact",
                      tier="semantic")
     bridge = ConversationBridge(
-        _IOS(), decision_log=_Log(), memory=service,
+        _IOS(service), decision_log=_Log(), memory=service,
         speech=_SpeechOutput(synthesizer=lambda t: None))
     bridge.think("do I prefer Python?")
 

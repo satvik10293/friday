@@ -168,6 +168,10 @@ class ConversationBridge:
         self._noise_dropped = 0
         self._last_clarify_ts = 0.0
         self._recent_speech: deque = deque(maxlen=8)   # (normalized text, ts)
+        # conversation window: the last few (role, text) turns, so follow-up
+        # questions have an anchor — passed into reasoning context and (privacy
+        # aside) to the teacher for pronoun resolution
+        self._window: deque = deque(maxlen=6)
         self._pending_approval: Optional[tuple] = None   # (goal_id, title, expires_at)
         self._lock = threading.Lock()
 
@@ -321,16 +325,33 @@ class ConversationBridge:
                      latency_ms=int((time.perf_counter() - t0) * 1000))
         return response
 
-    def _respond_directly(self, turn: int, source: str, answer: str, t0: float):
+    def _respond_directly(self, turn: int, source: str, answer: str, t0: float,
+                          command: str = ""):
         from core.intelligence.router import RouterResponse
         response = RouterResponse(task=source, complexity="trivial",
                                   strategy=source, ok=True, answer=answer,
                                   confidence=0.95)
         self._record(turn=turn, route=[source], response=response,
                      latency_ms=int((time.perf_counter() - t0) * 1000))
+        if command:
+            self._remember_turn(command, answer)
         if self.speak_answers:
             self._say(answer)
         return response
+
+    def _remember_turn(self, command: str, answer: str) -> None:
+        self._window.append({"role": "user", "text": (command or "")[:200]})
+        if (answer or "").strip():
+            self._window.append({"role": "friday", "text": answer.strip()[:200]})
+
+    def _teacher_context(self, reasoned_ctx: dict) -> dict:
+        """Only what may leave the box: the conversation window plus memories
+        NOT marked private. Anything without an explicit private=False stays
+        local (unknown provenance is treated as private)."""
+        facts = [m.get("content") for m in reasoned_ctx.get("memories", [])
+                 if isinstance(m, dict) and m.get("private") is False
+                 and (m.get("content") or "").strip()]
+        return {"recent_turns": list(self._window), "facts": facts[:5]}
 
     def _clarify(self, turn: int, heard: float, t0: float):
         # ask once, then stay quiet: a noisy room must not become a nag loop
@@ -369,33 +390,36 @@ class ConversationBridge:
         # self-questions are answered from the Self Model, not a language model
         introspective = self._introspect(command)
         if introspective is not None:
-            return self._respond_directly(turn, "self_model", introspective, t0)
+            return self._respond_directly(turn, "self_model", introspective, t0,
+                                          command=command)
 
         # goal proposals (M28): list / approve / reject straight from the store
         proposal_answer = self._proposals(command)
         if proposal_answer is not None:
-            return self._respond_directly(turn, "goal_proposals", proposal_answer, t0)
+            return self._respond_directly(turn, "goal_proposals", proposal_answer,
+                                          t0, command=command)
 
-        # memory retrieval happens before reasoning (provenance for the DecisionLog)
-        memory_used: list = []
-        if self.memory is not None:
-            try:
-                memory_used = [m.get("id") for m in self.memory.recall(command, k=5)
-                               if isinstance(m, dict) and m.get("id") is not None]
-            except Exception:  # noqa: BLE001
-                log.debug("memory recall failed", exc_info=True)
-
+        # the conversation window rides along so follow-ups have an anchor
+        ctx["recent_turns"] = list(self._window)
         response = self.ios.think(command, context=ctx)
         route = [getattr(response, "strategy", "") or "intelligence_os"]
 
+        # provenance comes from the context the models actually reasoned over —
+        # a single retrieval per turn serves reasoning, the DecisionLog, and
+        # any escalation pass below
+        reasoned_ctx = dict(getattr(response, "context_used", None) or ctx)
+        memory_used = [m.get("id") for m in reasoned_ctx.get("memories", [])
+                       if isinstance(m, dict) and m.get("id") is not None]
+
         # thought badly → think harder, still locally: a second, collaborative
-        # pass over the local model team (visible in the route)
+        # pass over the local model team (visible in the route), reasoning over
+        # the SAME retrieved memories/knowledge as the first pass
         weak = (not getattr(response, "ok", False)
                 or float(getattr(response, "confidence", 0.0) or 0.0) < self.escalate_threshold)
         if weak:
             try:
-                deeper = self.ios.think(command, context=ctx, collaborate=True,
-                                        build_context=False)
+                deeper = self.ios.think(command, context=reasoned_ctx,
+                                        collaborate=True, build_context=False)
             except Exception:  # noqa: BLE001 — the first answer still stands
                 deeper = None
             if deeper is not None and getattr(deeper, "ok", False) and \
@@ -412,7 +436,8 @@ class ConversationBridge:
                       or float(getattr(response, "confidence", 0.0) or 0.0)
                       < self.escalate_threshold)
         if still_weak and self.teacher is not None and self.teacher.available():
-            taught = self.teacher.ask(command)
+            taught = self.teacher.ask(command,
+                                      context=self._teacher_context(reasoned_ctx))
             if taught.ok:
                 from core.intelligence.router import RouterResponse
                 response = RouterResponse(
@@ -437,6 +462,8 @@ class ConversationBridge:
             route=tuple(route))
         self.gate.apply(self.memory, decision, command, answer)
 
+        if getattr(response, "ok", False):
+            self._remember_turn(command, answer)
         if self.speak_answers and getattr(response, "ok", False):
             self._say(getattr(response, "answer", ""))
         return response

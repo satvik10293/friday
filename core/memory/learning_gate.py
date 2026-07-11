@@ -144,6 +144,10 @@ class LearningGate:
                                     kind="personal", importance=0.8, private=True)
         elif "clarify" in route or "self_model" in route:
             decision = GateDecision(store=False, reason="meta_turn")
+        elif any(str(r).startswith("mini:") for r in route):
+            # deterministic specialist answers (math, clock, units, system) are
+            # recomputable on demand — storing them is pure index noise
+            decision = GateDecision(store=False, reason="recomputable")
         elif _SMALL_TALK_RE.match(text):
             decision = GateDecision(store=False, reason="small_talk")
         elif len(text) < _MIN_SUBSTANTIVE_CHARS:
@@ -178,8 +182,11 @@ class LearningGate:
             meta = {"source": "voice", "private": decision.private,
                     "gate": decision.reason}
             if decision.answer_only:
+                # keep the question as the topic: consolidation clusters by it,
+                # keyword recall matches on it, and provenance stays readable
                 return [memory.remember("friday", answer, kind=decision.kind,
                                         tier="semantic",
+                                        topic=(command or "").strip()[:120],
                                         importance=decision.importance,
                                         metadata=meta)]
             ids = [memory.remember("user", command, kind=decision.kind,

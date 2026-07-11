@@ -40,6 +40,26 @@ def test_classify_general_fallback(router):
     assert task == TaskType.GENERAL.value
 
 
+def test_classify_matches_whole_words_not_substrings(router):
+    # "say" inside "essay" is not speech; "plan" inside "airplane" is not planning
+    task, _ = router.classify("that essay was written by an airplane enthusiast")
+    assert task not in (TaskType.SPEECH.value, TaskType.PLANNING.value)
+
+
+def test_classify_math_needs_digits_around_operators(router):
+    # a bare "+" (C++, "great :*") must not classify as math…
+    task, _ = router.classify("I love C++ programming")
+    assert task != TaskType.MATH.value
+    # …but an operator between digits must
+    task, _ = router.classify("what is 12*7")
+    assert task == TaskType.MATH.value
+
+
+def test_complexity_markers_are_whole_words(router):
+    # "and" inside "sandwich", "how" inside "showtime" are not complexity markers
+    assert router._complexity("sandwich showtime") == Complexity.TRIVIAL.value
+
+
 def test_complexity_levels(router):
     assert router._complexity("hi") == Complexity.TRIVIAL.value
     assert router._complexity("a" * 300) == Complexity.LARGE.value

@@ -29,10 +29,25 @@ def test_math_brain_answers(prompt, expected):
     assert MathBrain().answer(prompt) == expected
 
 
+@pytest.mark.parametrize("prompt,expected", [
+    ("what is 12 times 7", "84"),                 # STT transcribes words…
+    ("what is 100 divided by 8", "12.5"),
+    ("what's 19 plus 23", "42"),
+    ("what is 50 minus 8", "42"),
+    ("what is 2 to the power of 10", "1024"),
+    ("what is 5 x 3", "15"),
+    ("what is 15 percent of 80", "12"),           # …and "percent", not "%"
+])
+def test_math_brain_understands_spoken_operators(prompt, expected):
+    assert MathBrain().answer(prompt) == expected
+
+
 @pytest.mark.parametrize("prompt", [
     "what is love",                      # no arithmetic
     "tell me about python",              # no numbers
     "call 555-2368 now",                 # digits but no computation intent
+    "how many times did I ask you",      # "times" without digits around it
+    "hand it over 2 me",                 # "over" not between digits
 ])
 def test_math_brain_refuses_non_math(prompt):
     assert MathBrain().claim(prompt) == 0.0
@@ -62,6 +77,23 @@ def test_unit_brain_converts(prompt, contains):
     assert answer is not None and contains in answer
 
 
+@pytest.mark.parametrize("prompt,contains", [
+    ("how many miles is 5 km", "3.1069"),         # spoken target-first phrasing
+    ("how many pounds in 3 kg", "6.6139"),
+    ("how many feet are 2 meters", "6.5617"),
+])
+def test_unit_brain_understands_target_first_phrasing(prompt, contains):
+    answer = UnitBrain().answer(prompt)
+    assert answer is not None and contains in answer
+
+
+def test_clock_brain_date_phrasings():
+    brain = ClockBrain()
+    for prompt in ("what date is it", "what date is it today", "what's the date"):
+        assert brain.claim(prompt) > 0.6, prompt
+        assert str(__import__("datetime").datetime.now().year) in brain.answer(prompt)
+
+
 def test_unit_brain_refuses_unknown_pairs():
     assert UnitBrain().claim("convert 10 dollars to euros") == 0.0
 
@@ -89,6 +121,47 @@ def test_recall_brain_silent_on_empty_memory(monkeypatch):
 
     monkeypatch.setattr(chronicle, "search_keyword", lambda topic, limit=3: [])
     assert RecallBrain().answer("do you remember the moon mission?") is None
+
+
+class _FakeMemory:
+    """Stands in for the One Memory service's recall()."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.queries = []
+
+    def recall(self, query, k=8):
+        self.queries.append(query)
+        return self.rows
+
+
+def test_recall_brain_prefers_one_memory_over_chronicle(monkeypatch):
+    import core.knowledge.friday_chronicle as chronicle
+
+    monkeypatch.setattr(chronicle, "search_keyword",
+                        lambda topic, limit=3: [{"content": "stale chronicle row"}])
+    memory = _FakeMemory([{"content": "The Moon is 384,400 km away.", "score": 0.8}])
+    answer = RecallBrain(memory=memory).answer("what do you know about the moon?")
+    assert answer is not None
+    assert "384,400" in answer and "stale chronicle" not in answer
+    assert memory.queries == ["the moon"]
+
+
+def test_recall_brain_filters_irrelevant_one_memory_hits(monkeypatch):
+    """Top-k always returns SOMETHING — low-similarity rows must not be spoken.
+    With One Memory empty of relevant rows, the chronicle fallback still runs."""
+    import core.knowledge.friday_chronicle as chronicle
+
+    monkeypatch.setattr(chronicle, "search_keyword", lambda topic, limit=3: [])
+    memory = _FakeMemory([{"content": "grocery list: eggs, milk", "score": 0.05}])
+    assert RecallBrain(memory=memory).answer("do you remember the mars rover?") is None
+
+
+def test_cortex_wires_memory_into_recall_brain():
+    memory = _FakeMemory([])
+    cortex = MiniBrainCortex(memory=memory)
+    recall = next(b for b in cortex.brains if b.name == "recall")
+    assert recall._memory is memory
 
 
 # ── the budget ─────────────────────────────────────────────────────────────────

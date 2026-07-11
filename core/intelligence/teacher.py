@@ -44,6 +44,26 @@ _SYSTEM_PROMPT = (
     "accurately in 1-3 short sentences suitable for being spoken aloud. "
     "No markdown, no lists, no preamble.")
 
+_MAX_CONTEXT_CHARS = 1200
+
+
+def _context_block(context: Optional[dict]) -> str:
+    """Render the caller-supplied context (recent turns + non-private local
+    facts) into a compact block. The CALLER is responsible for privacy
+    filtering — nothing marked private may reach this function."""
+    if not context:
+        return ""
+    parts: list[str] = []
+    turns = context.get("recent_turns") or []
+    if turns:
+        lines = [f"{t.get('role', '?')}: {t.get('text', '')}" for t in turns[-6:]]
+        parts.append("Recent conversation:\n" + "\n".join(lines))
+    facts = context.get("facts") or []
+    if facts:
+        parts.append("Relevant local facts:\n"
+                     + "\n".join(f"- {f}" for f in facts[:5]))
+    return "\n\n".join(parts)[:_MAX_CONTEXT_CHARS]
+
 
 @dataclass
 class TeacherAnswer:
@@ -91,22 +111,32 @@ class GroqTeacher:
     def available(self) -> bool:
         return bool(self.enabled and self._api_key)
 
-    def ask(self, question: str) -> TeacherAnswer:
+    def ask(self, question: str, *, context: Optional[dict] = None) -> TeacherAnswer:
         """One guarded consult. Never raises — a teacher failure simply means
-        FRIDAY falls back to her honest local answer."""
+        FRIDAY falls back to her honest local answer.
+
+        `context` may carry `recent_turns` (role/text dicts) and `facts`
+        (plain strings) so follow-up questions ("how old is he?") resolve.
+        Callers must filter out anything marked private BEFORE passing it."""
         if not self.available():
             return TeacherAnswer(ok=False, error="teacher unavailable")
         self.stats.asked += 1
         t0 = time.perf_counter()
         try:
             import requests
+            messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+            block = _context_block(context)
+            if block:
+                messages.append({"role": "system",
+                                 "content": "Context from FRIDAY's local state "
+                                            "(may resolve pronouns/follow-ups):\n"
+                                            + block})
+            messages.append({"role": "user", "content": question})
             resp = requests.post(
                 _API_URL,
                 headers={"Authorization": f"Bearer {self._api_key}",
                          "Content-Type": "application/json"},
-                json={"model": self.model,
-                      "messages": [{"role": "system", "content": _SYSTEM_PROMPT},
-                                   {"role": "user", "content": question}],
+                json={"model": self.model, "messages": messages,
                       "temperature": 0.3, "max_tokens": 220},
                 timeout=_TIMEOUT_S)
             resp.raise_for_status()

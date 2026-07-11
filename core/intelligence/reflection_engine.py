@@ -36,12 +36,19 @@ class ReflectionEngine:
     def reflect(self, *, task: str, success: bool, duration_ms: float = 0.0,
                 models: Optional[list] = None, outcome: str = "",
                 mistakes: Optional[list] = None) -> Reflection:
-        mistakes = mistakes or ([] if success else ["task did not succeed"])
-        lesson = self._distil(task, success, outcome, mistakes)
+        explicit_mistakes = list(mistakes or [])
+        lesson = self._distil(task, success, outcome,
+                              explicit_mistakes or ["task did not succeed"])
         ref = Reflection(task=task, success=success, duration_ms=duration_ms,
                          models=list(models or []), knowledge_gained=outcome,
-                         mistakes=mistakes, lesson=lesson)
-        self._store(ref)
+                         mistakes=explicit_mistakes, lesson=lesson)
+        # Only reflections carrying real signal become knowledge: the caller
+        # named concrete mistakes. Routine per-turn reflections used to store a
+        # formulaic "the approach that produced 'X' worked" lesson on EVERY
+        # think() — which future turns retrieved as knowledge, self-amplifying
+        # noise and inflating the knowledge_quality confidence signal.
+        if explicit_mistakes:
+            self._store(ref)
         return ref
 
     def _distil(self, task: str, success: bool, outcome: str, mistakes: list) -> str:

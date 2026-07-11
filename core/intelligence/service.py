@@ -76,9 +76,10 @@ class IntelligenceOS:
                                    health=self.health)
         # M33: deterministic fast path — specialist mini brains answer common
         # task shapes in milliseconds before the model team is consulted.
+        # RecallBrain shares One Memory so "do you remember…" sees everything
+        # the learning gate stored (including taught knowledge).
         from .mini_brains import MiniBrainCortex
-        self.cortex = MiniBrainCortex()
-        self._lock = threading.Lock()
+        self.cortex = MiniBrainCortex(memory=memory_service)
         if bootstrap:
             self.models.bootstrap(discover_optional=discover_optional)
 
@@ -105,7 +106,7 @@ class IntelligenceOS:
                     task=classified_task, complexity="trivial",
                     strategy=f"mini:{mini.brain}", ok=True, answer=mini.answer,
                     confidence=mini.confidence, models_used=[],
-                    latency_ms=mini.elapsed_ms)
+                    latency_ms=mini.elapsed_ms, context_used=ctx)
                 elapsed = (time.perf_counter() - t0) * 1000.0
                 self.traces.finish(trace, outcome=response.answer,
                                    confidence=response.confidence,
@@ -116,11 +117,11 @@ class IntelligenceOS:
                 return response
 
         if build_context:
-            ctx = {**self.context_builder.build(prompt), **ctx}
+            ctx = {**self.context_builder.build(prompt, seed=ctx), **ctx}
         classified_task = task or self.router.classify(prompt)[0]
         trace = self.traces.start(prompt, classified_task, context=ctx)
 
-        response = self.router.route(prompt, task=task, context=ctx,
+        response = self.router.route(prompt, task=classified_task, context=ctx,
                                      strategy=strategy, collaborate=collaborate)
 
         elapsed = (time.perf_counter() - t0) * 1000.0

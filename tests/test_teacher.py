@@ -63,12 +63,14 @@ class _FakeTeacher:
     def __init__(self, ok=True):
         self.ok = ok
         self.asked = []
+        self.contexts = []
 
     def available(self):
         return True
 
-    def ask(self, question):
+    def ask(self, question, context=None):
         self.asked.append(question)
+        self.contexts.append(context)
         if self.ok:
             return TeacherAnswer(ok=True, answer="Paris is the capital of France.",
                                  model="llama-test", latency_ms=42.0)
@@ -81,12 +83,14 @@ class _FakeTeacher:
 class _Memory:
     def __init__(self):
         self.remembered = []
+        self.kwargs = []
 
     def recall(self, query, k=5):
         return []
 
     def remember(self, who, content, **kw):
         self.remembered.append(content)
+        self.kwargs.append(kw)
         return len(self.remembered)
 
 
@@ -135,3 +139,42 @@ def test_no_teacher_means_fully_local():
     response = bridge.think("what is the capital of France?")
     assert "don't know enough" in response.answer
     assert bridge.status()["teacher"] == {"enabled": False}
+
+
+# ── teacher context: follow-ups resolve, privacy is respected ─────────────────
+
+def test_teacher_receives_the_conversation_window():
+    teacher = _FakeTeacher()
+    bridge = _bridge(_LocalIOS(confidence=0.3), teacher, _Memory())
+    bridge.think("who founded SpaceX?")
+    bridge.think("how old is he?")
+    ctx = teacher.contexts[-1]
+    turns = [t["text"] for t in ctx["recent_turns"]]
+    assert any("SpaceX" in t for t in turns)       # the anchor for "he"
+
+
+def test_private_memories_never_reach_the_teacher():
+    class _ContextIOS(_LocalIOS):
+        def think(self, command, context=None, **kw):
+            r = super().think(command, context, **kw)
+            r.context_used = {"memories": [
+                {"id": 1, "content": "my password is hunter2", "private": True},
+                {"id": 2, "content": "FRIDAY runs on Windows", "private": False},
+                {"id": 3, "content": "unknown provenance"},       # no flag → local
+            ]}
+            return r
+
+    teacher = _FakeTeacher()
+    bridge = _bridge(_ContextIOS(confidence=0.3), teacher, _Memory())
+    bridge.think("what OS do I use?")
+    facts = teacher.contexts[-1]["facts"]
+    assert facts == ["FRIDAY runs on Windows"]
+
+
+def test_taught_answers_are_stored_with_the_question_as_topic():
+    teacher = _FakeTeacher()
+    memory = _Memory()
+    bridge = _bridge(_LocalIOS(confidence=0.3), teacher, memory)
+    bridge.think("what is the capital of France?")
+    taught = [kw for c, kw in zip(memory.remembered, memory.kwargs) if "Paris" in c]
+    assert taught and taught[0].get("topic") == "what is the capital of France?"

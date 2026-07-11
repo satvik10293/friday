@@ -51,6 +51,14 @@ def test_substantive_exchanges_are_learned_at_modest_importance():
     assert d.store and not d.private and d.importance == 0.5
 
 
+def test_mini_brain_answers_are_not_stored():
+    # deterministic specialist answers (math/clock/units/system) are
+    # recomputable on demand — storing them is index noise
+    d = _gate().decide("what is 234 * 91 divided by 7", "3042", 0.93,
+                       route=("mini:math",))
+    assert not d.store and d.reason == "recomputable"
+
+
 def test_forget_requests_are_detected():
     d = _gate().decide("forget what I said about my address", "", 0.9)
     assert d.forget and not d.store

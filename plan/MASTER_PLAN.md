@@ -180,6 +180,40 @@ wizard decides her CPU/GPU split honestly:
 **Exit (met):** wizard writes a measured plan; readers degrade safely; 16 new
 tests (`test_device_plan.py`) + first-run/launcher regressions green.
 
+### M36 — Brain Perfection  (`m36-brain-perfection`) ✅
+
+A ground-up correctness pass over the thinking path (Intelligence OS +
+conversation bridge + learning flywheel). Nine defects repaired, no module
+rewritten:
+
+1. **Stale-cache flywheel break (the big one):** the execution cache keyed on
+   context key-*names* only — after Groq taught her something, the same
+   question was served the pre-learning cached "I don't know" forever. The
+   FULL context is now part of the key; new evidence is always recomputed.
+2. **Blind deep pass:** the "think harder" escalation received an EMPTY
+   context (no memories/knowledge). It now reasons over the same retrieved
+   context as the first pass (`RouterResponse.context_used`).
+3. **One retrieval per turn:** the bridge's duplicate provenance recall is
+   gone — memory ids ride in `context_used` (with `private` flags).
+4. **Router word boundaries:** "say"≠essay, "plan"≠airplane, "+" needs digits.
+5. **RecallBrain → One Memory:** "do you remember…" now sees taught knowledge
+   (DI via the cortex; chronicle stays as fallback; relevance floor 0.35).
+6. **Teacher context, privacy-filtered:** Groq consults get the conversation
+   window + non-private facts only (unknown provenance = private); taught
+   answers store the question as `topic`.
+7. **Conversation window:** last 6 turns ride in context; follow-up prompts
+   ("what about in miles?") anchor retrieval to the previous user turn.
+8. **Spoken-language mini brains:** "12 times 7", "15 percent of 80",
+   "how many miles is 5 km", "what date is it" — STT reality, not symbols.
+9. **Learning noise stopped:** per-turn formulaic reflection "lessons" no
+   longer pollute the knowledge vault (only concrete mistakes persist);
+   recomputable mini-brain answers are never stored as memories.
+
+**Exit (met):** full suite green + 20 new regression tests across
+`test_trace_execution / conversation_quality / intelligence_router /
+mini_brains / teacher / learning_gate / context_builder / intelligence_os`;
+end-to-end smoke over the real `IntelligenceOS.think()` (6 checks) green.
+
 ### Live World & Truthful Independence  *(open — numbered when it lands)*
 
 1. World Model continuously fed by the Perception Hub (observations already

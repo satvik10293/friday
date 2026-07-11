@@ -92,3 +92,23 @@ def test_execute_no_model():
 def test_cache_key_stable():
     assert cache_key("a", 1, [2, 3]) == cache_key("a", 1, [2, 3])
     assert cache_key("a") != cache_key("b")
+
+
+def test_new_evidence_is_never_served_a_stale_cached_answer():
+    """The learn-back flywheel: the same question with DIFFERENT retrieved
+    context (she learned something since) must be recomputed, not served the
+    pre-learning cached answer."""
+    reg = _registry()
+    cache = IntelligenceCache()
+    ex = ExecutionManager(reg, cache=cache)
+    model = reg.get("friday-reasoner")
+
+    before = ex.run(model, InferenceRequest(
+        task=TaskType.GENERAL.value, prompt="how far away is the moon",
+        context={"memories": [], "knowledge": []}))
+    after = ex.run(model, InferenceRequest(
+        task=TaskType.GENERAL.value, prompt="how far away is the moon",
+        context={"memories": [{"content": "The Moon is 384,400 km from Earth.",
+                               "score": 0.9}], "knowledge": []}))
+    assert "384,400" in after.text            # not the stale "I don't know"
+    assert before.text != after.text

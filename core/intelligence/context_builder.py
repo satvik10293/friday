@@ -12,6 +12,7 @@ over data, never over live FRIDAY objects.
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from core.mission_control.resilience import safe_call
@@ -19,6 +20,22 @@ from core.mission_control.resilience import safe_call
 
 def _approx_tokens(text: str) -> int:
     return max(1, len(text) // 4)
+
+
+# a short prompt that leans on a pronoun or "what about…" is a follow-up: its
+# retrieval anchor lives in the PREVIOUS turn, not in the prompt itself
+_FOLLOWUP_RE = re.compile(
+    r"\b(he|she|it|they|him|her|them|that|this|those|these)\b"
+    r"|^\s*(what|how|and)\s+about\b|^\s*(and|so|then)\b", re.IGNORECASE)
+
+
+def _retrieval_query(prompt: str, seed: Optional[dict]) -> str:
+    turns = (seed or {}).get("recent_turns") or []
+    if not turns or len(prompt.split()) > 8 or not _FOLLOWUP_RE.search(prompt):
+        return prompt
+    last_user = next((t.get("text", "") for t in reversed(turns)
+                      if t.get("role") == "user"), "")
+    return f"{last_user} {prompt}".strip() if last_user else prompt
 
 
 class ContextBuilder:
@@ -33,14 +50,18 @@ class ContextBuilder:
         self.simulations = simulation_service
         self.token_budget = token_budget
 
-    def build(self, prompt: str, *, k: int = 5) -> dict:
-        ctx: dict = {"query": prompt}
+    def build(self, prompt: str, *, k: int = 5, seed: Optional[dict] = None) -> dict:
+        # `seed` is the caller's incoming context (e.g. recent_turns from the
+        # conversation bridge): a follow-up like "what about in miles?" anchors
+        # retrieval to the previous user turn instead of three bare pronouns
+        query = _retrieval_query(prompt, seed)
+        ctx: dict = {"query": query}
         ctx["memories"] = safe_call("ctx.mem",
-            lambda: [self._mem(m) for m in self.memory.recall(prompt, k=k)],
+            lambda: [self._mem(m) for m in self.memory.recall(query, k=k)],
             default=[]) if self.memory else []
         ctx["knowledge"] = safe_call("ctx.know",
             lambda: [{"title": e.title, "content": e.content[:300], "confidence": e.confidence}
-                     for e in self.knowledge.search_knowledge(prompt, k=k)],
+                     for e in self.knowledge.search_knowledge(query, k=k)],
             default=[]) if self.knowledge else []
         ctx["goals"] = safe_call("ctx.goals",
             lambda: [{"title": g.title, "status": self._status(g)}
@@ -91,7 +112,11 @@ class ContextBuilder:
 
     @staticmethod
     def _mem(m: dict) -> dict:
-        return {"content": str(m.get("content", ""))[:300], "score": m.get("score")}
+        # id → provenance (DecisionLog memory_used); private → never leaves the
+        # local store (cloud consults must filter on it)
+        return {"id": m.get("id"), "content": str(m.get("content", ""))[:300],
+                "score": m.get("score"),
+                "private": bool((m.get("metadata") or {}).get("private"))}
 
     @staticmethod
     def _status(g) -> str:
