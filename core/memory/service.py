@@ -38,11 +38,13 @@ class MemoryService:
     def __init__(self, store: Optional[MemoryStore] = None,
                  index: Optional[VectorIndex] = None,
                  embedder: Optional[Embedder] = None,
-                 working_capacity: int = 20) -> None:
+                 working_capacity: int = 20,
+                 dedup_threshold: float = 0.97) -> None:
         self._store = store or MemoryStore()
         self._embedder = embedder or get_embedder()
         self._index = index or build_index(self._embedder.dim)
         self._working = WorkingMemory(working_capacity)
+        self._dedup_threshold = dedup_threshold
         self._lock = threading.Lock()
         self._build_index_from_store()
 
@@ -52,16 +54,36 @@ class MemoryService:
                  tier: str = "episodic", session_id: str = "",
                  metadata: Optional[dict] = None) -> int:
         with self._lock:
+            vec = self._embedder.encode(content)
+            # dedup: teaching the same fact twice must reinforce the existing
+            # memory, not grow the index with near-identical rows
+            dup_id = self._find_duplicate(vec)
+            if dup_id is not None:
+                self._store.touch(dup_id)
+                if importance > (self._store.get(dup_id) or {}).get("importance", 0.0):
+                    self._store.update_importance(dup_id, importance)
+                return dup_id
             mem_id = self._store.insert(
                 role, content, topic=topic, kind=kind, importance=importance,
                 tier=tier, session_id=session_id, metadata=metadata,
             )
-            vec = self._embedder.encode(content)
             self._index.add(mem_id, vec)               # keyed by mem_id == embed_id
             self._store.mark_embedded(mem_id, mem_id)
         self._working.add({"id": mem_id, "role": role, "content": content,
                            "topic": topic, "ts": time.time()})
         return mem_id
+
+    def _find_duplicate(self, vec) -> Optional[int]:
+        """Id of a live memory whose embedding is (near-)identical, else None."""
+        if self._index.size() == 0:
+            return None
+        hits = self._index.search(vec, 1)
+        if not hits or hits[0][1] < self._dedup_threshold:
+            return None
+        row = self._store.get(hits[0][0])
+        if row is None or row.get("deleted"):
+            return None
+        return int(hits[0][0])
 
     def recall(self, query: str, k: int = 8) -> list[dict]:
         """Return up to k live memories most relevant to `query`, each annotated
@@ -141,6 +163,8 @@ class MemoryService:
             tier=old["tier"], session_id=old.get("session_id", ""),
             metadata={**(metadata or {}), "amends": mem_id},
         )
+        if new_id == mem_id:      # dedup: correction is (near-)identical → no-op
+            return mem_id
         self._store.set_superseded(mem_id, new_id)
         return new_id
 

@@ -19,12 +19,13 @@ Rules:
 from __future__ import annotations
 
 import ast
+import calendar
 import logging
 import operator
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 log = logging.getLogger("friday.intelligence.mini")
@@ -154,10 +155,11 @@ class ClockBrain(MiniBrain):
     name = "clock"
 
     _TIME = re.compile(r"\b(what time is it|current time|the time( now)?)\b", re.IGNORECASE)
+    # (?!\s+in\b): "what day/date is it IN 10 days" belongs to DateMathBrain
     _DATE = re.compile(
         r"\b(what('?s| is) (today'?s )?(the )?date|today'?s date|"
-        r"what date is it( today)?)\b", re.IGNORECASE)
-    _DAY = re.compile(r"\bwhat day (is it|is today)\b", re.IGNORECASE)
+        r"what date is it( today)?(?!\s+in\b))\b", re.IGNORECASE)
+    _DAY = re.compile(r"\bwhat day (is it|is today)\b(?!\s+in\b)", re.IGNORECASE)
 
     def claim(self, prompt: str) -> float:
         return 0.95 if (self._TIME.search(prompt) or self._DATE.search(prompt)
@@ -279,6 +281,97 @@ class SystemBrain(MiniBrain):
         return (". ".join(parts).capitalize() + ".") if parts else None
 
 
+# ── Date arithmetic ────────────────────────────────────────────────────────────
+
+_MONTHS = {name.lower(): i for i, name in enumerate(calendar.month_name) if name}
+_MONTHS.update({name.lower(): i for i, name in enumerate(calendar.month_abbr) if name})
+_WEEKDAYS = {name.lower(): i for i, name in enumerate(calendar.day_name)}
+
+
+class DateMathBrain(MiniBrain):
+    """Deterministic calendar arithmetic: "what day is it in 10 days",
+    "how many days until December 25", "what day of the week is March 3".
+    Exact-or-silent like every mini brain — ambiguous dates fall through."""
+
+    name = "datemath"
+
+    _IN_DAYS = re.compile(
+        r"\bwhat (?:day|date) (?:is it|will it be|is)\s+in\s+(\d{1,4})\s+(day|week)s?\b",
+        re.IGNORECASE)
+    _UNTIL = re.compile(
+        r"\bhow many days (?:until|till|to)\s+(.{3,40})", re.IGNORECASE)
+    _WEEKDAY_OF = re.compile(
+        r"\bwhat day (?:of the week )?(?:is|was|will)\s+(.{3,40})", re.IGNORECASE)
+
+    def _parse_date(self, text: str, *, future: bool = True) -> Optional[date]:
+        """Parse "December 25", "25 December", "March 3 2027", weekday names.
+        Year-less dates resolve to the next occurrence (future=True)."""
+        text = text.strip().rstrip("?!. ").lower()
+        today = date.today()
+        wd = _WEEKDAYS.get(text)
+        if wd is not None:                       # "friday" → next Friday
+            ahead = (wd - today.weekday() - 1) % 7 + 1
+            return today + timedelta(days=ahead)
+        m = re.match(r"(?:the\s+)?([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?$", text) \
+            or re.match(r"(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]+)(?:,?\s+(\d{4}))?$", text)
+        if not m:
+            return None
+        g1, g2, year = m.group(1), m.group(2), m.group(3)
+        month, day_s = (g1, g2) if g1 in _MONTHS else (g2, g1)
+        month_i = _MONTHS.get(str(month))
+        if month_i is None:
+            return None
+        try:
+            day_i = int(day_s)
+            if year:
+                return date(int(year), month_i, day_i)
+            candidate = date(today.year, month_i, day_i)
+            if future and candidate < today:
+                candidate = date(today.year + 1, month_i, day_i)
+            return candidate
+        except ValueError:                       # Feb 30 and friends
+            return None
+
+    def claim(self, prompt: str) -> float:
+        if self._IN_DAYS.search(prompt):
+            return 0.9
+        m = self._UNTIL.search(prompt)
+        if m and self._parse_date(m.group(1)):
+            return 0.9
+        m = self._WEEKDAY_OF.search(prompt)
+        if m and self._parse_date(m.group(1)):
+            return 0.85
+        return 0.0
+
+    def answer(self, prompt: str) -> Optional[str]:
+        today = date.today()
+        m = self._IN_DAYS.search(prompt)
+        if m:
+            days = int(m.group(1)) * (7 if m.group(2).lower() == "week" else 1)
+            if days > 36500:
+                return None
+            target = today + timedelta(days=days)
+            return f"That will be {target.strftime('%A, %B %d, %Y')}."
+        m = self._UNTIL.search(prompt)
+        if m:
+            target = self._parse_date(m.group(1))
+            if target is None:
+                return None
+            days = (target - today).days
+            if days == 0:
+                return "That's today!"
+            when = target.strftime("%B %d, %Y")
+            return (f"{days} days until {when}." if days > 0
+                    else f"{when} was {-days} days ago.")
+        m = self._WEEKDAY_OF.search(prompt)
+        if m:
+            target = self._parse_date(m.group(1))
+            if target is None:
+                return None
+            return f"{target.strftime('%B %d, %Y')} is a {target.strftime('%A')}."
+        return None
+
+
 # ── Memory recall ──────────────────────────────────────────────────────────────
 
 class RecallBrain(MiniBrain):
@@ -348,7 +441,7 @@ class MiniBrainCortex:
                  memory=None) -> None:
         self.brains: list[MiniBrain] = brains if brains is not None else [
             MathBrain(), ClockBrain(), UnitBrain(), SystemBrain(),
-            RecallBrain(memory=memory),
+            DateMathBrain(), RecallBrain(memory=memory),
         ]
         self._stats: dict[str, dict] = {
             b.name: {"calls": 0, "hits": 0, "misses": 0,

@@ -53,6 +53,36 @@ def test_forget_hard_purges(service):
     assert service._store.get(a) is None
 
 
+def test_remember_deduplicates_identical_content(service):
+    """Teaching the same fact twice reinforces the existing memory instead of
+    growing the index with near-identical rows."""
+    a = service.remember("friday", "The Moon is 384,400 km from Earth.",
+                         importance=0.5)
+    b = service.remember("friday", "The Moon is 384,400 km from Earth.",
+                         importance=0.7)
+    assert a == b
+    assert service.stats()["index_size"] == 1
+    row = service._store.get(a)
+    assert row["importance"] == 0.7           # reinforcement keeps the max
+    assert row["access_count"] >= 1
+
+
+def test_remember_keeps_genuinely_different_content(service):
+    a = service.remember("friday", "The Moon is 384,400 km from Earth.")
+    b = service.remember("friday", "Mars is the fourth planet from the Sun.")
+    assert a != b
+    assert service.stats()["index_size"] == 2
+
+
+def test_amend_with_identical_content_is_a_noop(service):
+    """Dedup must never let an amend supersede the memory with ITSELF."""
+    old = service.remember("user", "the capital of australia is canberra")
+    same = service.amend(old, "the capital of australia is canberra")
+    assert same == old
+    row = service._store.get(old)
+    assert not row["deleted"] and row["superseded_by"] is None
+
+
 def test_amend_supersedes_with_lineage(service):
     old = service.remember("user", "the capital of australia is sydney")
     new = service.amend(old, "the capital of australia is canberra")

@@ -87,6 +87,57 @@ def test_unit_brain_understands_target_first_phrasing(prompt, contains):
     assert answer is not None and contains in answer
 
 
+def test_date_math_brain_in_n_days():
+    from datetime import date, timedelta
+
+    from core.intelligence.mini_brains import DateMathBrain
+    brain = DateMathBrain()
+    assert brain.claim("what day is it in 10 days") > 0.6
+    expected = (date.today() + timedelta(days=10)).strftime("%A, %B %d, %Y")
+    assert expected in brain.answer("what day is it in 10 days")
+    expected = (date.today() + timedelta(days=14)).strftime("%A, %B %d, %Y")
+    assert expected in brain.answer("what date will it be in 2 weeks?")
+
+
+def test_date_math_brain_days_until():
+    from datetime import date
+
+    from core.intelligence.mini_brains import DateMathBrain
+    brain = DateMathBrain()
+    answer = brain.answer("how many days until December 25?")
+    assert answer is not None
+    target = date(date.today().year, 12, 25)
+    if target < date.today():
+        target = date(date.today().year + 1, 12, 25)
+    assert str((target - date.today()).days) in answer
+
+
+def test_date_math_brain_weekday_of_a_date():
+    from core.intelligence.mini_brains import DateMathBrain
+    brain = DateMathBrain()
+    answer = brain.answer("what day of the week is March 3 2027?")
+    assert answer is not None and "Wednesday" in answer   # 2027-03-03 is a Wednesday
+
+
+def test_date_math_brain_refuses_ambiguity():
+    from core.intelligence.mini_brains import DateMathBrain
+    brain = DateMathBrain()
+    assert brain.claim("how many days until the deadline") == 0.0   # no real date
+    assert brain.answer("how many days until February 30") is None  # not a date
+
+
+def test_clock_brain_still_owns_the_plain_question():
+    """"what day is it" is ClockBrain's; "what day is it in 10 days" is
+    DateMathBrain's — the claims must not shadow each other."""
+    from core.intelligence.mini_brains import DateMathBrain
+    assert ClockBrain().claim("what day is it?") > 0.6
+    assert ClockBrain().claim("what day is it in 10 days") == 0.0
+    assert DateMathBrain().claim("what day is it in 10 days") > 0.6
+    cortex = MiniBrainCortex()
+    hit = cortex.try_answer("what day is it in 10 days")
+    assert hit is not None and hit.brain == "datemath"
+
+
 def test_clock_brain_date_phrasings():
     brain = ClockBrain()
     for prompt in ("what date is it", "what date is it today", "what's the date"):

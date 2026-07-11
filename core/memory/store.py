@@ -160,6 +160,12 @@ class MemoryStore:
         c.execute("UPDATE memories SET tier=? WHERE id=?", (tier, mem_id))
         c.commit()
 
+    def update_importance(self, mem_id: int, importance: float) -> None:
+        c = self._conn()
+        c.execute("UPDATE memories SET importance=? WHERE id=?",
+                  (float(importance), mem_id))
+        c.commit()
+
     def soft_delete(self, mem_id: int) -> None:
         c = self._conn()
         c.execute("UPDATE memories SET deleted=1 WHERE id=?", (mem_id,))
