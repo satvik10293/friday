@@ -171,6 +171,37 @@ def test_private_memories_never_reach_the_teacher():
     assert facts == ["FRIDAY runs on Windows"]
 
 
+def test_the_flywheel_taught_once_answered_locally_next_time(tmp_path):
+    """The M30 acceptance criterion, end to end over the REAL stack: weak
+    local answer → teacher consulted → answer learned into One Memory → the
+    SAME question is answered locally next time, teacher asked exactly once.
+    (Broken until M36: the execution cache keyed on context key-names only,
+    so the second turn was served the stale pre-learning 'I don't know'.)"""
+    from core.intelligence.service import IntelligenceOS
+    from core.intelligence.store import IntelligenceStore
+    from core.memory import HashingEmbedder, MemoryService, MemoryStore
+
+    memory = MemoryService(store=MemoryStore(tmp_path / "mem.db"),
+                           embedder=HashingEmbedder())
+    ios = IntelligenceOS(store=IntelligenceStore(":memory:"),
+                         memory_service=memory)
+    teacher = _FakeTeacher()
+    bridge = ConversationBridge(ios, decision_log=_Log(), teacher=teacher,
+                                memory=memory,
+                                speech=_SpeechOutput(synthesizer=lambda t: None),
+                                speak_answers=False)
+
+    first = bridge.think("what is the capital of France?")
+    assert teacher.asked == ["what is the capital of France?"]
+    assert "Paris" in first.answer
+
+    second = bridge.think("what is the capital of France?")
+    assert "Paris" in second.answer
+    assert len(teacher.asked) == 1, \
+        "teacher consulted again for a taught question — flywheel broken"
+    assert "groq_teacher" not in bridge._decision_log.rows[-1]["route"]
+
+
 def test_taught_answers_are_stored_with_the_question_as_topic():
     teacher = _FakeTeacher()
     memory = _Memory()
