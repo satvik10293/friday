@@ -81,11 +81,11 @@
       "vision": "cpu"
     },
     "measured": {
-      "cpu": 116.25,
+      "cpu": 139.83,
       "speedup": 0.0
     },
     "detected": [],
-    "measured_at": 1783870303.9623418,
+    "measured_at": 1783872406.4830704,
     "version": 1
   }
 }
