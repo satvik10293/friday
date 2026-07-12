@@ -61,17 +61,44 @@ def create_venv(venv_dir: Path = _VENV) -> bool:
     return venv_ready(venv_dir)
 
 
-def install_dependencies(venv_dir: Path = _VENV, *, root: Path = _ROOT) -> bool:
-    """Install the pinned requirements into the venv. Returns success."""
+# PyTorch wheel index per flavor. "cpu" uses PyPI's default wheel (which also
+# carries MPS on macOS arm64); "cuda" pulls the CUDA 12.4 build so the M35
+# device wizard has a GPU-capable torch to MEASURE on first boot — without
+# this, torch.cuda.is_available() is always False and every machine
+# classifies cpu_only regardless of hardware.
+_TORCH_INDEXES = {"cuda": "https://download.pytorch.org/whl/cu124"}
+
+
+def _torch_flavor() -> str:
+    flavor = os.environ.get("FRIDAY_TORCH", "cpu").strip().lower()
+    return flavor if flavor in ("cpu", *_TORCH_INDEXES) else "cpu"
+
+
+def install_dependencies(venv_dir: Path = _VENV, *, root: Path = _ROOT,
+                         torch_flavor: Optional[str] = None) -> bool:
+    """Install the pinned requirements into the venv. Returns success.
+
+    torch_flavor ("cpu" | "cuda", default env FRIDAY_TORCH) picks the torch
+    build: for "cuda" torch is installed FIRST from the CUDA index, so the
+    requirements pass sees it satisfied and doesn't replace it with CPU torch."""
     req = root / "requirements.txt"
     if not req.exists():
         print("[bootstrap] requirements.txt missing; skipping dependency install")
         return True
     py = _venv_python(venv_dir)
+    flavor = torch_flavor or _torch_flavor()
     print("[bootstrap] installing dependencies (first run can take several minutes) ...")
     try:
         subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"],
                        check=False)
+        if flavor in _TORCH_INDEXES:
+            print(f"[bootstrap] installing torch ({flavor}) ...")
+            gpu_torch = subprocess.run(
+                [str(py), "-m", "pip", "install", "torch",
+                 "--index-url", _TORCH_INDEXES[flavor]])
+            if gpu_torch.returncode != 0:
+                print(f"[bootstrap] {flavor} torch install failed — "
+                      "falling back to the CPU build")
         proc = subprocess.run([str(py), "-m", "pip", "install", "-r", str(req)])
         return proc.returncode == 0
     except Exception as e:  # noqa: BLE001
@@ -101,12 +128,14 @@ def launch(entry: str = "launch", venv_dir: Path = _VENV, *, root: Path = _ROOT)
         return 1
 
 
-def provision(venv_dir: Path = _VENV, *, root: Path = _ROOT) -> bool:
+def provision(venv_dir: Path = _VENV, *, root: Path = _ROOT,
+              torch_flavor: Optional[str] = None) -> bool:
     """Ensure venv + dependencies + first-run are done. Returns whether the app is ready."""
     fresh = not venv_ready(venv_dir)
     if not create_venv(venv_dir):
         return False
-    if fresh and not install_dependencies(venv_dir, root=root):
+    if fresh and not install_dependencies(venv_dir, root=root,
+                                          torch_flavor=torch_flavor):
         print("[bootstrap] WARNING: some dependencies failed to install; "
               "FRIDAY will run degraded.")
     if fresh:
@@ -121,10 +150,12 @@ def main(argv: Optional[list] = None) -> int:
                    choices=list(_ENTRIES))
     p.add_argument("--provision-only", action="store_true")
     p.add_argument("--venv", default=str(_VENV))
+    p.add_argument("--torch", default=None, choices=["cpu", "cuda"],
+                   help="torch build to provision (default: env FRIDAY_TORCH or cpu)")
     args = p.parse_args(argv)
     venv_dir = Path(args.venv)
 
-    if not provision(venv_dir):
+    if not provision(venv_dir, torch_flavor=args.torch):
         print("[bootstrap] provisioning failed — cannot start FRIDAY")
         return 1
     if args.provision_only:
