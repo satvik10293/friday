@@ -1,0 +1,14 @@
+## Core pipeline (market data, vision, signals, backtesting)
+yfinance>=0.2.40
+pandas>=2.0
+mss>=9.0.1
+opencv-python-headless>=4.9
+numpy>=1.26
+easyocr>=1.7.1
+pytest>=8.0
+
+## Output (voice + on-screen panel; tkinter ships with Python on Windows)
+pyttsx3>=2.90        # offline text-to-speech for voice alerts
+
+## Athena portfolio dashboard (athena_dashboard.py)
+flask>=3.0
