@@ -41,13 +41,14 @@ def _retrieval_query(prompt: str, seed: Optional[dict]) -> str:
 class ContextBuilder:
     def __init__(self, *, memory_service=None, knowledge_service=None, goal_service=None,
                  user_model=None, society=None, simulation_service=None,
-                 token_budget: int = 1500) -> None:
+                 core_memory=None, token_budget: int = 1500) -> None:
         self.memory = memory_service
         self.knowledge = knowledge_service
         self.goals = goal_service
         self.user_model = user_model
         self.society = society
         self.simulations = simulation_service
+        self.core_memory = core_memory      # standing memory (M43)
         self.token_budget = token_budget
 
     def build(self, prompt: str, *, k: int = 5, seed: Optional[dict] = None) -> dict:
@@ -63,6 +64,17 @@ class ContextBuilder:
             lambda: [{"title": e.title, "content": e.content[:300], "confidence": e.confidence}
                      for e in self.knowledge.search_knowledge(query, k=k)],
             default=[]) if self.knowledge else []
+        # standing memory (M43): durable facts ride in through the knowledge
+        # channel every local model already reads — prepended, so compression
+        # (which trims lists from the tail) sheds retrieved items first
+        if self.core_memory is not None:
+            standing = safe_call("ctx.core",
+                lambda: [{"title": f"standing memory: {m['name']}",
+                          "content": (m["description"] + ". " + m["body"])[:300],
+                          "confidence": 0.9}
+                         for m in self.core_memory.relevant(query, k=3)],
+                default=[])
+            ctx["knowledge"] = standing + ctx["knowledge"]
         ctx["goals"] = safe_call("ctx.goals",
             lambda: [{"title": g.title, "status": self._status(g)}
                      for g in self.goals.list_goals()[:k]],

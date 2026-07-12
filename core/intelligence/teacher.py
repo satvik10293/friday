@@ -44,7 +44,7 @@ _SYSTEM_PROMPT = (
     "accurately in 1-3 short sentences suitable for being spoken aloud. "
     "No markdown, no lists, no preamble.")
 
-_MAX_CONTEXT_CHARS = 1200
+_MAX_CONTEXT_CHARS = 2400   # standing memory (M43) + window + facts
 
 
 def _context_block(context: Optional[dict]) -> str:
@@ -54,6 +54,10 @@ def _context_block(context: Optional[dict]) -> str:
     if not context:
         return ""
     parts: list[str] = []
+    standing = (context.get("standing") or "").strip()
+    if standing:
+        parts.append("Standing memory (durable facts the owner shared):\n"
+                     + standing)
     turns = context.get("recent_turns") or []
     if turns:
         lines = [f"{t.get('role', '?')}: {t.get('text', '')}" for t in turns[-6:]]

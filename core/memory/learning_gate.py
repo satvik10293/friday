@@ -170,8 +170,12 @@ class LearningGate:
 
     # ── application (storage / forgetting) ───────────────────────────────────────
     def apply(self, memory, decision: GateDecision, command: str,
-              answer: str = "") -> list:
-        """Execute the decision against the memory service. Returns stored ids."""
+              answer: str = "", core=None) -> list:
+        """Execute the decision against the memory service (and, for durable
+        personal facts, the core memory — the always-loaded standing layer).
+        Returns stored ids."""
+        if core is not None:
+            self._apply_core(core, decision, command, answer)
         if memory is None:
             return []
         try:
@@ -201,6 +205,32 @@ class LearningGate:
         except Exception:  # noqa: BLE001 — learning must never break a turn
             log.debug("learning gate apply failed", exc_info=True)
             return []
+
+    # a "remember that ..." prefix is command syntax, not part of the fact
+    _REMEMBER_PREFIX_RE = re.compile(
+        r"^\s*(please\s+)?(remember|memori[sz]e|note|don'?t forget|"
+        r"keep in mind|learn|save)( that| this)?[,:]?\s*", re.I)
+
+    def _apply_core(self, core, decision: GateDecision, command: str,
+                    answer: str) -> None:
+        """Durable personal facts and forget requests also hit core memory —
+        the standing layer whose index rides into every reasoning turn.
+        Same slug = same fact: repeats update instead of duplicating."""
+        try:
+            if decision.forget:
+                core.forget_matching(decision.forget_query)
+                return
+            if not decision.store or decision.reason not in (
+                    "explicit_request", "personal_info"):
+                return
+            fact = self._REMEMBER_PREFIX_RE.sub("", (command or "").strip())
+            if len(fact) < _MIN_SUBSTANTIVE_CHARS:
+                return
+            kind = "feedback" if decision.reason == "explicit_request" else "user"
+            core.save(fact, fact[:200], fact, type=kind,
+                      private=decision.private)
+        except Exception:  # noqa: BLE001 — core memory must never break a turn
+            log.debug("core memory write failed", exc_info=True)
 
     def _forget(self, memory, query: str) -> list:
         """Honour a forget request: soft-delete the closest matches."""

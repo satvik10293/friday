@@ -150,7 +150,7 @@ class ConversationBridge:
 
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
                  memory=None, self_model=None, goals=None, teacher=None,
-                 knowledge=None, reasoner=None,
+                 knowledge=None, reasoner=None, core_memory=None,
                  speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
@@ -163,6 +163,11 @@ class ConversationBridge:
         self.reasoner = reasoner            # cloud-primary basic reasoner (M42)
         from core.memory.learning_gate import LearningGate
         self.gate = LearningGate()          # selective learning (M27)
+        if core_memory is not None:
+            self.core = core_memory         # standing memory (M43)
+        else:
+            from core.memory.core_memory import get_core_memory
+            self.core = get_core_memory()
         self.speech = speech if speech is not None else _SpeechOutput()
         self.speak_answers = speak_answers
         self.clarify_threshold = clarify_threshold
@@ -383,7 +388,8 @@ class ConversationBridge:
             except Exception:  # noqa: BLE001 — grounding is best-effort
                 log.debug("memory recall for cloud pass failed", exc_info=True)
         reasoned = self.reasoner.reason(command, context={
-            "recent_turns": list(self._window), "facts": facts[:5]})
+            "recent_turns": list(self._window), "facts": facts[:5],
+            "standing": self._standing(command)})
         if not getattr(reasoned, "ok", False):
             return None, []
         from core.intelligence.router import RouterResponse
@@ -440,6 +446,15 @@ class ConversationBridge:
             log.debug("librarian learn-back failed", exc_info=True)
         return grounded
 
+    def _standing(self, command: str) -> str:
+        """The cloud-safe slice of core memory (M43): only memories explicitly
+        marked private=false may ground a cloud model."""
+        try:
+            return self.core.render_block(include_private=False, query=command)
+        except Exception:  # noqa: BLE001 — standing memory is best-effort
+            log.debug("core memory render failed", exc_info=True)
+            return ""
+
     def _teacher_context(self, reasoned_ctx: dict) -> dict:
         """Only what may leave the box: the conversation window plus memories
         NOT marked private. Anything without an explicit private=False stays
@@ -447,7 +462,8 @@ class ConversationBridge:
         facts = [m.get("content") for m in reasoned_ctx.get("memories", [])
                  if isinstance(m, dict) and m.get("private") is False
                  and (m.get("content") or "").strip()]
-        return {"recent_turns": list(self._window), "facts": facts[:5]}
+        return {"recent_turns": list(self._window), "facts": facts[:5],
+                "standing": self._standing(reasoned_ctx.get("query", ""))}
 
     def _clarify(self, turn: int, heard: float, t0: float):
         # ask once, then stay quiet: a noisy room must not become a nag loop
@@ -589,7 +605,7 @@ class ConversationBridge:
             command, answer,
             confidence=float(getattr(response, "confidence", 0.0) or 0.0),
             route=tuple(route))
-        self.gate.apply(self.memory, decision, command, answer)
+        self.gate.apply(self.memory, decision, command, answer, core=self.core)
 
         if getattr(response, "ok", False):
             self._remember_turn(command, answer)
@@ -620,6 +636,7 @@ class ConversationBridge:
                 "reasoner": self.reasoner.status() if self.reasoner
                 else {"primary": "local"},
                 "teacher": self.teacher.status() if self.teacher else {"enabled": False},
+                "core_memory": self.core.status(),
                 "learning": self.gate.status()}
 
     def close(self) -> None:

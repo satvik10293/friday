@@ -45,6 +45,7 @@ class IntelligenceOS:
     def __init__(self, store: Optional[IntelligenceStore] = None, *,
                  memory_service=None, knowledge_service=None, goal_service=None,
                  user_model=None, society=None, simulation_service=None,
+                 core_memory=None,
                  cache_capacity: int = 1024, bootstrap: bool = True,
                  discover_optional: bool = False) -> None:
         self._store = store if store is not None else IntelligenceStore()
@@ -66,7 +67,7 @@ class IntelligenceOS:
         self.context_builder = ContextBuilder(
             memory_service=memory_service, knowledge_service=knowledge_service,
             goal_service=goal_service, user_model=user_model, society=society,
-            simulation_service=simulation_service)
+            simulation_service=simulation_service, core_memory=core_memory)
         self.traces = TraceManager(self._store)
         self.planner = IntelligencePlanner(self.reasoning, society=society)
         self.reflection = ReflectionEngine(knowledge_service)

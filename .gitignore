@@ -31,6 +31,7 @@ data/codex_backups/
 data/core_backup_*/
 data/first_run.json
 data/uninstall.json
+data/core_memory/
 core/world_data/
 # Migration framework backups (M10) — regenerable snapshots
 **/migration_backups/

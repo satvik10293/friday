@@ -188,6 +188,7 @@ class StartupSequence:
         kernel = self.components.get("kernel")
         self.components["goals"] = get_goal_service()
         self.components["user_model"] = get_user_model_service()
+        from core.memory.core_memory import get_core_memory
         ios = get_intelligence_os(
             memory_service=self.components.get("memory_service") or
             (kernel.try_get("memory") if kernel is not None else None),
@@ -195,6 +196,7 @@ class StartupSequence:
             goal_service=self.components.get("goals"),
             user_model=self.components.get("user_model"),
             simulation_service=self.components.get("simulation"),
+            core_memory=get_core_memory(),         # standing memory (M43)
             discover_optional=not self.headless)   # flan-t5 when transformers is present
         self.components["intelligence"] = ios
         runtime = self.components.get("runtime")

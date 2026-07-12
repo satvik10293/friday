@@ -5,6 +5,15 @@ import pytest
 from core.runtime import Runtime
 
 
+@pytest.fixture(autouse=True)
+def _isolated_core_memory(tmp_path, monkeypatch):
+    """Standing memory (M43) is file-backed and singleton-accessed; re-root it
+    per test so bridge-based tests never write the real data/core_memory."""
+    import core.memory.core_memory as core_memory
+    monkeypatch.setattr(core_memory, "_instance",
+                        core_memory.CoreMemory(root=tmp_path / "core_memory"))
+
+
 @pytest.fixture
 def runtime():
     """A started runtime, torn down after the test."""
