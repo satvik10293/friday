@@ -21,7 +21,25 @@ Then:
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
+
+# ── SAFETY INTERLOCK ─────────────────────────────────────────────────────────
+# This script DELETES the project's source files and rewrites them from the
+# copies embedded below — copies frozen on 2026-06-21, OLDER than the current
+# modules. Running it casually would silently regress every file edited since
+# (this exact class of accident once overwrote a FRIDAY module with a setup
+# script). It refuses to run unless you explicitly opt in:
+#
+#     set TRADING_AI_REBUILD_CONFIRM=yes && python setupfile.py
+#
+if __name__ == "__main__" and os.environ.get("TRADING_AI_REBUILD_CONFIRM") != "yes":
+    sys.exit(
+        "REFUSING to run: this rebuilder would OVERWRITE the current project "
+        "source with stale 2026-06-21 copies embedded in this file.\n"
+        "If you really mean it, set TRADING_AI_REBUILD_CONFIRM=yes and re-run."
+    )
 
 PROJECT_DIR = Path(__file__).resolve().parent
 

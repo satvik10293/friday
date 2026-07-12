@@ -254,6 +254,31 @@ deployment. Repaired in place:
 **Exit (met):** new `tests/test_voice_output.py` (10) + conversation/teacher
 regressions green; full suite green.
 
+### M39 — Trading AI Perfection  (`m39-trading-ai-perfection`) ✅
+
+The vendored Athena trading assistant (`trading_ai/`, first committed
+`c5c2b0f`) got the same audit-and-repair treatment. The 2026-07-11 rebuilt
+core (signal engine, backtester, recommendation engine, outcome tracker,
+market API, voice/screen alerts) audited CLEAN — conservative, honest,
+tested (48 green). The June-21 leftovers carried real hazards, fixed in
+place:
+
+- `setupfile.py`: a one-shot rebuilder that DELETES project sources and
+  rewrites them from stale June-21 copies embedded in the file — running it
+  would silently regress every module edited since. Now refuses to run
+  without `TRADING_AI_REBUILD_CONFIRM=yes`.
+- `athena_dashboard.py`: Flask ran on `0.0.0.0` with `debug=True` — the
+  Werkzeug debug console (arbitrary code execution) and portfolio data
+  exposed to the whole LAN. Now 127.0.0.1, debug off.
+- `athena.py`: logged in to the broker, spoke, and entered an infinite mic
+  loop AT IMPORT. Everything behind `main()` now.
+- `voice.py`: initialized the SAPI COM engine at import → lazy.
+- `whatsapp_sender.py`: clear error when `DAD_PHONE` is unconfigured
+  (was a cryptic pywhatkit crash); dotenv/pywhatkit imports lazy.
+
+**Exit (met):** trading_ai suite 48 green + import-safety check; FRIDAY
+suite untouched by construction (root `testpaths=tests`).
+
 ### Live World & Truthful Independence  *(open — numbered when it lands)*
 
 1. World Model continuously fed by the Perception Hub (observations already

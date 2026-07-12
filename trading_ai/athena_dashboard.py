@@ -422,8 +422,11 @@ System Status
 
 
 if __name__ == "__main__":
+    # Localhost only, debug off: 0.0.0.0 + debug=True exposed the Werkzeug
+    # debug console (arbitrary code execution) and the portfolio data to the
+    # entire local network.
     app.run(
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=5000,
-        debug=True
+        debug=False
     )

@@ -1,90 +1,63 @@
-from voice import speak
+"""Athena — the voice-driven portfolio assistant loop.
+
+Say "portfolio" / "today" for a spoken + WhatsApp portfolio summary from the
+Angel One account; say "exit" to quit.
+
+Run it explicitly (`python athena.py`) — importing this module used to log
+in to the broker, speak, and enter an infinite microphone loop at import.
+Everything now lives behind main().
+"""
+
 from listener import listen
+from voice import speak
 from whatsapp_sender import send_message
 
-from angel_connector import AngelConnector
 
-angel = AngelConnector()
+def _handle_portfolio(angel) -> None:
+    angel.login()
+    summary = angel.create_summary()
+    print("\n" + summary)
+    speak(summary)
 
-speak("Athena portfolio assistant online.")
+    try:
+        send_message(summary)
+        speak("Portfolio update sent to WhatsApp.")
+    except Exception as e:
+        print(f"WhatsApp Error: {e}")
+        speak("Failed to send WhatsApp message.")
 
-while True:
+    # Debug: show the first raw holding
+    try:
+        holdings = angel.get_holdings()
+        if holdings and holdings.get("data"):
+            print("\nFIRST HOLDING:\n")
+            print(holdings["data"][0])
+    except Exception as e:
+        print(f"Holding Debug Error: {e}")
 
-    command = listen()
 
-    if not command:
-        continue
+def main() -> int:
+    from angel_connector import AngelConnector
 
-    command = command.lower()
+    angel = AngelConnector()
+    speak("Athena portfolio assistant online.")
 
-    if "today" in command or "portfolio" in command:
+    while True:
+        command = listen()
+        if not command:
+            continue
+        command = command.lower()
 
-        try:
-
-            angel.login()
-
-            # Generate portfolio summary
-            summary = angel.create_summary()
-
-            print("\n" + summary)
-
-            speak(summary)
-
+        if "today" in command or "portfolio" in command:
             try:
-
-                send_message(summary)
-
-                speak(
-                    "Portfolio update sent to WhatsApp."
-                )
-
+                _handle_portfolio(angel)
             except Exception as e:
+                print(f"\nPortfolio Error: {e}")
+                speak("Portfolio retrieval failed.")
+        elif "exit" in command:
+            speak("Goodbye.")
+            return 0
 
-                print(
-                    f"WhatsApp Error: {e}"
-                )
 
-                speak(
-                    "Failed to send WhatsApp message."
-                )
-
-            # Debug holdings
-            try:
-
-                holdings = angel.get_holdings()
-
-                if (
-                    holdings
-                    and holdings.get("data")
-                    and len(holdings["data"]) > 0
-                ):
-
-                    print(
-                        "\nFIRST HOLDING:\n"
-                    )
-
-                    print(
-                        holdings["data"][0]
-                    )
-
-            except Exception as e:
-
-                print(
-                    f"Holding Debug Error: {e}"
-                )
-
-        except Exception as e:
-
-            print(
-                f"\nPortfolio Error: {e}"
-            )
-
-            speak(
-                "Portfolio retrieval failed."
-            )
-
-    elif "exit" in command:
-
-        speak("Goodbye.")
-
-        break
+if __name__ == "__main__":
+    raise SystemExit(main())
