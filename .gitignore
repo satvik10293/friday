@@ -57,6 +57,7 @@ core/world_data/
 *.ckpt
 *.pkl
 *.npz
+*.npy
 # Exception: the bundled MediaPipe gesture model is a small (~7 MB) asset the
 # app needs to boot, so it stays tracked. Ignore any *other* .task weights.
 *.task

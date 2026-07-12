@@ -1,11 +1,11 @@
 {
   "stats": {
-    "total_exchanges": 48,
-    "facts_extracted": 28,
-    "concepts_learned": 0,
+    "total_exchanges": 2,
+    "facts_extracted": 6,
+    "concepts_learned": 3,
     "self_answered": 0,
-    "api_answered": 48,
-    "domains_active": 3,
+    "api_answered": 2,
+    "domains_active": 2,
     "independence_pct": 0
   },
   "domains": {
@@ -18,12 +18,7 @@
       "query_count": 1,
       "fact_count": 5,
       "confidence": 0.095
-    },
-    "python": {
-      "query_count": 1,
-      "fact_count": 3,
-      "confidence": 0.057
     }
   },
-  "updated_at": 1783151521.827285
+  "updated_at": 1783670873.9579809
 }

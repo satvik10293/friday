@@ -61,5 +61,22 @@
     "remember_position": true,
     "remember_size": true,
     "animation_quality": "high"
+  },
+  "device_plan": {
+    "tier": "cpu_only",
+    "backend": "cpu",
+    "placements": {
+      "local_models": "cpu",
+      "embeddings": "cpu",
+      "stt": "cpu",
+      "vision": "cpu"
+    },
+    "measured": {
+      "cpu": 155.54,
+      "speedup": 0.0
+    },
+    "detected": [],
+    "measured_at": 1783824919.682053,
+    "version": 1
   }
 }
