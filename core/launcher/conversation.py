@@ -145,6 +145,7 @@ class ConversationBridge:
 
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
                  memory=None, self_model=None, goals=None, teacher=None,
+                 knowledge=None,
                  speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
@@ -153,6 +154,7 @@ class ConversationBridge:
         self.self_model = self_model        # Self Model (Internal Mind, M23)
         self.goals = goals                  # GoalService (proposal gate, M28)
         self.teacher = teacher              # temporary cloud teacher (M30)
+        self.knowledge = knowledge          # M7 KnowledgeService → librarian (M40)
         from core.memory.learning_gate import LearningGate
         self.gate = LearningGate()          # selective learning (M27)
         self.speech = speech if speech is not None else _SpeechOutput()
@@ -164,6 +166,7 @@ class ConversationBridge:
         self._escalations = 0
         self._clarifications = 0
         self._teacher_turns = 0
+        self._librarian_turns = 0
         self._echoes_dropped = 0
         self._noise_dropped = 0
         self._last_clarify_ts = 0.0
@@ -344,6 +347,52 @@ class ConversationBridge:
         if (answer or "").strip():
             self._window.append({"role": "friday", "text": answer.strip()[:200]})
 
+    def _consult_librarian(self, command: str, reasoned_ctx: dict):
+        """Look the question up in the world's reference library (M7 bridge →
+        wikipedia) and ground HER OWN reader on the fetched extract. Returns a
+        confident grounded response, or None (→ the teacher gets its turn).
+
+        Personal-shaped questions never trigger a fetch — the library holds
+        world knowledge, and personal context must not leave the box."""
+        try:
+            from core.memory.learning_gate import _PERSONAL_RE
+            if _PERSONAL_RE.search(command or ""):
+                return None
+        except ImportError:
+            pass
+        try:
+            result = self.knowledge.resolve(command, allow_external=True)
+        except Exception:  # noqa: BLE001 — the librarian must never break a turn
+            log.debug("librarian lookup failed", exc_info=True)
+            return None
+        candidate = (result or {}).get("candidate")
+        if candidate is None or not (candidate.content or "").strip():
+            return None
+
+        ctx = {"query": command,
+               "memories": list(reasoned_ctx.get("memories", []) or []),
+               "knowledge": [{"title": candidate.title,
+                              "content": candidate.content,
+                              "confidence": 0.7}]}
+        try:
+            grounded = self.ios.think(command, context=ctx, build_context=False,
+                                      use_mini_brains=False)
+        except Exception:  # noqa: BLE001
+            log.debug("librarian grounding failed", exc_info=True)
+            return None
+        if not getattr(grounded, "ok", False) or \
+                float(getattr(grounded, "confidence", 0.0) or 0.0) < self.escalate_threshold:
+            return None
+
+        # the distilled extract becomes validated knowledge — the next similar
+        # question is answered locally, no network (the flywheel, with sources)
+        try:
+            self.knowledge.learn(candidate.content, title=candidate.title,
+                                 confidence=0.7, source="wikipedia")
+        except Exception:  # noqa: BLE001
+            log.debug("librarian learn-back failed", exc_info=True)
+        return grounded
+
     def _teacher_context(self, reasoned_ctx: dict) -> dict:
         """Only what may leave the box: the conversation window plus memories
         NOT marked private. Anything without an explicit private=False stays
@@ -429,12 +478,23 @@ class ConversationBridge:
                 route.append("deep_reasoning")
                 self._escalations += 1
 
-        # still unsure after both local passes → consult the temporary teacher
-        # (M30); its answer replaces hers AND is learned back into memory below,
-        # so this branch is designed to fire less and less over time
+        # still unsure after both local passes → the LIBRARIAN first (M40):
+        # fetch a real reference source (wikipedia, via the M7 documentation
+        # bridge) and let HER OWN reader answer from it — provenance over
+        # generation. Only if the library has nothing does the teacher speak.
         still_weak = (not getattr(response, "ok", False)
                       or float(getattr(response, "confidence", 0.0) or 0.0)
                       < self.escalate_threshold)
+        if still_weak and self.knowledge is not None:
+            looked_up = self._consult_librarian(command, reasoned_ctx)
+            if looked_up is not None:
+                response = looked_up
+                route.append("librarian")
+                self._librarian_turns += 1
+                still_weak = False
+
+        # (M30) temporary teacher; its answer replaces hers AND is learned back
+        # into memory below, so this branch fires less and less over time
         if still_weak and self.teacher is not None and self.teacher.available():
             taught = self.teacher.ask(command,
                                       context=self._teacher_context(reasoned_ctx))
@@ -484,6 +544,7 @@ class ConversationBridge:
                 "clarifications": self._clarifications,
                 "escalations": self._escalations,
                 "teacher_turns": self._teacher_turns,
+                "librarian_turns": self._librarian_turns,
                 "echoes_dropped": self._echoes_dropped,
                 "noise_dropped": self._noise_dropped,
                 "teacher": self.teacher.status() if self.teacher else {"enabled": False},

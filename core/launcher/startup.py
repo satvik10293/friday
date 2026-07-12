@@ -252,10 +252,17 @@ class StartupSequence:
                 teacher = get_teacher()      # None unless enabled + key present
             except Exception:  # noqa: BLE001 — the teacher is always optional
                 pass
+            knowledge = None
+            try:                             # librarian: M7 bridge + world fetcher (M40)
+                from core.knowledge.knowledge_service import get_knowledge_service
+                knowledge = get_knowledge_service()
+            except Exception:  # noqa: BLE001 — the librarian is always optional
+                pass
             bridge = ConversationBridge(
                 ios, memory=self.components.get("memory_service"),
                 self_model=self.components.get("self_model"),
-                goals=self.components.get("goals"), teacher=teacher)
+                goals=self.components.get("goals"), teacher=teacher,
+                knowledge=knowledge)
             self.components["conversation"] = bridge
             self_model = self.components.get("self_model")
             if self_model is not None:

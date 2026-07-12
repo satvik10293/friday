@@ -371,5 +371,13 @@ def get_knowledge_service() -> KnowledgeService:
     global _service
     with _svc_lock:
         if _service is None:
-            _service = KnowledgeService()
+            # activate the M7 documentation bridge with the default world
+            # fetcher (wikipedia; config-gated, None when disabled) — without
+            # a fetcher the external-knowledge path is dead code
+            try:
+                from .world_fetcher import make_world_fetcher
+                fetcher = make_world_fetcher()
+            except Exception:  # noqa: BLE001 — offline construction must never fail
+                fetcher = None
+            _service = KnowledgeService(fetcher=fetcher)
     return _service

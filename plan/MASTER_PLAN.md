@@ -279,6 +279,34 @@ place:
 **Exit (met):** trading_ai suite 48 green + import-safety check; FRIDAY
 suite untouched by construction (root `testpaths=tests`).
 
+### M40 — The Librarian  (`m40-librarian`) ✅ *(Satvik: "best way to give her knowledge about the world")*
+
+Finding: the M7 `DocumentationService` was designed as the ONLY sanctioned
+bridge to external world knowledge (local-first, last resort, summarize
+before storing, never whole pages) — but its injected `fetcher` was never
+provided by any caller, so the entire external path was dead code. World
+knowledge came only from Satvik, Groq generation, and PDFs.
+
+The change — provenance over generation:
+
+- `core/knowledge/world_fetcher.py`: wikipedia REST summary fetcher —
+  keyless, config-gated (`librarian.enabled`, default on), never raises,
+  only the distilled TOPIC leaves the box. `get_knowledge_service()` now
+  injects it, activating the M7 bridge exactly as designed.
+- Conversation escalation chain (in order): local → deeper local →
+  **librarian** → Groq teacher. The librarian fetches a real reference
+  extract and grounds HER OWN reader (the M37 grounded-QA path) on it; an
+  unconvincing grounding is discarded, not spoken. Personal-shaped
+  questions never trigger a fetch. Route shows `librarian`;
+  `librarian_turns` in status.
+- Flywheel with sources: the distilled extract is stored through the
+  validated knowledge API (`source="wikipedia"`) — the next similar
+  question is answered locally, no network.
+
+**Exit (met):** `tests/test_librarian.py` (11, no network) + teacher/
+conversation/knowledge regressions green; live fetcher check returns the
+Moon summary end-to-end.
+
 ### Live World & Truthful Independence  *(open — numbered when it lands)*
 
 1. World Model continuously fed by the Perception Hub (observations already
