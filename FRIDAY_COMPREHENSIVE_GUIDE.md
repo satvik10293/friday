@@ -45,11 +45,18 @@ Friday 3.0 combines:
 
 ## Quick Start
 
+**Official installer (recommended):** run `FRIDAY-Setup-<version>-<os>-<arch>.exe` —
+it identifies the OS, grades the GPU (best / good / average / entry), recommends the
+best FRIDAY edition, installs (CUDA torch when the GPU earns it), and launches. Build it
+with `python -m deploy.setup.build_setup`. Only Python ≥ 3.10 is required beforehand.
+
 ```powershell
-python setup.py                 # one-time: install deps (or: pip install -r requirements.txt)
+# from source
+python deploy/bootstrap.py      # provision an isolated .venv, then launch (any OS)
 # add your API keys to .env      (GROQ_API_KEY / GEMINI_API_KEY / OPENAI_API_KEY)
-python friday_spine.py          # voice mode (full boot)
+python friday_launch.py         # production launcher: ordered startup + health report
 python friday_app.py            # desktop UI — cinematic HUD in a native window (no browser)
+python friday_spine.py          # voice mode (full boot)
 python -m core.io.friday_face   # HUD backend only (127.0.0.1:7862); friday_app.py wraps it
 ```
 

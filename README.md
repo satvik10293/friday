@@ -12,13 +12,28 @@ LLMs are an optional fallback, not a dependency.
 
 ## Quick start
 
+**The official installer (recommended)** — one file; double-click and FRIDAY installs
+and runs:
+
 ```bash
-# Install (RC1) ──────────────────────────────────────────────────────────────
-Install-FRIDAY.bat              # Windows: full installer (copy + venv + shortcuts)
+FRIDAY-Setup-<version>-<os>-<arch>.exe   # identifies your OS, grades your GPU
+                                         # (best / good / average / entry), recommends
+                                         # the best FRIDAY edition, installs, launches
+FRIDAY-Setup.exe --detect                # just show the machine report + recommendation
+FRIDAY-Setup.exe --yes                   # install with no questions
+```
+
+It detects NVIDIA GPUs *before* anything is installed and provisions the CUDA build of
+torch when the GPU earns it, so the first-boot device wizard can measure the GPU and
+place models on it. Requires only Python ≥ 3.10 on the machine. Build the binary for
+any OS from this tree with `python -m deploy.setup.build_setup` (produces the native
+installer for the OS it runs on → `dist/FRIDAY-Setup-<tag>-<os>-<arch>[.exe]`).
+
+```bash
+# From source ────────────────────────────────────────────────────────────────
 python deploy/bootstrap.py      # any OS: provision an isolated .venv, then launch
-# ── or set up manually ──
-python -m deploy.install        # one-time installer (deps, config, optional Groq key)
-# (or: python setup.py)         # install dependencies only
+python deploy/bootstrap.py --torch cuda   # ...with the CUDA torch build
+Install-FRIDAY.bat              # Windows scripted install (copy + venv + shortcuts)
 
 # Run ────────────────────────────────────────────────────────────────────────
 Launch-FRIDAY.bat               # Windows: start via the provisioned venv
@@ -29,15 +44,15 @@ python friday_spine.py          # full voice-mode boot
 # Operate ────────────────────────────────────────────────────────────────────
 python -m core.launcher.first_run     # first-run wizard (devices + key + config)
 python -m core.launcher.diagnostics   # diagnostics screen (--gui / --json)
-python -m deploy.rc                    # build the Release Candidate into dist/
-python -m pytest -q                    # run the test suite
+python -m deploy.setup.build_setup    # build the official one-file installer
+python -m deploy.rc                   # build the Release Candidate into dist/
+python -m pytest -q                   # run the test suite
 ```
 
-The first **installable** build is **Release Candidate 1** (`0.20.0-rc1`) — see
-`docs/RC1_RELEASE.md`. FRIDAY ships as source + a self-provisioning bootstrap (it creates
-its own `.venv` on first run); a native `Setup.exe` can be compiled via
-`deploy/windows/friday.iss` (Inno Setup). The installed app uses the standard launcher
-and keeps the heavy runtime Python-source based for reliability.
+The current build is **`0.20.0-rc1`** — see `docs/RC1_RELEASE.md`. FRIDAY ships as
+source + a self-provisioning bootstrap (it creates its own `.venv` on first run); the
+official one-file installer embeds that same verified source package as its payload, so
+the heavy runtime stays Python-source based for reliability.
 
 ---
 
