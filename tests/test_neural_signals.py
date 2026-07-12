@@ -76,16 +76,40 @@ def sovereign_spy(monkeypatch):
 
 # ── last_answer_source ─────────────────────────────────────────────────────────
 
-def test_local_answer_sets_source(monkeypatch):
+def test_local_answer_sets_source_when_cloud_is_down(monkeypatch):
+    """M42: the basic reasoner is the cloud — local answers (and sets the
+    truthful 'local' source) only when every endpoint fails."""
     monkeypatch.setattr(neural, "_try_local", lambda q: "local knowledge answer")
     monkeypatch.setattr(neural, "_emit_notice", lambda m: None)
     monkeypatch.setattr(neural, "_record_turn", lambda *a: None)
+    monkeypatch.setattr(neural, "_ENDPOINTS",
+                        [SimpleNamespace(name="groq_primary", priority=1)])
+
+    def _down(ep, *a, **k):
+        raise RuntimeError("endpoint down")
+    monkeypatch.setattr(neural, "_call_endpoint", _down)
 
     out = neural.think("what is FAISS?", allow_local=True)
 
     assert out == "local knowledge answer"
     assert neural.last_answer_source() == "local"
     assert neural.last_answer_was_local()
+
+
+def test_cloud_preempts_a_confident_local_answer(monkeypatch):
+    """M42: a confident local answer no longer short-circuits the chain."""
+    monkeypatch.setattr(neural, "_try_local", lambda q: "local knowledge answer")
+    monkeypatch.setattr(neural, "_emit_notice", lambda m: None)
+    monkeypatch.setattr(neural, "_record_turn", lambda *a: None)
+    monkeypatch.setattr(neural, "_maybe_learn", lambda *a: None)
+    monkeypatch.setattr(neural, "_ENDPOINTS",
+                        [SimpleNamespace(name="groq_primary", priority=1)])
+    monkeypatch.setattr(neural, "_call_endpoint", lambda ep, *a, **k: "cloud answer")
+
+    out = neural.think("what is FAISS?", allow_local=True)
+
+    assert out == "cloud answer"
+    assert neural.last_answer_source() == "cloud:groq_primary"
 
 
 def test_cloud_answer_sets_source(monkeypatch):

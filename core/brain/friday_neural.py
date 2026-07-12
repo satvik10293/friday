@@ -204,7 +204,12 @@ def _call_openai_compat(
             raise RuntimeError(f"Model decommissioned on {endpoint.name}: {resp.text[:100]}")
         raise RuntimeError(f"API error {resp.status_code} on {endpoint.name}: {resp.text[:200]}")
 
-    return resp.json()["choices"][0]["message"]["content"].strip()
+    text = (resp.json()["choices"][0]["message"]["content"] or "").strip()
+    if not text:
+        # Reasoning models (gpt-oss) can burn the whole token budget thinking;
+        # an empty answer must fall through to the next endpoint, not be spoken.
+        raise RuntimeError(f"Empty completion from {endpoint.name}")
+    return text
 
 
 def _call_gemini(
@@ -339,22 +344,14 @@ def think(
     Friday's master reasoning function.
     Routes through the API chain. Never fails silently.
 
-    If allow_local is set, the on-device retrieval QA (friday_local) is tried
-    first and used when it's confident — Groq/Gemini/OpenAI are the fallback.
+    The basic reasoner is the CLOUD (M42, owner-directed): Groq → Gemini →
+    OpenAI answer first. If allow_local is set, the on-device retrieval QA
+    (friday_local) is the terminal fallback when every endpoint is down, and
+    substantive cloud answers are learned back into the vault.
     """
     global _history
 
     _set_answer_source("unknown")
-
-    # ── Local-first: answer from Friday's own knowledge before hitting the cloud.
-    if allow_local and not force_endpoint:
-        local_resp = _try_local(user_input)
-        if local_resp:
-            log.info("✓ local_qa answered (cloud skipped)")
-            _set_answer_source("local")
-            _emit_notice("Answered locally")
-            _record_turn(user_input, local_resp)
-            return local_resp
 
     full_system = _build_full_system(system)
 
@@ -392,6 +389,17 @@ def think(
         except Exception as e:
             last_error = e
             log.warning("✗ %s failed: %s — trying next", ep.name, e)
+
+    # ── Offline fallback: every endpoint failed — answer from her own
+    # knowledge (retrieval + local reader) rather than failing the turn.
+    if response is None and allow_local and not force_endpoint:
+        local_resp = _try_local(user_input)
+        if local_resp:
+            log.info("✓ local_qa answered (all cloud endpoints down)")
+            _set_answer_source("local")
+            _emit_notice("Answered locally (offline)")
+            _record_turn(user_input, local_resp)
+            return local_resp
 
     if response is None:
         raise RuntimeError(f"All API endpoints exhausted. Last error: {last_error}")
@@ -482,7 +490,7 @@ def think_with_context(
         context     = merged_context,
         temperature = temperature,
         max_tokens  = max_tokens,
-        allow_local = True,      # local-first: answer from her own knowledge if confident
+        allow_local = True,      # offline fallback + learn cloud answers into the vault
     )
 
     # 6b. Visual answer — open a map / news / images / weather view when the

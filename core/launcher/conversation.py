@@ -6,14 +6,19 @@ intelligence protocol (`think(command, context)`), delegates to the Intelligence
 OS, records one DecisionLog row per voice turn, and speaks the answer aloud —
 without ever blocking the real-time audio thread.
 
-Uncertainty rules (docs/FRIDAY_5X_COGNITIVE_EVOLUTION.md §6):
+Routing (M42, owner-directed): the BASIC REASONER IS THE CLOUD. Substantive,
+non-personal questions go to a frontier model first (`cloud_reasoner`),
+grounded in the conversation window plus privacy-filtered local memories.
+Personal-shaped questions never leave the box, and the full local chain
+remains the fallback whenever the cloud is off, keyless, or unreachable:
+
+Uncertainty rules for the local chain (docs/FRIDAY_5X_COGNITIVE_EVOLUTION.md §6):
   · heard badly  → ask for clarification instead of guessing
   · thought badly → think harder locally (a second, collaborative reasoning
     pass over the local model team), visible in the DecisionLog route
-  · still unsure → the temporary teacher (M30): an owner-enabled, config-gated
-    cloud consult whose answer is learned back into memory so the next similar
-    question is answered locally — the teacher tier is scaffolding that is
-    meant to fall out of use, and every consult shows in the route
+  · still unsure → the librarian (M40), then the teacher (M30): a config-gated
+    cloud consult whose answer is learned back into memory — skipped when the
+    cloud reasoner already failed this turn (same infrastructure)
 
 Speech is interruptible: sentences are spoken one at a time and barge-in
 (the user starting to speak) stops FRIDAY mid-answer.
@@ -145,7 +150,7 @@ class ConversationBridge:
 
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
                  memory=None, self_model=None, goals=None, teacher=None,
-                 knowledge=None,
+                 knowledge=None, reasoner=None,
                  speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
@@ -155,6 +160,7 @@ class ConversationBridge:
         self.goals = goals                  # GoalService (proposal gate, M28)
         self.teacher = teacher              # temporary cloud teacher (M30)
         self.knowledge = knowledge          # M7 KnowledgeService → librarian (M40)
+        self.reasoner = reasoner            # cloud-primary basic reasoner (M42)
         from core.memory.learning_gate import LearningGate
         self.gate = LearningGate()          # selective learning (M27)
         self.speech = speech if speech is not None else _SpeechOutput()
@@ -167,6 +173,7 @@ class ConversationBridge:
         self._clarifications = 0
         self._teacher_turns = 0
         self._librarian_turns = 0
+        self._cloud_turns = 0
         self._echoes_dropped = 0
         self._noise_dropped = 0
         self._last_clarify_ts = 0.0
@@ -347,6 +354,46 @@ class ConversationBridge:
         if (answer or "").strip():
             self._window.append({"role": "friday", "text": answer.strip()[:200]})
 
+    @staticmethod
+    def _is_personal(command: str) -> bool:
+        """Personal-shaped questions are answered locally — their answers live
+        in local (often private) memory and must not leave the box. Shares the
+        librarian's pattern so 'personal' means one thing everywhere."""
+        try:
+            from core.memory.learning_gate import _PERSONAL_RE
+        except ImportError:
+            return False
+        return bool(_PERSONAL_RE.search(command or ""))
+
+    def _cloud_pass(self, command: str):
+        """(M42) The basic reasoner: one cloud turn grounded in the
+        conversation window plus privacy-filtered local memories. Returns
+        (RouterResponse, memory_used_ids) on success, (None, []) otherwise —
+        the local chain then runs exactly as before."""
+        facts: list[str] = []
+        memory_used: list = []
+        if self.memory is not None:
+            try:
+                for m in self.memory.recall(command, k=6):
+                    if isinstance(m, dict) and m.get("private") is False \
+                            and (m.get("content") or "").strip():
+                        facts.append(m["content"])
+                        if m.get("id") is not None:
+                            memory_used.append(m["id"])
+            except Exception:  # noqa: BLE001 — grounding is best-effort
+                log.debug("memory recall for cloud pass failed", exc_info=True)
+        reasoned = self.reasoner.reason(command, context={
+            "recent_turns": list(self._window), "facts": facts[:5]})
+        if not getattr(reasoned, "ok", False):
+            return None, []
+        from core.intelligence.router import RouterResponse
+        response = RouterResponse(
+            task="general", complexity="cloud", strategy="cloud_reasoner",
+            ok=True, answer=reasoned.answer, confidence=0.9,
+            models_used=[f"groq:{reasoned.model}"],
+            latency_ms=reasoned.latency_ms)
+        return response, memory_used
+
     def _consult_librarian(self, command: str, reasoned_ctx: dict):
         """Look the question up in the world's reference library (M7 bridge →
         wikipedia) and ground HER OWN reader on the fetched extract. Returns a
@@ -450,64 +497,86 @@ class ConversationBridge:
 
         # the conversation window rides along so follow-ups have an anchor
         ctx["recent_turns"] = list(self._window)
-        response = self.ios.think(command, context=ctx)
-        route = [getattr(response, "strategy", "") or "intelligence_os"]
 
-        # provenance comes from the context the models actually reasoned over —
-        # a single retrieval per turn serves reasoning, the DecisionLog, and
-        # any escalation pass below
-        reasoned_ctx = dict(getattr(response, "context_used", None) or ctx)
-        memory_used = [m.get("id") for m in reasoned_ctx.get("memories", [])
-                       if isinstance(m, dict) and m.get("id") is not None]
+        # (M42) the BASIC REASONER IS THE CLOUD: substantive, non-personal
+        # questions ask a frontier model first, grounded in the window plus
+        # privacy-filtered memories. Personal questions stay local, and a
+        # cloud failure falls through to the full local chain below.
+        response = None
+        route: list = []
+        memory_used: list = []
+        cloud_tried = False
+        if self.reasoner is not None and self.reasoner.available() \
+                and not self._is_personal(command):
+            cloud_tried = True
+            response, memory_used = self._cloud_pass(command)
+            if response is not None:
+                route.append("cloud_reasoner")
+                self._cloud_turns += 1
 
-        # thought badly → think harder, still locally: a second, collaborative
-        # pass over the local model team (visible in the route), reasoning over
-        # the SAME retrieved memories/knowledge as the first pass
-        weak = (not getattr(response, "ok", False)
-                or float(getattr(response, "confidence", 0.0) or 0.0) < self.escalate_threshold)
-        if weak:
-            try:
-                deeper = self.ios.think(command, context=reasoned_ctx,
-                                        collaborate=True, build_context=False)
-            except Exception:  # noqa: BLE001 — the first answer still stands
-                deeper = None
-            if deeper is not None and getattr(deeper, "ok", False) and \
-                    float(getattr(deeper, "confidence", 0.0) or 0.0) > \
-                    float(getattr(response, "confidence", 0.0) or 0.0):
-                response = deeper
-                route.append("deep_reasoning")
-                self._escalations += 1
+        if response is None:
+            response = self.ios.think(command, context=ctx)
+            route.append(getattr(response, "strategy", "") or "intelligence_os")
 
-        # still unsure after both local passes → the LIBRARIAN first (M40):
-        # fetch a real reference source (wikipedia, via the M7 documentation
-        # bridge) and let HER OWN reader answer from it — provenance over
-        # generation. Only if the library has nothing does the teacher speak.
-        still_weak = (not getattr(response, "ok", False)
-                      or float(getattr(response, "confidence", 0.0) or 0.0)
-                      < self.escalate_threshold)
-        if still_weak and self.knowledge is not None:
-            looked_up = self._consult_librarian(command, reasoned_ctx)
-            if looked_up is not None:
-                response = looked_up
-                route.append("librarian")
-                self._librarian_turns += 1
-                still_weak = False
+            # provenance comes from the context the models actually reasoned
+            # over — a single retrieval per turn serves reasoning, the
+            # DecisionLog, and any escalation pass below
+            reasoned_ctx = dict(getattr(response, "context_used", None) or ctx)
+            memory_used = [m.get("id") for m in reasoned_ctx.get("memories", [])
+                           if isinstance(m, dict) and m.get("id") is not None]
 
-        # (M30) temporary teacher; its answer replaces hers AND is learned back
-        # into memory below, so this branch fires less and less over time
-        if still_weak and self.teacher is not None and self.teacher.available():
-            taught = self.teacher.ask(command,
-                                      context=self._teacher_context(reasoned_ctx))
-            if taught.ok:
-                from core.intelligence.router import RouterResponse
-                response = RouterResponse(
-                    task=getattr(response, "task", "general") or "general",
-                    complexity="taught", strategy="groq_teacher", ok=True,
-                    answer=taught.answer, confidence=0.85,
-                    models_used=[f"groq:{taught.model}"],
-                    latency_ms=taught.latency_ms)
-                route.append("groq_teacher")
-                self._teacher_turns += 1
+            # thought badly → think harder, still locally: a second,
+            # collaborative pass over the local model team (visible in the
+            # route), reasoning over the SAME retrieved memories/knowledge
+            weak = (not getattr(response, "ok", False)
+                    or float(getattr(response, "confidence", 0.0) or 0.0)
+                    < self.escalate_threshold)
+            if weak:
+                try:
+                    deeper = self.ios.think(command, context=reasoned_ctx,
+                                            collaborate=True, build_context=False)
+                except Exception:  # noqa: BLE001 — the first answer still stands
+                    deeper = None
+                if deeper is not None and getattr(deeper, "ok", False) and \
+                        float(getattr(deeper, "confidence", 0.0) or 0.0) > \
+                        float(getattr(response, "confidence", 0.0) or 0.0):
+                    response = deeper
+                    route.append("deep_reasoning")
+                    self._escalations += 1
+
+            # still unsure after both local passes → the LIBRARIAN first (M40):
+            # fetch a real reference source (wikipedia, via the M7 documentation
+            # bridge) and let HER OWN reader answer from it — provenance over
+            # generation. Only if the library has nothing does the teacher speak.
+            still_weak = (not getattr(response, "ok", False)
+                          or float(getattr(response, "confidence", 0.0) or 0.0)
+                          < self.escalate_threshold)
+            if still_weak and self.knowledge is not None:
+                looked_up = self._consult_librarian(command, reasoned_ctx)
+                if looked_up is not None:
+                    response = looked_up
+                    route.append("librarian")
+                    self._librarian_turns += 1
+                    still_weak = False
+
+            # (M30) temporary teacher; its answer replaces hers AND is learned
+            # back into memory below. Skipped when the cloud reasoner already
+            # failed this turn — it is the same infrastructure, and a second
+            # timeout would only add dead air.
+            if still_weak and not cloud_tried and self.teacher is not None \
+                    and self.teacher.available():
+                taught = self.teacher.ask(
+                    command, context=self._teacher_context(reasoned_ctx))
+                if taught.ok:
+                    from core.intelligence.router import RouterResponse
+                    response = RouterResponse(
+                        task=getattr(response, "task", "general") or "general",
+                        complexity="taught", strategy="groq_teacher", ok=True,
+                        answer=taught.answer, confidence=0.85,
+                        models_used=[f"groq:{taught.model}"],
+                        latency_ms=taught.latency_ms)
+                    route.append("groq_teacher")
+                    self._teacher_turns += 1
 
         self._record(turn=turn, route=route, response=response,
                      latency_ms=int((time.perf_counter() - t0) * 1000),
@@ -545,8 +614,11 @@ class ConversationBridge:
                 "escalations": self._escalations,
                 "teacher_turns": self._teacher_turns,
                 "librarian_turns": self._librarian_turns,
+                "cloud_turns": self._cloud_turns,
                 "echoes_dropped": self._echoes_dropped,
                 "noise_dropped": self._noise_dropped,
+                "reasoner": self.reasoner.status() if self.reasoner
+                else {"primary": "local"},
                 "teacher": self.teacher.status() if self.teacher else {"enabled": False},
                 "learning": self.gate.status()}
 

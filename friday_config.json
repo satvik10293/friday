@@ -1,6 +1,6 @@
 {
   "groq_api_key": "",
-  "groq_model": "llama-3.3-70b-versatile",
+  "groq_model": "openai/gpt-oss-120b",
   "groq_fallback_model": "llama-3.1-8b-instant",
   "gemini_api_key": "",
   "gemini_model": "gemini-2.0-flash",
@@ -22,6 +22,15 @@
     "enabled": true,
     "provider": "groq",
     "model": "llama-3.3-70b-versatile"
+  },
+  "reasoner": {
+    "primary": "cloud",
+    "model": "openai/gpt-oss-120b",
+    "fallback_models": [
+      "llama-3.3-70b-versatile",
+      "llama-3.1-8b-instant"
+    ],
+    "max_tokens": 900
   },
   "stt": {
     "model": "base",
@@ -72,11 +81,11 @@
       "vision": "cpu"
     },
     "measured": {
-      "cpu": 155.54,
+      "cpu": 116.25,
       "speedup": 0.0
     },
     "detected": [],
-    "measured_at": 1783824919.682053,
+    "measured_at": 1783870303.9623418,
     "version": 1
   }
 }

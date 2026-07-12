@@ -252,6 +252,12 @@ class StartupSequence:
                 teacher = get_teacher()      # None unless enabled + key present
             except Exception:  # noqa: BLE001 — the teacher is always optional
                 pass
+            reasoner = None
+            try:                             # cloud-primary basic reasoner (M42)
+                from core.intelligence.cloud_reasoner import get_cloud_reasoner
+                reasoner = get_cloud_reasoner()  # None unless cloud-primary + key
+            except Exception:  # noqa: BLE001 — cloud-off must never break boot
+                pass
             knowledge = None
             try:                             # librarian: M7 bridge + world fetcher (M40)
                 from core.knowledge.knowledge_service import get_knowledge_service
@@ -262,7 +268,7 @@ class StartupSequence:
                 ios, memory=self.components.get("memory_service"),
                 self_model=self.components.get("self_model"),
                 goals=self.components.get("goals"), teacher=teacher,
-                knowledge=knowledge)
+                knowledge=knowledge, reasoner=reasoner)
             self.components["conversation"] = bridge
             self_model = self.components.get("self_model")
             if self_model is not None:
