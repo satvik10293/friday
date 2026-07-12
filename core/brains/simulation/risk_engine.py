@@ -10,27 +10,30 @@ forecast + the prediction); a learned risk model can replace it via `RiskAssesso
 from __future__ import annotations
 
 from .interfaces import Forecast, Prediction, RiskScore, Scenario, SimulationRequest
-
-_DESTRUCTIVE = ("delete", "remove", "format", "overwrite", "drop", "wipe", "erase")
-_SENSITIVE = ("send", "share", "post", "upload", "email", "publish", "credential",
-              "password", "key", "token", "personal")
+from .signals import is_mitigated, signals_for
 
 
 class RiskEngine:
     def assess(self, scenario: Scenario, prediction: Prediction, forecast: Forecast,
                request: SimulationRequest) -> RiskScore:
-        action = (request.action or "").lower()
         tags = set(scenario.tags)
-        mitigated = bool(tags & {"backup", "ask_user", "dry_run", "cautious"})
+        mitigated = is_mitigated(tags)
+        sig = signals_for(request)
         reasons: list = []
 
-        destructive = any(k in action for k in _DESTRUCTIVE)
-        sensitive = any(k in action for k in _SENSITIVE)
+        destructive = sig.destructive
+        sensitive = sig.sensitive
 
         safety = 0.0
         if destructive:
             safety = 0.4 if mitigated else 0.9
             reasons.append("destructive action" + (" (mitigated)" if mitigated else ""))
+        elif sig.declared == "HIGH":
+            # the skills registry outranks keyword guessing: a declared
+            # HIGH-risk skill is never a low-risk plan without safeguards
+            safety = 0.35 if mitigated else 0.65
+            reasons.append("declared HIGH-risk skill"
+                           + (" (mitigated)" if mitigated else ""))
         privacy = security = 0.0
         if sensitive:
             privacy = 0.3 if "redact" in tags or "ask_user" in tags else 0.7

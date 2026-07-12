@@ -47,8 +47,14 @@ def _stack(**cfg):
 def test_executive_deliberates_via_simulation():
     ex, sim, _, _, _ = _stack(risk_threshold=0.7)
     decision = ex.deliberate("delete the project folder")
-    assert decision["simulated"] is True and decision["decision"] == "execute"
+    assert decision["simulated"] is True
     assert decision["chosen_plan"] in ("ask_user", "backup_then", "dry_run")
+    # coherence: if the winning plan is "confirm with the user first", the
+    # DECISION is ask_user — never "execute the plan that says to ask"
+    if decision["chosen_plan"] == "ask_user":
+        assert decision["decision"] == "ask_user"
+    else:
+        assert decision["decision"] == "execute"
     assert "simulation_id" in decision and ex.metrics()["deliberations"] == 1
 
 

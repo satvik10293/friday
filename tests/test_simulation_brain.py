@@ -52,6 +52,47 @@ def test_prediction_accuracy_prior_adjusts():
     assert c.confidence > 0.7
 
 
+# ── context-aware signals (M41): the registry outranks keyword guessing ─────────────
+def test_declared_critical_skill_is_destructive_despite_benign_title():
+    """`shell.run` with args `rm -rf` has no destructive word in its TITLE —
+    the declared tier and the args must carry the signal instead."""
+    req = _req("run shell command",
+               context={"skill": "shell.run", "risk_level": "CRITICAL",
+                        "args": {"command": "rm -rf C:/projects"}})
+    scenarios = ScenarioGenerator().generate(req)
+    names = {s.name for s in scenarios}
+    assert {"ask_user", "dry_run"} <= names          # real safeguards offered
+    immediate = next(s for s in scenarios if s.name == "immediate")
+    pred = PredictionEngine().predict(immediate, req)
+    assert pred.success_probability <= 0.6           # not scored as a harmless action
+    fc = ForecastEngine().forecast(immediate, req)
+    risk = RiskEngine().assess(immediate, pred, fc, req)
+    assert risk.safety >= 0.7 and risk.overall >= 0.5
+
+
+def test_destructive_args_alone_carry_the_signal():
+    req = _req("execute command", context={"args": {"command": "del C:\\data"}})
+    from core.brains.simulation.signals import signals_for
+    assert signals_for(req).destructive
+
+
+def test_declared_high_risk_floors_safety_without_mitigation():
+    req = _req("launch application",
+               context={"skill": "app.launch_admin", "risk_level": "HIGH"})
+    scenario = Scenario("immediate", ["launch application"], tags=["destructive"])
+    pred = PredictionEngine().predict(scenario, req)
+    fc = ForecastEngine().forecast(scenario, req)
+    risk = RiskEngine().assess(scenario, pred, fc, req)
+    assert risk.safety >= 0.6
+    assert any("HIGH" in r for r in risk.reasons)
+
+
+def test_benign_actions_stay_benign():
+    req = _req("search for python tutorials", context={"risk_level": "LOW"})
+    scenarios = ScenarioGenerator().generate(req)
+    assert {s.name for s in scenarios} == {"direct", "cautious", "deferred"}
+
+
 # ── risk engine ──────────────────────────────────────────────────────────────────────
 def test_risk_destructive_high_unless_mitigated():
     r = RiskEngine()
@@ -175,6 +216,31 @@ def test_forecast_api():
     b, _ = _brain()
     fc = b.forecast("download the dataset")
     assert fc["network"] >= 0.5 and "duration_s" in fc
+
+
+def test_simulate_critical_skill_never_recommends_immediate():
+    """The M34 integration end-to-end: a CRITICAL skill with a benign title
+    must come back either rejected or with a safeguarded plan on top."""
+    b, _ = _brain(risk_threshold=0.7)
+    res = b.simulate("run shell command",
+                     context={"skill": "shell.run", "risk_level": "CRITICAL",
+                              "args": {"command": "rm -rf C:/projects"}})
+    if not res["rejected"]:
+        rec = res["recommended"]["scenario"]
+        assert rec["name"] != "immediate"
+        assert set(rec["tags"]) & {"backup", "ask_user", "dry_run"}
+
+
+def test_history_is_bounded():
+    """A 24/7 resident brain must never leak simulation results — _by_id is
+    evicted at history_capacity (it used to grow forever)."""
+    b, _ = _brain(history_capacity=5)
+    for i in range(12):
+        b.simulate(f"compute statistics batch {i}")
+    assert b.history.stats()["tracked"] <= 5
+    # the most recent simulation is still queryable
+    recent = b.history.recent(limit=1)
+    assert recent and "batch 11" in recent[0]["action"]
 
 
 def test_side_effect_free_import_and_no_circular():

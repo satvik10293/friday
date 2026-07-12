@@ -23,8 +23,10 @@ class SimulationHistory:
         self._memory = memory_brain
         self._learning = learning
         self._predictor = predictor
+        self._capacity = max(1, int(getattr(config, "history_capacity", 500)))
         self._by_id: dict[str, object] = {}
-        self._recent: deque = deque(maxlen=getattr(config, "history_capacity", 500))
+        self._ids: deque = deque()                       # insertion order for eviction
+        self._recent: deque = deque(maxlen=self._capacity)
         self._selected: Counter = Counter()
         self._failures: Counter = Counter()
         self._lock = threading.Lock()
@@ -34,23 +36,28 @@ class SimulationHistory:
     def record(self, result) -> bool:
         with self._lock:
             self._by_id[result.simulation_id] = result
+            self._ids.append(result.simulation_id)
+            while len(self._by_id) > self._capacity:     # bounded: a 24/7 resident
+                self._by_id.pop(self._ids.popleft(), None)   # must never leak results
             self._recent.append(result.to_dict())
+            selected_count = 0
             if result.recommended is not None:
                 self._selected[result.recommended.scenario.name] += 1
-        meaningful = self._is_meaningful(result)
+                selected_count = self._selected[result.recommended.scenario.name]
+        meaningful = self._is_meaningful(result, selected_count)
         if meaningful and self.config.store_successful_simulations and self._memory is not None:
             self._persist(result)
             self._stored += 1
         return meaningful
 
-    def _is_meaningful(self, result) -> bool:
+    def _is_meaningful(self, result, selected_count: int = 0) -> bool:
         if result.rejected:
             return True                                  # rejections are worth remembering
         rec = result.recommended
         if rec is None:
             return False
         return (rec.expected_success >= 0.8 or rec.risk_level >= self.config.risk_threshold
-                or self._selected[rec.scenario.name] >= 3)   # frequently selected
+                or selected_count >= 3)                  # frequently selected
 
     def _persist(self, result) -> None:
         rec = result.recommended
@@ -72,7 +79,7 @@ class SimulationHistory:
         with self._lock:
             result = self._by_id.get(simulation_id)
         if result is None or result.recommended is None:
-            return {"error": None, "reason": "unknown simulation"}
+            return {"error": None, "known": False, "reason": "unknown simulation"}
         pred = result.recommended.prediction
         predicted = pred.success_probability if pred is not None else 0.5
         succeeded = bool(actual.get("success", actual.get("succeeded", False)))
@@ -81,8 +88,8 @@ class SimulationHistory:
         if self.config.learning_feedback:
             if self._predictor is not None and hasattr(self._predictor, "set_accuracy_prior"):
                 # nudge the prior toward calibration (lower error → higher prior)
-                self._predictor.set_accuracy_prior(0.7 * getattr(self._predictor, "_prior", 0.5)
-                                                    + 0.3 * (1.0 - error))
+                prior = getattr(self._predictor, "accuracy_prior", 0.5)
+                self._predictor.set_accuracy_prior(0.7 * prior + 0.3 * (1.0 - error))
             if self._learning is not None:
                 try:
                     self._learning.record("prediction_outcome", {

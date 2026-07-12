@@ -47,10 +47,10 @@ class DecisionEvaluator:
             prediction=prediction, forecast=forecast, risk=risk)
 
     def _policy(self, scenario: Scenario, risk: RiskScore) -> bool:
-        mitigated = bool(set(scenario.tags) & {"backup", "ask_user", "dry_run", "redact",
-                                               "cautious"})
+        from .signals import is_mitigated
         # high safety/privacy/security risk without mitigation violates policy
-        if (risk.safety >= 0.7 or risk.privacy >= 0.7 or risk.security >= 0.7) and not mitigated:
+        if (risk.safety >= 0.7 or risk.privacy >= 0.7 or risk.security >= 0.7) \
+                and not is_mitigated(scenario.tags):
             return False
         return True
 

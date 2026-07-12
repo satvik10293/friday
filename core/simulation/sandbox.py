@@ -58,18 +58,21 @@ class SimulationSandbox:
         return agent
 
     def add_goal(self, goal: VirtualGoal) -> VirtualGoal:
+        self._guard(goal)
         if not isinstance(goal, VirtualGoal):
             raise SandboxViolation("only VirtualGoal allowed")
         self._goals[goal.id] = goal
         return goal
 
     def add_knowledge(self, k: VirtualKnowledge) -> VirtualKnowledge:
+        self._guard(k)
         if not isinstance(k, VirtualKnowledge):
             raise SandboxViolation("only VirtualKnowledge allowed")
         self._knowledge[k.id] = k
         return k
 
     def add_task(self, t: VirtualTask) -> VirtualTask:
+        self._guard(t)
         if not isinstance(t, VirtualTask):
             raise SandboxViolation("only VirtualTask allowed")
         self._tasks[t.id] = t
@@ -109,8 +112,16 @@ class SimulationSandbox:
                 "done_tasks": sum(1 for t in self._tasks.values() if t.done)}
 
     def assert_isolated(self) -> bool:
-        """Sanity check: no attribute holds a production-like object."""
+        """Sanity check: no attribute — nor anything INSIDE the virtual-world
+        containers — holds a production-like object. (Checking only the
+        container dicts would always pass: dicts are primitives.)"""
         for v in vars(self).values():
             if _looks_like_production(v):
                 raise SandboxViolation("sandbox holds a production reference")
+            if isinstance(v, dict):
+                for item in v.values():
+                    if _looks_like_production(item):
+                        raise SandboxViolation(
+                            "sandbox contains a production-like object: "
+                            f"{type(item).__name__}")
         return True

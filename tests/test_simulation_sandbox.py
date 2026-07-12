@@ -33,6 +33,40 @@ def test_rejects_objects_with_db_conn():
         sb.add_agent(FakeStore())
 
 
+def test_every_gate_runs_the_production_guard():
+    """add_goal/add_knowledge/add_task must guard like add_agent does — a
+    VirtualGoal SUBCLASS smuggling a production reference passes isinstance
+    but must still be rejected."""
+    sb = SimulationSandbox("t")
+
+    class SmuggledGoal(VirtualGoal):
+        store = object()               # production marker on a virtual type
+
+    class SmuggledKnowledge(VirtualKnowledge):
+        def execute(self, *a): ...
+
+    class SmuggledTask(VirtualTask):
+        memory_service = object()
+
+    with pytest.raises(SandboxViolation):
+        sb.add_goal(SmuggledGoal(name="g"))
+    with pytest.raises(SandboxViolation):
+        sb.add_knowledge(SmuggledKnowledge(title="k"))
+    with pytest.raises(SandboxViolation):
+        sb.add_task(SmuggledTask(name="t"))
+
+
+def test_assert_isolated_inspects_container_contents():
+    """The container dicts are primitives — isolation must check what's
+    INSIDE them, not just the attributes themselves."""
+    sb = SimulationSandbox("t")
+    agent = VirtualAgent(name="a")
+    sb.add_agent(agent)
+    agent.store = object()             # contaminated after admission
+    with pytest.raises(SandboxViolation):
+        sb.assert_isolated()
+
+
 def test_only_virtual_types_admitted():
     sb = SimulationSandbox("t")
     with pytest.raises(SandboxViolation):

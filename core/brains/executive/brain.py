@@ -136,6 +136,14 @@ class ExecutiveBrain:
                     "reason": "all plans exceed the risk threshold",
                     "simulation_id": result.get("simulation_id"), "simulation": result}
         plan = recommended["scenario"]["name"]
+        # coherence: when the WINNING plan is "confirm with the user first",
+        # the decision IS ask_user — recommending confirmation and then
+        # executing autonomously anyway would make the advice meaningless
+        if "ask_user" in (recommended["scenario"].get("tags") or []):
+            return {"decision": "ask_user", "action": action, "chosen_plan": plan,
+                    "reason": "the safest viable plan is to confirm with the user first",
+                    "risk_level": recommended.get("risk_level"), "simulated": True,
+                    "simulation_id": result.get("simulation_id"), "simulation": result}
         return {"decision": "execute", "action": action, "chosen_plan": plan,
                 "expected_success": recommended.get("expected_success"),
                 "risk_level": recommended.get("risk_level"),

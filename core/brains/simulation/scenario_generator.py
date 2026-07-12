@@ -12,9 +12,7 @@ from __future__ import annotations
 from typing import Callable
 
 from .interfaces import Scenario, SimulationRequest
-
-_DESTRUCTIVE = ("delete", "remove", "format", "overwrite", "drop", "wipe", "erase")
-_EXTERNAL = ("send", "share", "post", "upload", "email", "publish")
+from .signals import signals_for
 
 
 class ScenarioGenerator:
@@ -45,18 +43,20 @@ class ScenarioGenerator:
             return [Scenario(name=str(o), steps=[str(o)], description=f"Option: {o}",
                              tags=["explicit"]) for o in request.options]
         action = (request.action or "action").strip()
-        a = action.lower()
-        if any(k in a for k in _DESTRUCTIVE):
+        sig = signals_for(request)
+        # destructive by any signal (title, args, or a declared CRITICAL tier),
+        # or declared HIGH: the candidate set must include real safeguards
+        if sig.destructive or sig.high_stakes:
             return [
                 Scenario("immediate", [action], f"{action} immediately.", ["destructive"]),
-                Scenario("backup_then", [f"back up", action],
+                Scenario("backup_then", ["back up", action],
                          f"Create a backup, then {action}.", ["destructive", "backup"]),
                 Scenario("ask_user", ["ask user for confirmation", action],
                          f"Ask the user, then {action}.", ["destructive", "ask_user"]),
                 Scenario("dry_run", [f"simulate {action}", "report"],
                          f"Dry-run {action} without committing.", ["dry_run"]),
             ]
-        if any(k in a for k in _EXTERNAL):
+        if sig.external:
             return [
                 Scenario("direct", [action], f"{action} directly.", ["external"]),
                 Scenario("redact_then", ["redact sensitive data", action],

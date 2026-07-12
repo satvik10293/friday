@@ -307,6 +307,38 @@ The change — provenance over generation:
 conversation/knowledge regressions green; live fetcher check returns the
 Moon summary end-to-end.
 
+### M41 — Simulation Perfection  (`m41-simulation-perfection`) ✅
+
+The Simulation Brain (M19) audited and repaired — five defects, two serious:
+
+1. **Context-blind risk (the hole in M34's safety net):** every pipeline
+   stage judged an action ONLY by English keywords in its title. A CRITICAL
+   skill named `shell.run` with args `{"command": "rm -rf …"}` scored as a
+   harmless generic action and deliberation waved it through. New
+   `signals.py` (single source of truth, replacing three duplicated keyword
+   tuples): signals combine the title + the Executive's DECLARED risk tier
+   (`context["risk_level"]` from the skills registry) + the skill ARGS.
+   Scenario generation, prediction, risk, and the policy gate all honor it.
+2. **Executive incoherence:** when the WINNING plan was the "ask_user"
+   scenario, `deliberate()` returned `decision: "execute"` — recommending
+   confirmation and then executing autonomously anyway. Now an "ask_user"
+   winner yields `decision: "ask_user"`.
+3. `SimulationHistory._by_id` grew forever (unbounded leak in a 24/7
+   resident) — bounded to `history_capacity` with insertion-order eviction.
+4. `_is_meaningful` read shared counters outside the lock — fixed.
+5. Predictor exposes `accuracy_prior` (history no longer pokes `_prior`);
+   `record_outcome` marks unknown simulations `known: False`.
+
+The M11 sandbox (`core/simulation/sandbox.py`) had two isolation gaps:
+only `add_agent` ran the production-marker guard (goals/knowledge/tasks
+could smuggle production references via subclasses), and
+`assert_isolated()` inspected the container dicts (always "safe" —
+primitives) instead of the objects inside them. Both fixed; both pinned.
+
+**Exit (met):** 9 new regression tests (context signals end-to-end, bounded
+history, coherence, sandbox gates) + all M19/M11/skills suites green; full
+suite green.
+
 ### Live World & Truthful Independence  *(open — numbered when it lands)*
 
 1. World Model continuously fed by the Perception Hub (observations already
