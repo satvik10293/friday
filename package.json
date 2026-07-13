@@ -1,0 +1,17 @@
+{
+  "name": "friday-setup",
+  "version": "0.20.0",
+  "description": "The official FRIDAY installer: identifies the machine, grades the GPU, recommends the best edition, installs, and launches. Node is only the delivery vehicle (npx); the installer itself is Python.",
+  "private": true,
+  "bin": {
+    "friday-setup": "deploy/npm/friday-setup.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/satvik10293/friday.git"
+  },
+  "license": "UNLICENSED"
+}

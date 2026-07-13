@@ -29,6 +29,10 @@ _ROOT = Path(__file__).resolve().parents[2]
 _DIST = _ROOT / "dist"
 _WORK = _ROOT / "build" / "friday-setup"
 
+# a stdlib-only installer freezes to ~10-15 MB; anything far beyond payload +
+# this margin means a heavy package leaked into the dependency graph
+_MAX_OVERHEAD_MB = 60
+
 _ENTRY_SOURCE = """\
 import sys
 from pathlib import Path
@@ -72,7 +76,12 @@ def build_payload() -> Path:
 
 
 def latest_payload() -> Optional[Path]:
-    zips = sorted(_DIST.glob("friday-*.zip"))
+    # strict match: source packages are friday-<version>.zip. Windows globs
+    # are case-insensitive, so a loose pattern also caught
+    # FRIDAY-Windows-Portable-Installer-*.zip — the wrong artifact.
+    import re
+    zips = sorted(p for p in _DIST.glob("friday-*.zip")
+                  if re.match(r"^friday-\d[\w.\-]*\.zip$", p.name))
     return zips[-1] if zips else None
 
 
@@ -102,6 +111,13 @@ def build_binary(payload: Path) -> Path:
     binary = _DIST / f"{name}{suffix}"
     if not binary.exists():
         raise SystemExit(f"[build-setup] expected artifact missing: {binary}")
+    size_mb = binary.stat().st_size / (1024 * 1024)
+    payload_mb = payload.stat().st_size / (1024 * 1024)
+    if size_mb > payload_mb + _MAX_OVERHEAD_MB:
+        raise SystemExit(
+            f"[build-setup] binary is {size_mb:.0f} MB for a {payload_mb:.0f} MB "
+            f"payload — a heavy package (core/torch?) leaked into the freeze. "
+            f"The installer must stay stdlib-only; check what deploy imports.")
     return binary
 
 

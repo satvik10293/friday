@@ -21,6 +21,9 @@ FRIDAY-Setup-<version>-<os>-<arch>.exe   # identifies your OS, grades your GPU
                                          # the best FRIDAY edition, installs, launches
 FRIDAY-Setup.exe --detect                # just show the machine report + recommendation
 FRIDAY-Setup.exe --yes                   # install with no questions
+
+# or, with Node installed (anyone with repo access) — same installer, npm front door:
+npx github:satvik10293/friday            # fetches the tree, finds Python, installs + runs
 ```
 
 It detects NVIDIA GPUs *before* anything is installed and provisions the CUDA build of
