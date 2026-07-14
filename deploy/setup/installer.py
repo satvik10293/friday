@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -76,7 +77,9 @@ def find_payload(source: Optional[str] = None) -> Optional[Path]:
         return zips[-1] if zips else None
     repo = Path(__file__).resolve().parents[2]
     if (repo / "friday_launch.py").exists():
-        _say("  (dev mode: building the payload from this source tree)")
+        # running from a source tree (npx download or a dev checkout):
+        # build the verified package from it on the fly
+        _say("  (building the install package from the downloaded source)")
         from deploy.build import build_package
         return Path(build_package(root=repo)["archive"])
     return None
@@ -150,6 +153,33 @@ def create_shortcuts(dest: Path) -> list[str]:
         except Exception:  # noqa: BLE001
             pass
     return created
+
+
+def create_cli_command(dest: Path) -> Optional[str]:
+    """Register a `friday` terminal command so she starts from any shell.
+    Windows: a shim in %LOCALAPPDATA%\\Microsoft\\WindowsApps (on every user's
+    PATH by default). POSIX: ~/.local/bin/friday. Best-effort."""
+    try:
+        if sys.platform.startswith("win"):
+            windows_apps = Path(os.environ.get("LOCALAPPDATA", "")) / \
+                "Microsoft" / "WindowsApps"
+            if not windows_apps.is_dir():
+                return None
+            shim = windows_apps / "friday.cmd"
+            shim.write_text("@echo off\r\n"
+                            f"\"{dest / 'Launch-FRIDAY.bat'}\" %*\r\n",
+                            encoding="ascii")
+            return str(shim)
+        bin_dir = Path.home() / ".local" / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        shim = bin_dir / "friday"
+        shim.write_text("#!/bin/sh\n"
+                        f"exec python3 \"{dest / 'deploy' / 'bootstrap.py'}\" \"$@\"\n",
+                        encoding="ascii")
+        shim.chmod(0o755)
+        return str(shim)
+    except Exception:  # noqa: BLE001 — a missing CLI shim never fails the install
+        return None
 
 
 def launch(dest: Path, python_exe: str) -> bool:
@@ -260,6 +290,9 @@ def run(argv: Optional[list] = None) -> int:
     shortcuts = create_shortcuts(plan.install_dir)
     for s in shortcuts:
         _say(f"  shortcut: {s}")
+    cli = create_cli_command(plan.install_dir)
+    if cli:
+        _say(f"  command : friday  ({cli})")
 
     _step(4, total, "Launching FRIDAY")
     if args.no_launch:
