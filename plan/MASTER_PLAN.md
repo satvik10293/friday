@@ -11,12 +11,22 @@ and the 2026-07-10 morning revision of this file.
 > layer that wraps around it, and resident autonomy. (Historical docs that say
 > "3.0 spine" or "5.x" refer to old internal numbering; this file's naming wins.)
 
-> **Prime rule (unchanged):** cognition is internal and local. External LLMs
-> are temporary teachers or fallback language tools, never the permanent
-> brain. The M30 Groq teacher is the ONLY big-model tier (Satvik, 2026-07-10:
-> no new local reasoning models — she learns from Groq for now); it is
-> retired when the learn-back flywheel makes it unnecessary — Satvik's call,
-> consult rate tracked in M36.
+> **Prime rule (destination unchanged):** cognition is internal and local.
+> External LLMs are temporary tools, never the permanent brain. **Local
+> reasoning is the destination.**
+>
+> **Bridge, not destination (Satvik, 2026-07-14):** M42 flipped the *basic
+> reasoner* to cloud-primary — gpt-oss-120b via Groq first, the local chain as
+> fallback; personal/private questions stay local (M43 boundary). This is an
+> explicit, temporary bridge for answer quality **while the flywheel matures**,
+> not a change of destination. It supersedes the earlier "M30 Groq teacher is
+> the ONLY big-model tier" framing (2026-07-10) without changing the endpoint.
+> The cloud tier is retired when the learn-back flywheel closes the quality gap
+> — the trigger is the **truthful independence metric** (open Track A item),
+> not a date. That metric is what keeps "Local Intelligence"'s ≥50%-local /
+> declining-consult-rate exit criteria the live goal rather than an abandoned
+> one. Consult rate tracked in M36; no new local reasoning *models* are added
+> — local quality rises through the flywheel.
 
 ---
 
@@ -27,10 +37,19 @@ m21–m31 complete and tagged: cutover to one boot path (m21), one memory
 context (m25), security + adversarial hardening (m26, m29), selective
 learning (m27), Groq teacher (m30), human-level listening (m31).
 
-Open gaps carried into Track A: ~35 FridayAction methods bypass the
-Executive/security/audit pipeline; World Model not yet perception-fed;
-independence not yet measured over real use; local reasoning still
-flan-t5-class; Groq teacher still on the path.
+Track A base-perfection complete and tagged: base perfection (m32),
+mini-brain fast path (m33), Executive supremacy & governed skills (m34),
+device wizard (m35), brain perfection (m36, m37), voice-layer repair (m38),
+trading-AI perfection (m39), the Librarian (m40), simulation perfection
+(m41), cloud reasoner bridge (m42), core memory (m43), official launcher
+(m44), agent perfection (m45), brain society (m46). See Section 3 for each.
+
+Open gaps carried into the two remaining Track A items: the ~35 bypassing
+FridayAction methods were governed as skills in M34; **World Model still not
+perception-fed**; **independence still not measured over real use** (now the
+top priority — it gates the M42 cloud bridge's retirement); local reasoning
+stays flan-t5-class by design (quality rises through the flywheel, not new
+models).
 
 ---
 
@@ -338,6 +357,41 @@ primitives) instead of the objects inside them. Both fixed; both pinned.
 **Exit (met):** 9 new regression tests (context signals end-to-end, bounded
 history, coherence, sandbox gates) + all M19/M11/skills suites green; full
 suite green.
+
+### M42 — Cloud Reasoner  (`m42-cloud-reasoner`) ✅ *(bridge, not destination)*
+
+The basic reasoner flipped **cloud-primary**: gpt-oss-120b via Groq first, the
+local chain as fallback; personal/private questions stay local (M43 boundary).
+An explicit, temporary bridge for answer quality while the flywheel matures —
+**not** a change of the local-is-destination charter (see the reconciled prime
+rule at the top of this file, Satvik 2026-07-14). Retirement is gated on the
+truthful independence metric, not a date.
+
+### M43 — Core Memory  (`m43-core-memory`) ✅
+
+A standing memory layer in the style of Claude Code's: markdown files + a
+`MEMORY.md` index in `data/core_memory/`, gate-written and ambient in every
+turn. Private-by-default cloud boundary — personal memories never leave the
+machine on a cloud consult.
+
+### M44 — Official Launcher  (`m44-official-launcher`, `62afc97`) ✅
+
+`deploy/setup` one-file installer: detect OS + GPU (graded best/good/average/
+entry), recommend an edition, install CUDA torch when the hardware earns it,
+package a PyInstaller exe with an embedded payload. Secrets never embedded.
+
+### M45 — Agent Perfection  (`m45-agent-perfection`, `ceb84fe`) ✅
+
+Every brain/agent audited and repaired: honest health (no more optimistic
+stubs), lazy service resolution, attention focus decay, tiered-memory RAM cap,
+the codex silent-cap bug, and the **deaf-while-thinking** pipeline fix (an
+async segment worker so the mic keeps hearing while she reasons).
+
+### M46 — Brain Society  (`m46-brain-society`, `54026e1`) ✅
+
+A brain for every module — a 12-brain society (adding knowledge / goal / voice
+/ reasoning brains), each user-addressable via the "ask the X brain" bridge
+route. Built by two parallel implementation passes.
 
 ### Live World & Truthful Independence  *(open — numbered when it lands)*
 
