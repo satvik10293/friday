@@ -150,7 +150,7 @@ class ConversationBridge:
 
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
                  memory=None, self_model=None, goals=None, teacher=None,
-                 knowledge=None, reasoner=None, core_memory=None,
+                 knowledge=None, reasoner=None, core_memory=None, brains=None,
                  speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
@@ -161,6 +161,7 @@ class ConversationBridge:
         self.teacher = teacher              # temporary cloud teacher (M30)
         self.knowledge = knowledge          # M7 KnowledgeService → librarian (M40)
         self.reasoner = reasoner            # cloud-primary basic reasoner (M42)
+        self.brains = dict(brains or {})    # addressable brain society (M46)
         from core.memory.learning_gate import LearningGate
         self.gate = LearningGate()          # selective learning (M27)
         if core_memory is not None:
@@ -297,6 +298,71 @@ class ConversationBridge:
         except Exception:  # noqa: BLE001
             log.debug("proposal handling failed", exc_info=True)
             return None
+
+    # ── addressable brain society (M46) ──────────────────────────────────────────
+    # every module has a brain, and every brain answers for itself when named:
+    # "ask the vision brain what you see" / "memory brain status" / "which
+    # brains do you have". Answers come straight from the brain's LAST report
+    # (read-only — never a fresh tick, never the cloud).
+    _BRAIN_ALIASES = {
+        "vision": "vision_brain", "audio": "audio_brain", "hearing": "audio_brain",
+        "spatial": "spatial_brain", "space": "spatial_brain",
+        "memory": "memory_brain", "learning": "learning_brain",
+        "emotion": "emotion_brain", "automation": "automation_brain",
+        "runtime": "runtime_brain", "system": "runtime_brain",
+        "knowledge": "knowledge_brain", "library": "knowledge_brain",
+        "goal": "goal_brain", "goals": "goal_brain",
+        "voice": "voice_brain", "conversation": "voice_brain",
+        "reasoning": "reasoning_brain", "reasoner": "reasoning_brain",
+        "simulation": "simulation_brain", "executive": "executive_brain",
+    }
+    _ROSTER_RE = re.compile(r"\b(which|what|list)\b.{0,24}\bbrains\b", re.I)
+    _ASK_BRAIN_RE = re.compile(
+        r"\b(" + "|".join(sorted(_BRAIN_ALIASES, key=len, reverse=True))
+        + r")\s+brain\b", re.I)
+
+    def _ask_brain(self, command: str) -> Optional[tuple]:
+        """Direct route to a named brain. Returns (route_key, answer) or None
+        (→ the normal path runs). Never raises — a broken brain still answers."""
+        q = (command or "").lower()
+        if "brain" not in q:
+            return None
+        if self.brains and self._ROSTER_RE.search(q):
+            names = sorted(n.replace("_brain", "").replace("_", " ")
+                           for n in self.brains)
+            return ("roster", f"I have {len(names)} brains online: "
+                    + ", ".join(names) + ". Ask any of them by name.")
+        m = self._ASK_BRAIN_RE.search(q)
+        if not m:
+            return None
+        alias = m.group(1)
+        key = self._BRAIN_ALIASES[alias]
+        brain = self.brains.get(key)
+        if brain is None:
+            return (key, f"My {alias} brain isn't online right now.")
+        label = key.replace("_brain", "").replace("_", " ")
+        try:
+            # READ-ONLY by design (security review): an on-demand tick() would
+            # run real side effects from an untrusted transcript (memory
+            # promotion/forgetting/consolidation) and publish a guest-timed
+            # report onto the coordinator bus. The route answers from what the
+            # brain already knows — the society's own cycle stays the only
+            # thing that ticks brains.
+            health = brain.health() if hasattr(brain, "health") else {}
+            summary = health.get("last_report") or ""
+            if not summary:
+                summary = (f"The {label} brain is {health.get('status', 'ok')}; "
+                           "nothing to report right now.")
+            if "status" in q or "health" in q:
+                metrics = brain.metrics() if hasattr(brain, "metrics") else {}
+                summary += (f" (status: {health.get('status', 'ok')}, "
+                            f"{metrics.get('ticks', 0)} ticks, "
+                            f"{metrics.get('errors', 0)} errors)")
+            return (key, summary)
+        except Exception:  # noqa: BLE001 — a faulty brain must not break the turn
+            log.debug("brain address failed: %s", key, exc_info=True)
+            return (key, f"The {label} brain is degraded and couldn't answer "
+                         "just now.")
 
     # ── keeping her own voice and room noise out of the conversation ─────────────
     _ECHO_WINDOW_S = 45.0
@@ -510,6 +576,15 @@ class ConversationBridge:
         if proposal_answer is not None:
             return self._respond_directly(turn, "goal_proposals", proposal_answer,
                                           t0, command=command)
+
+        # addressable brains (M46): a named brain answers for itself, directly.
+        # No `command=` on purpose (security review): brain answers carry
+        # sensor-derived state with no privacy marking — they must not enter
+        # the conversation window, which rides to the cloud in recent_turns.
+        asked = self._ask_brain(command)
+        if asked is not None:
+            key, answer = asked
+            return self._respond_directly(turn, f"brain:{key}", answer, t0)
 
         # the conversation window rides along so follow-ups have an anchor
         ctx["recent_turns"] = list(self._window)

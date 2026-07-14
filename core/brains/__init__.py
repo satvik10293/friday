@@ -20,22 +20,29 @@ from .automation.brain import AutomationBrain
 from .base import (CognitiveBrain, LocalMemory, SituationReport, SituationReportBus)
 from .emotion.brain import EmotionBrain
 from .executive.brain import ExecutiveBrain
+from .goals.brain import GoalBrain
+from .knowledge.brain import KnowledgeBrain
 from .learning.brain import LearningBrain
 from .memory.brain import MemoryBrain
+from .reasoning.brain import ReasoningBrain
 from .runtime.brain import RuntimeBrain
 from .spatial.brain import SpatialBrain
 from .vision.brain import VisionBrain
+from .voice.brain import VoiceBrain
 
 __all__ = [
     "CognitiveBrain", "SituationReport", "SituationReportBus", "LocalMemory",
     "VisionBrain", "AudioBrain", "SpatialBrain", "MemoryBrain", "LearningBrain",
-    "EmotionBrain", "AutomationBrain", "RuntimeBrain", "ExecutiveBrain", "build_brains",
+    "EmotionBrain", "AutomationBrain", "RuntimeBrain", "ExecutiveBrain",
+    "KnowledgeBrain", "GoalBrain", "VoiceBrain", "ReasoningBrain", "build_brains",
 ]
 
 # the sensor + support brains that follow the standard lifecycle (Executive + Memory are
-# managed separately by the Coordinator / society wiring).
+# managed separately by the Coordinator / society wiring). One brain per module (M46):
+# every subsystem has a voice in the society, and each is user-addressable by name.
 _LIFECYCLE_BRAINS = (VisionBrain, AudioBrain, SpatialBrain, LearningBrain, EmotionBrain,
-                     AutomationBrain, RuntimeBrain)
+                     AutomationBrain, RuntimeBrain, KnowledgeBrain, GoalBrain,
+                     VoiceBrain, ReasoningBrain)
 
 
 def build_brains(*, services=None, report_bus: Optional[SituationReportBus] = None,

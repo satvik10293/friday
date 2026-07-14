@@ -199,6 +199,16 @@ class StartupSequence:
             core_memory=get_core_memory(),         # standing memory (M43)
             discover_optional=not self.headless)   # flan-t5 when transformers is present
         self.components["intelligence"] = ios
+        # register the module services the M46 brains observe — the brains
+        # resolve lazily, so registering here (after the brains stage) works
+        if kernel is not None:
+            kernel.register("intelligence", ios)
+            kernel.register("goals", self.components["goals"])
+            try:
+                from core.knowledge.knowledge_service import get_knowledge_service
+                kernel.register("knowledge", get_knowledge_service())
+            except Exception:  # noqa: BLE001 — the library is always optional
+                pass
         runtime = self.components.get("runtime")
         if runtime is not None:
             ios.attach(runtime)
@@ -270,8 +280,12 @@ class StartupSequence:
                 ios, memory=self.components.get("memory_service"),
                 self_model=self.components.get("self_model"),
                 goals=self.components.get("goals"), teacher=teacher,
-                knowledge=knowledge, reasoner=reasoner)
+                knowledge=knowledge, reasoner=reasoner,
+                brains=self.components.get("brains"))   # addressable society (M46)
             self.components["conversation"] = bridge
+            kernel = self.components.get("kernel")
+            if kernel is not None:       # the M46 voice/reasoning brains observe this
+                kernel.register("conversation", bridge)
             self_model = self.components.get("self_model")
             if self_model is not None:
                 self_model._conversation = bridge
