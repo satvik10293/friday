@@ -36,6 +36,29 @@ def test_external_models_lower_independence_truthfully(tmp_path):
     assert ind["independence_pct"] == 50.0
 
 
+def test_groq_teacher_counts_as_external_not_local(tmp_path):
+    """Regression: the M30 teacher tags its model 'groq:…' and route
+    'groq_teacher' — neither matched the old 'cloud:'-only check, so a
+    teacher-answered turn was silently counted as local and overstated
+    independence. Both cloud tiers must read as external."""
+    log = _log(tmp_path)
+    log.log(models_used=["friday-reasoner"], route=["intelligence_os"])   # local
+    log.log(models_used=["groq:llama-3.1-8b"], route=["groq_teacher"])    # teacher
+    log.log(models_used=["groq:gpt-oss-120b"], route=["cloud_reasoner"])  # M42
+    ind = log.independence()
+    assert ind["total"] == 3 and ind["local_turns"] == 1
+    assert ind["independence_pct"] == 33.3
+
+
+def test_librarian_turn_stays_local(tmp_path):
+    """The Librarian fetches a reference but HER OWN reader generates the
+    answer — provenance, not an external reasoning model. It must count as
+    local (independent)."""
+    log = _log(tmp_path)
+    log.log(models_used=["friday-reasoner"], route=["intelligence_os", "librarian"])
+    assert log.independence()["independence_pct"] == 100.0
+
+
 def test_autonomous_share_is_counted(tmp_path):
     log = _log(tmp_path)
     log.log(models_used=[], route=[], was_autonomous=True)

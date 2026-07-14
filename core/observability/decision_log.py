@@ -33,6 +33,25 @@ _SCHEMA_VERSION = 1
 # Columns stored as JSON text and decoded on read.
 _JSON_FIELDS = ("route", "models_used", "skills_invoked", "goals_touched", "memory_used")
 
+# A turn "used the cloud" if an external model produced the answer. The metric
+# must stay truthful across BOTH external tiers: the M42 cloud reasoner and the
+# M30 Groq teacher each tag their model "groq:…" and route "cloud_reasoner" /
+# "groq_teacher". Keying off provider prefixes (the authoritative signal) — not
+# a fragile "cloud" route substring — stops a teacher-answered turn being
+# miscounted as local, which would silently overstate independence.
+_EXTERNAL_MODEL_PREFIXES = ("cloud:", "groq:", "openai:", "gemini:", "google:",
+                            "anthropic:")
+_EXTERNAL_ROUTE_MARKERS = ("cloud", "external", "groq", "teacher")
+
+
+def _turn_used_external(models, route) -> bool:
+    """True if any external model answered this turn (single source of truth
+    for the independence metric)."""
+    if any(str(m).lower().startswith(_EXTERNAL_MODEL_PREFIXES) for m in models):
+        return True
+    return any(any(mark in str(step).lower() for mark in _EXTERNAL_ROUTE_MARKERS)
+               for step in route)
+
 
 class DecisionLog:
     def __init__(self, path: Optional[str | Path] = None) -> None:
@@ -180,9 +199,10 @@ class DecisionLog:
         }
 
     def independence(self) -> dict:
-        """Truthful independence: the share of decisions made without any
-        external model (a model name prefixed 'cloud:' or an 'external' route).
-        Measured from real rows — never hardcoded (fixes 3.0 defect #3)."""
+        """Truthful independence: the share of decisions answered without any
+        external model. Both cloud tiers count as external — the M42 cloud
+        reasoner AND the M30 Groq teacher (see `_turn_used_external`). Measured
+        from real rows — never hardcoded (fixes 3.0 defect #3)."""
         with self._lock:
             rows = self._conn.execute(
                 "SELECT models_used, route, was_autonomous FROM decisions"
@@ -192,9 +212,7 @@ class DecisionLog:
         for r in rows:
             models = json.loads(r["models_used"] or "[]")
             route = json.loads(r["route"] or "[]")
-            external = any(str(m).startswith("cloud:") for m in models) or \
-                any("external" in str(step) or "cloud" in str(step) for step in route)
-            if not external:
+            if not _turn_used_external(models, route):
                 local += 1
             if r["was_autonomous"]:
                 autonomous += 1
