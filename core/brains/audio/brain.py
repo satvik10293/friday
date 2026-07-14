@@ -24,7 +24,8 @@ class AudioBrain(CognitiveBrain):
         self._audio = self._service("audio")
 
     def observe(self):
-        return self._audio.recent_events(limit=10) if self._audio is not None else []
+        audio = self._resolve("_audio", "audio")
+        return audio.recent_events(limit=10) if audio is not None else []
 
     def analyze(self, events):
         sounds, confs, emergency = [], [], False

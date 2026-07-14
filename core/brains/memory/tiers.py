@@ -82,12 +82,15 @@ class MemoryItem:
 
 
 class TieredMemory:
-    def __init__(self, *, working_capacity: int = 64, stale_after_s: float = 600.0) -> None:
+    def __init__(self, *, working_capacity: int = 64, stale_after_s: float = 600.0,
+                 max_items: int = 4096) -> None:
         self._items: dict[str, MemoryItem] = {}
         self._working_capacity = working_capacity
         self._stale_after = stale_after_s
+        self._max_items = max_items
         self._lock = threading.RLock()
         self._promotions = 0
+        self._evictions = 0
 
     # ── store / reinforce ────────────────────────────────────────────────────────
     def store(self, content: str, *, importance: float = 0.4, confidence: float = 0.5,
@@ -99,6 +102,7 @@ class TieredMemory:
         with self._lock:
             self._items[item.mem_id] = item
             self._enforce_working_capacity()
+            self._enforce_total_capacity()
         return item
 
     def reinforce(self, mem_id: str, *, amount: float = 1.0, confirm: bool = False) -> Optional[MemoryItem]:
@@ -192,7 +196,8 @@ class TieredMemory:
         return out
 
     def metrics(self) -> dict:
-        return {"promotions": self._promotions, **self.counts()}
+        return {"promotions": self._promotions, "evictions": self._evictions,
+                **self.counts()}
 
     # ── internals ────────────────────────────────────────────────────────────────
     def _enforce_working_capacity(self) -> None:
@@ -202,6 +207,21 @@ class TieredMemory:
         working.sort(key=lambda i: i.last_access)        # evict oldest working memories
         for i in working[: len(working) - self._working_capacity]:
             self._items.pop(i.mem_id, None)
+
+    def _enforce_total_capacity(self) -> None:
+        """Bound the WHOLE store, not just the working tier. Mid tiers used to
+        grow without limit — a 24/7 memory leak. Weakest first (lowest score),
+        never CORE and never user-confirmed; the durable backend already holds
+        anything that earned long-term persistence."""
+        excess = len(self._items) - self._max_items
+        if excess <= 0:
+            return
+        evictable = [i for i in self._items.values()
+                     if i.tier < MemoryTier.CORE and not i.user_confirmed]
+        evictable.sort(key=lambda i: (i.score(), i.last_access))
+        for i in evictable[:excess]:
+            self._items.pop(i.mem_id, None)
+            self._evictions += 1
 
 
 def _cluster(items: list) -> list:

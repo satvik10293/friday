@@ -25,14 +25,25 @@ class LearningBrain(CognitiveBrain):
         self.local.set("active_learning", False)
         self._learning = self._service("learning")
         self._counter: Counter = Counter()
+        self._seen_ts = 0.0          # watermark: only NEW experience reinforces
 
     def observe(self):
-        return self._learning.samples(limit=50) if self._learning is not None else []
+        learning = self._resolve("_learning", "learning")
+        return learning.samples(limit=50) if learning is not None else []
 
     def analyze(self, samples):
+        # count only samples newer than the watermark — recounting the same
+        # recent window every tick inflated reinforcement with tick rate, so
+        # "patterns" emerged from idleness rather than experience
         for s in samples or []:
+            ts = float(s.get("ts", 0.0) or 0.0)
+            if ts <= self._seen_ts:
+                continue
             key = f"{s.get('kind')}:{s.get('data', {}).get('category', '')}"
             self._counter[key] += 1
+        if samples:
+            self._seen_ts = max(self._seen_ts,
+                                max(float(s.get("ts", 0.0) or 0.0) for s in samples))
         return {"top": self._counter.most_common(3), "total": sum(self._counter.values())}
 
     def update_local_memory(self, analysis) -> None:

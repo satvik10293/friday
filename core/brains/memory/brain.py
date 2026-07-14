@@ -49,9 +49,10 @@ class MemoryBrain(CognitiveBrain):
 
     def recall(self, query: str, *, limit: int = 8) -> list:
         hits = self.tiers.recall(query, limit=limit)
-        if self._durable is not None and len(hits) < limit:
+        durable = self._resolve("_durable", "memory")
+        if durable is not None and len(hits) < limit:
             try:
-                for d in self._durable.recall(query, limit=limit - len(hits)):
+                for d in durable.recall(query, limit=limit - len(hits)):
                     hits.append({"content": d.get("content", ""), "tier": "long_term",
                                  "source": "durable"})
             except Exception:  # noqa: BLE001
@@ -94,17 +95,25 @@ class MemoryBrain(CognitiveBrain):
     def remember_situation(self, situation: dict) -> dict:
         """Store a unified situation + thread its entities into the knowledge graph."""
         summary = situation.get("summary") or situation.get("situation") or "situation"
-        importance = float(situation.get("priority", situation.get("importance", 0.5)))
-        confidence = float(situation.get("confidence", 0.6))
+        importance = _num(situation.get("priority", situation.get("importance", 0.5)), 0.5)
+        confidence = _num(situation.get("confidence", 0.6), 0.6)
         record = self.remember(summary, importance=importance, confidence=confidence,
                                kind="situation", metadata={"id": situation.get("id")})
         room = situation.get("location") or situation.get("room")
         if room:
             self.graph.upsert_node(NodeKind.ROOM, room)
-        for obj in situation.get("related_objects", situation.get("objects", [])):
-            self.graph.connect(NodeKind.OBJECT, obj, "in_room", NodeKind.ROOM, room or "unknown")
-        for person in situation.get("related_people", situation.get("people", [])):
-            self.graph.connect(NodeKind.PERSON, person, "in_room", NodeKind.ROOM, room or "unknown")
+        objects = situation.get("related_objects") or situation.get("objects") or []
+        people = situation.get("related_people") or situation.get("people") or []
+        for obj in objects:
+            if room:                     # no room → note the entity, skip junk edges
+                self.graph.connect(NodeKind.OBJECT, obj, "in_room", NodeKind.ROOM, room)
+            else:
+                self.graph.upsert_node(NodeKind.OBJECT, obj)
+        for person in people:
+            if room:
+                self.graph.connect(NodeKind.PERSON, person, "in_room", NodeKind.ROOM, room)
+            else:
+                self.graph.upsert_node(NodeKind.PERSON, person)
         return record
 
     # ── Cognitive Brain lifecycle (maintenance) ──────────────────────────────────
@@ -133,10 +142,11 @@ class MemoryBrain(CognitiveBrain):
 
     # ── durable backend ──────────────────────────────────────────────────────────
     def _persist(self, content: str, kind: str, metadata: Optional[dict]) -> None:
-        if self._durable is None:
+        durable = self._resolve("_durable", "memory")    # late-registered service
+        if durable is None:
             return
         try:
-            self._durable.remember(content, kind=kind, metadata=metadata or {})
+            durable.remember(content, kind=kind, metadata=metadata or {})
         except Exception:  # noqa: BLE001
             log.debug("durable persist failed", exc_info=True)
 
@@ -145,5 +155,13 @@ class MemoryBrain(CognitiveBrain):
         return {**super().metrics(), "tiers": self.tiers.metrics(), "graph": self.graph.counts()}
 
     def health(self) -> dict:
-        return {"status": "ok", "brain": self.name, "tiers": self.tiers.counts(),
+        return {"status": "ok" if self._last_tick_ok else "degraded",
+                "brain": self.name, "tiers": self.tiers.counts(),
                 "graph": self.graph.counts()}
+
+
+def _num(value, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default

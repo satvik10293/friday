@@ -29,7 +29,11 @@ class ListeningService:
                 conversation=ConversationState(window_s=conversation_window_s))
         self.pipeline = ListeningPipeline(
             microphone=microphone, intelligence_os=intelligence_os,
-            verifier=verifier, wake_required=wake_required, store_audio=store_audio)
+            verifier=verifier, wake_required=wake_required, store_audio=store_audio,
+            # production hears while she thinks: segments (whisper + cognition,
+            # seconds each) run on a worker so the frame loop keeps the mic
+            # drained and speech during processing is never dropped
+            async_segments=True)
 
     @property
     def bus(self):

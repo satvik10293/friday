@@ -22,7 +22,8 @@ class RuntimeBrain(CognitiveBrain):
         self._runtime = self._service("runtime")
 
     def observe(self):
-        events = self._runtime.recent(limit=50) if self._runtime is not None else []
+        runtime = self._resolve("_runtime", "runtime")
+        events = runtime.recent(limit=50) if runtime is not None else []
         health = {}
         if self.services is not None and hasattr(self.services, "health"):
             try:
@@ -42,11 +43,20 @@ class RuntimeBrain(CognitiveBrain):
         self.local.push("event_rate", analysis["event_count"])
 
     def generate_situation_report(self, insight) -> Optional[SituationReport]:
-        if not insight["degraded"] and self._ticks > 1:
-            return None                                  # only report on change/degradation
-        ok = not insight["degraded"]
-        summary = ("All systems nominal." if ok else
-                   f"Degraded services: {', '.join(insight['degraded'])}.")
+        # report only on CHANGE: first tick, a new/different degradation, or a
+        # recovery — the old gate spammed the same degradation every tick and
+        # never announced recovery
+        degraded = sorted(insight["degraded"])
+        previous = self.local.get("last_degraded")
+        self.local.set("last_degraded", degraded)
+        if self._ticks > 1 and degraded == previous:
+            return None
+        ok = not degraded
+        recovered = ok and bool(previous)
+        summary = ("All systems nominal again." if recovered else
+                   "All systems nominal." if ok else
+                   f"Degraded services: {', '.join(degraded)}.")
         return self._report(summary, confidence=0.9, priority=0.2 if ok else 0.8,
                             category="runtime", recommended_action=None if ok else "check_services",
-                            data={"degraded": insight["degraded"], "status": insight["status"]})
+                            data={"degraded": degraded, "status": insight["status"],
+                                  "recovered": recovered})

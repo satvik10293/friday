@@ -15,8 +15,10 @@ fully testable from synthetic audio without hardware.
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
+from collections import deque
 from enum import Enum
 from typing import Optional
 
@@ -55,7 +57,7 @@ class ListeningPipeline:
                  segmenter: Optional[SpeechSegmenter] = None,
                  verifier: Optional[TranscriptVerifier] = None,
                  wake_required: bool = True, store_audio: bool = False,
-                 buffer_seconds: float = 8.0) -> None:
+                 buffer_seconds: float = 8.0, async_segments: bool = False) -> None:
         self.mic = microphone if microphone is not None else ArraySource()
         self.ios = intelligence_os
         self.bus = bus if bus is not None else AudioEventBus()
@@ -86,9 +88,18 @@ class ListeningPipeline:
         self.last_latency_ms = 0.0
         self._was_collecting = False
         self._noise_run = False
-        self._stored: list[np.ndarray] = []
+        self._stored: deque = deque(maxlen=64)  # opt-in raw audio, bounded
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        # async segments (production): transcription + cognition can take
+        # seconds (whisper on CPU, the cloud reasoner) — handled inline they
+        # starve the frame loop, the sounddevice buffer overflows, and speech
+        # spoken while FRIDAY thinks is LOST. A worker thread processes
+        # segments while the frame loop keeps the mic drained. Synchronous by
+        # default so process_frame()/pump() stay deterministic for tests.
+        self.async_segments = async_segments
+        self._segment_queue: Optional[queue.Queue] = None
+        self._worker: Optional[threading.Thread] = None
 
     # ── privacy ─────────────────────────────────────────────────────────────────
     def set_privacy(self, enabled: bool) -> None:
@@ -138,6 +149,16 @@ class ListeningPipeline:
 
         if segment is not None:
             self.bus.emit(AudioEvent.SILENCE_DETECTED, {"ts": ts})
+            if self._segment_queue is not None:
+                try:
+                    self._segment_queue.put_nowait(segment)
+                except queue.Full:       # worker badly behind — newest speech wins
+                    try:
+                        self._segment_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    self._segment_queue.put_nowait(segment)
+                return None
             return self._handle_segment(segment)
         return None
 
@@ -256,10 +277,25 @@ class ListeningPipeline:
         self._stop.clear()
         if not self.mic.is_open:
             self.mic.open()
+        if self.async_segments and self._worker is None:
+            self._segment_queue = queue.Queue(maxsize=4)
+            self._worker = threading.Thread(target=self._segment_loop, daemon=True,
+                                            name="friday-segments")
+            self._worker.start()
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                         name="friday-listener")
         self._thread.start()
         self._set_state(ListeningState.IDLE)
+
+    def _segment_loop(self) -> None:  # pragma: no cover - thread loop
+        while True:
+            segment = self._segment_queue.get()
+            if segment is None:          # shutdown sentinel
+                return
+            try:
+                self._handle_segment(segment)
+            except Exception:  # noqa: BLE001 — one bad segment never kills hearing
+                log.debug("segment processing error", exc_info=True)
 
     def _loop(self) -> None:  # pragma: no cover - timing/thread loop
         idle_sleep = FRAME_SIZE / SAMPLE_RATE
@@ -277,9 +313,14 @@ class ListeningPipeline:
         self._stop.set()
         seg = self.segmenter.flush()
         if seg is not None:
-            self._handle_segment(seg)
+            self._handle_segment(seg)    # finish what was being said, inline
         if self._thread:
             self._thread.join(timeout=1.0)
+        if self._worker is not None and self._segment_queue is not None:
+            self._segment_queue.put(None)            # sentinel: drain then exit
+            self._worker.join(timeout=5.0)
+            self._worker = None
+            self._segment_queue = None
 
     # ── interruption passthrough ────────────────────────────────────────────────
     def interrupt(self, source: str = "user") -> bool:

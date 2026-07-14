@@ -96,7 +96,7 @@ def test_privacy_mode_stops_processing():
 def test_raw_audio_not_stored_by_default():
     p = _pipe(["friday hello"])
     p.pump()
-    assert p._stored == []                           # privacy: no raw audio kept
+    assert not p._stored                             # privacy: no raw audio kept
 
 
 def test_store_audio_when_enabled():

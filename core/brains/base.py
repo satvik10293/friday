@@ -152,6 +152,7 @@ class CognitiveBrain:
         self._ticks = 0
         self._reports = 0
         self._errors = 0
+        self._last_tick_ok = True
         self._last_report: Optional[SituationReport] = None
 
     # ── lifecycle hooks (override) ───────────────────────────────────────────────
@@ -185,8 +186,10 @@ class CognitiveBrain:
             report = self.generate_situation_report(insight)
         except Exception:  # noqa: BLE001 — a brain fault never stops the society
             self._errors += 1
+            self._last_tick_ok = False
             log.debug("brain %s tick failed", self.name, exc_info=True)
             return None
+        self._last_tick_ok = True
         if report is not None:
             self._last_report = report
             self._reports += 1
@@ -207,6 +210,17 @@ class CognitiveBrain:
         getter = getattr(self.services, "try_get", None)
         return getter(name) if callable(getter) else None
 
+    def _resolve(self, attr: str, name: str):
+        """Resolve-and-cache a service, retrying while unresolved. Brains built
+        before their service registers must not stay blind forever — a one-shot
+        lookup in __init__ did exactly that."""
+        svc = getattr(self, attr, None)
+        if svc is None:
+            svc = self._service(name)
+            if svc is not None:
+                setattr(self, attr, svc)
+        return svc
+
     def _report(self, summary: str, *, confidence: float = 0.6, priority: float = 0.5,
                 category: str = "status", evidence: Optional[list] = None,
                 recommended_action: Optional[str] = None, data: Optional[dict] = None
@@ -222,7 +236,9 @@ class CognitiveBrain:
                 "errors": self._errors}
 
     def health(self) -> dict:
-        return {"status": "ok", "brain": self.name,
+        # honest health: a brain whose last cycle failed is degraded, not "ok"
+        return {"status": "ok" if self._last_tick_ok else "degraded",
+                "brain": self.name, "errors": self._errors,
                 "last_report": self._last_report.summary if self._last_report else None}
 
     # ── public service surface (one per brain) ───────────────────────────────────

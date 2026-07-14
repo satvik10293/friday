@@ -23,7 +23,8 @@ class VisionBrain(CognitiveBrain):
         self._vision = self._service("vision")
 
     def observe(self):
-        return self._vision.detect() if self._vision is not None else []
+        vision = self._resolve("_vision", "vision")
+        return vision.detect() if vision is not None else []
 
     def analyze(self, detections):
         objects, people, confs = [], [], []

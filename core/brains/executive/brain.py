@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import deque
 from typing import Optional
 
@@ -30,6 +31,7 @@ class WorkingMemory:
     def __init__(self, capacity: int = 32) -> None:
         self._buf: deque = deque(maxlen=capacity)
         self._focus: Optional[dict] = None
+        self._focus_at: float = 0.0
         self._lock = threading.Lock()
 
     def add(self, situation: dict) -> None:
@@ -39,10 +41,15 @@ class WorkingMemory:
     def set_focus(self, situation: Optional[dict]) -> None:
         with self._lock:
             self._focus = situation
+            self._focus_at = time.time() if situation is not None else 0.0
 
     def focus(self) -> Optional[dict]:
         with self._lock:
             return dict(self._focus) if self._focus else None
+
+    def focus_age_s(self) -> float:
+        with self._lock:
+            return (time.time() - self._focus_at) if self._focus is not None else 0.0
 
     def recent(self, limit: int = 10) -> list:
         with self._lock:
@@ -81,14 +88,25 @@ class ExecutiveBrain:
 
         self.working_memory.add(unified_situation)
         self._received += 1
-        priority = float(unified_situation.get("priority",
-                         unified_situation.get("importance", 0.5)))
+        priority = _num(unified_situation.get("priority",
+                        unified_situation.get("importance", 0.5)), 0.5)
         current = self.working_memory.focus()
-        if current is None or priority >= float(current.get("priority", current.get("importance", 0.0))):
+        # a stale focus must not hold attention forever: its priority decays
+        # (halving every focus_half_life_s), so yesterday's emergency loses to
+        # today's ordinary situation instead of pinning decide() to the past
+        became_focus = current is None
+        if current is not None:
+            half_life = _num(self.config.get("focus_half_life_s", 180.0), 180.0)
+            current_priority = _num(current.get("priority",
+                                    current.get("importance", 0.0)), 0.0)
+            effective = current_priority * 0.5 ** (
+                self.working_memory.focus_age_s() / max(0.001, half_life))
+            became_focus = priority >= effective
+        if became_focus:
             self.working_memory.set_focus(unified_situation)
         emergency = unified_situation.get("category") == "emergency" or priority >= 0.9
         return {"accepted": True, "priority": priority, "emergency": emergency,
-                "focus": self.working_memory.focus() is unified_situation}
+                "focus": became_focus}
 
     # ── decisions (CEO) ──────────────────────────────────────────────────────────
     def decide(self, objective: Optional[str] = None) -> dict:
@@ -163,6 +181,8 @@ class ExecutiveBrain:
 
     # ── memory access (ONLY via the Memory Brain) ────────────────────────────────
     def request_memory(self, query: str, *, limit: int = 5) -> list:
+        if self._memory_brain is None:                   # late-registered brain
+            self._memory_brain = _svc(self.services, "memory_brain")
         if self._memory_brain is None:
             return []
         try:
@@ -193,6 +213,15 @@ def _svc(services, name):
         return None
     getter = getattr(services, "try_get", None)
     return getter(name) if callable(getter) else None
+
+
+def _num(value, default: float) -> float:
+    """Coerce a situation field to float; coordinator-fed dicts are data, and
+    a malformed priority must not crash the Executive."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _default_action(focus: dict) -> str:

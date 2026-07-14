@@ -23,7 +23,8 @@ class SpatialBrain(CognitiveBrain):
         self._spatial = self._service("spatial")
 
     def observe(self):
-        return self._spatial.snapshot() if self._spatial is not None else {}
+        spatial = self._resolve("_spatial", "spatial")
+        return spatial.snapshot() if spatial is not None else {}
 
     def analyze(self, snapshot):
         scene = (snapshot or {}).get("scene", {})

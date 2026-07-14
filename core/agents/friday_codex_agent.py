@@ -191,15 +191,23 @@ def _write_report(report: dict, new_props: int) -> None:
 
 # ── one cycle ───────────────────────────────────────────────────────────────────
 def run_once() -> dict:
-    """Run a single self-check cycle: check, then file any NEW proposals."""
+    """Run a single self-check cycle: check, then file any NEW proposals.
+
+    The cap applies to NEW filings, not to issues scanned — slicing the issue
+    list used to make the agent permanently silent once the first few issues
+    were known, even when brand-new ones appeared further down. Syntax errors
+    ("fix" kind) are always filed; improvements respect the per-cycle cap."""
     report = self_check()
     known  = _existing_signatures()
     new    = 0
-    for issue in report["issues"][: 1 + _MAX_TODO_PROPOSALS]:
+    for issue in report["issues"]:
+        if issue.get("kind") != "fix" and new >= _MAX_TODO_PROPOSALS:
+            continue
         sig = hashlib.sha256(f"{issue['target']}|{issue['title']}".encode()).hexdigest()[:12]
         if sig in known:
             continue
         path = _write_proposal(issue)
+        known.add(sig)
         new += 1
         log.info("Proposal filed: %s -> %s", issue["title"], path.name)
     _write_report(report, new)
@@ -218,8 +226,11 @@ def propose_idea(title: str, intent: str, why: str = "", change: str = "",
     if sig in _existing_signatures():
         # already proposed — return the existing note path
         for p in PROPOSALS_VAULT.glob("*.md"):
-            if _parse_frontmatter(p.read_text(encoding="utf-8")).get("signature") == sig:
-                return p
+            try:
+                if _parse_frontmatter(p.read_text(encoding="utf-8")).get("signature") == sig:
+                    return p
+            except OSError:
+                continue
     path = _write_proposal({"kind": kind, "target": target, "title": title,
                             "intent": intent, "why": why, "change": change})
     log.info("Idea recorded for review: %s -> %s", title, path.name)
@@ -267,7 +278,10 @@ def list_proposals(status: Optional[str] = None) -> list[dict]:
     for p in sorted(PROPOSALS_VAULT.glob("*.md")):
         if p.name == _REPORT_NOTE:
             continue
-        fm = _parse_frontmatter(p.read_text(encoding="utf-8"))
+        try:
+            fm = _parse_frontmatter(p.read_text(encoding="utf-8"))
+        except OSError:
+            continue                     # one unreadable note never hides the rest
         if not fm.get("id"):
             continue
         if status and fm.get("status") != status:
@@ -283,7 +297,10 @@ def set_status(proposal_id: str, status: str) -> bool:
     for p in PROPOSALS_VAULT.glob("*.md"):
         if p.name == _REPORT_NOTE:
             continue
-        text = p.read_text(encoding="utf-8")
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
         fm = _parse_frontmatter(text)
         if fm.get("id") == proposal_id:
             new = re.sub(r"(?m)^status: .*$", f"status: {status}", text, count=1)

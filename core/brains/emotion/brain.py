@@ -8,6 +8,7 @@ reporting exist now. Mood is a simple valence/arousal pair, decaying toward neut
 
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 from ..base import CognitiveBrain, SituationReport
@@ -24,21 +25,28 @@ class EmotionBrain(CognitiveBrain):
             self.local.cache(c, capacity=128)
         self.local.set("mood", dict(_NEUTRAL))
         self._emotion = self._service("emotion")
+        # nudge() (coordinator thread) and reason() (tick thread) both
+        # read-modify-write the mood; without this lock a decay could erase
+        # a concurrent nudge
+        self._mood_lock = threading.Lock()
 
     def nudge(self, *, valence: float = 0.0, arousal: float = 0.0, reason: str = "") -> dict:
         """External affect nudge (e.g. from the Coordinator on a salient situation)."""
-        mood = self.local.get("mood", dict(_NEUTRAL))
-        mood = {"valence": _clamp(mood["valence"] * 0.7 + valence),
-                "arousal": _clamp(mood["arousal"] * 0.7 + arousal)}
-        self.local.set("mood", mood)
+        with self._mood_lock:
+            mood = self.local.get("mood", dict(_NEUTRAL))
+            mood = {"valence": _clamp(mood["valence"] * 0.7 + valence),
+                    "arousal": _clamp(mood["arousal"] * 0.7 + arousal)}
+            self.local.set("mood", mood)
         self.local.push("mood_history", {"mood": mood, "reason": reason})
         return mood
 
     def reason(self, analysis):
         # decay toward neutral each tick
-        mood = self.local.get("mood", dict(_NEUTRAL))
-        mood = {"valence": _clamp(mood["valence"] * 0.9), "arousal": _clamp(mood["arousal"] * 0.9)}
-        self.local.set("mood", mood)
+        with self._mood_lock:
+            mood = self.local.get("mood", dict(_NEUTRAL))
+            mood = {"valence": _clamp(mood["valence"] * 0.9),
+                    "arousal": _clamp(mood["arousal"] * 0.9)}
+            self.local.set("mood", mood)
         return mood
 
     def generate_situation_report(self, insight) -> Optional[SituationReport]:
