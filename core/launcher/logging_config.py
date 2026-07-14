@@ -17,6 +17,13 @@ _CONSOLE_FMT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 _FILE_FMT = "%(asctime)s %(levelname)-7s [%(threadName)s] %(name)s: %(message)s"
 _configured = False
 
+# noisy third-party loggers that bury FRIDAY's own trace (per-request HTTP,
+# HF Hub chatter, per-segment whisper, the dev-server access log). Pinned to
+# WARNING so the console shows what SHE did, not what her libraries did.
+_NOISY_LOGGERS = ("httpx", "httpcore", "werkzeug", "faster_whisper",
+                  "huggingface_hub", "sentence_transformers", "urllib3",
+                  "faiss", "faiss.loader", "PIL", "matplotlib")
+
 
 def configure_logging(*, log_dir: Optional[Path] = None, level: str = "INFO",
                       console: bool = True, max_bytes: int = 5_000_000,
@@ -57,6 +64,12 @@ def configure_logging(*, log_dir: Optional[Path] = None, level: str = "INFO",
             report["rotation"] = {"max_bytes": max_bytes, "backups": backups}
         except OSError as e:
             report["file_error"] = str(e)
+
+    # silence the library chatter so FRIDAY's own lines (what she heard, what
+    # she decided) are readable on the console — unless debug asked for it all
+    if not debug:
+        for name in _NOISY_LOGGERS:
+            logging.getLogger(name).setLevel(logging.WARNING)
 
     _configured = True
     return report

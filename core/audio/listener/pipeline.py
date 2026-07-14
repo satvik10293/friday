@@ -209,6 +209,21 @@ class ListeningPipeline:
 
         command = self.wake.strip_wake_word(text) if hit else text
 
+        # wake word alone ("Friday?") — acknowledge and open the follow-up
+        # window instead of silently discarding the empty command; the user's
+        # next words route without re-waking
+        if hit and not command.strip():
+            if self.verifier is not None:
+                self.verifier.note_response(spk.label)
+            ack = getattr(self.ios, "wake_acknowledge", None)
+            if callable(ack):
+                try:
+                    ack(spk.label)
+                except Exception:  # noqa: BLE001
+                    log.debug("wake acknowledge failed", exc_info=True)
+            log.info("heard %r -> wake word only; acknowledged, window open",
+                     text[:80])
+
         # verification gate (M31): decide, like a human, whether this was meant
         # for her and whether it was finished — before cognition ever sees it
         verdict = None
@@ -221,6 +236,17 @@ class ListeningPipeline:
             self.bus.emit(AudioEvent.TRANSCRIPT_VERIFIED, verdict.to_dict())
         else:
             routed = (not self.wake_required) or hit
+
+        # every heard segment leaves a truthful console trace — "she heard
+        # nothing" and "she heard you and chose not to answer" must be
+        # distinguishable without a debugger (real-world silence report)
+        if command.strip() or text.strip():
+            outcome = ("routed" if routed and command.strip() else
+                       verdict.action.value if verdict is not None else
+                       "no wake word" if self.wake_required and not hit else
+                       "empty")
+            log.info("heard %r (conf %.2f, wake=%s) -> %s",
+                     text[:80], conf.overall, hit, outcome)
 
         response = None
         if routed and command.strip() and self.ios is not None:

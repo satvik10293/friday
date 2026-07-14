@@ -688,6 +688,14 @@ class ConversationBridge:
             self._say(getattr(response, "answer", ""))
         return response
 
+    # ── wake acknowledgment (the pipeline heard only the wake word) ──────────────
+    def wake_acknowledge(self, speaker: str = "") -> None:
+        """The user said her name and nothing else — answer like a person
+        would instead of ignoring them; the pipeline has already opened the
+        follow-up window so their next words route without re-waking."""
+        if self.speak_answers:
+            self._say("Yes?")
+
     # ── announcements (runtime SPEAK_START handler) ──────────────────────────────
     def announce(self, text: str) -> bool:
         self._recent_speech.append((self._norm(text), time.time()))
