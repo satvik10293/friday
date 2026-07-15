@@ -298,6 +298,7 @@ class StartupSequence:
             wake_required=lc.get("require_wake", True),
             verify=lc.get("verify", True),
             conversation_window_s=lc.get("conversation_window_s", 18.0),
+            follow_up_min_confidence=lc.get("follow_up_min_confidence", 0.62),
             store_audio=False)
         # hand the bridge the verifier's window so it reopens it when she
         # finishes speaking — the follow-up is timed from her last word, not

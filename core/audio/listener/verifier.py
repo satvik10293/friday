@@ -124,11 +124,18 @@ class TranscriptVerifier:
 
     def __init__(self, *, require_wake: bool = True,
                  clarify_threshold: float = 0.35,
+                 follow_up_min_confidence: float = 0.62,
                  conversation: Optional[ConversationState] = None,
                  completeness: Optional[CompletenessDetector] = None,
                  require_known_speaker: bool = False) -> None:
         self.require_wake = require_wake
         self.clarify_threshold = clarify_threshold
+        # a wake-free follow-up (relying on the open window, no wake word) must
+        # clear a HIGHER bar than a wake-word command: the wake word is proof
+        # she's addressed, but ambient TV / background chatter in the window is
+        # not. Without this she answers a YouTube outro or a distant
+        # conversation the moment the window is open.
+        self.follow_up_min_confidence = follow_up_min_confidence
         self.require_known_speaker = require_known_speaker
         self.conversation = conversation or ConversationState()
         self.completeness = completeness or CompletenessDetector()
@@ -158,17 +165,28 @@ class TranscriptVerifier:
             return Verdict(VerdictAction.IGNORE, "not_addressed", 0.0,
                            complete=True, addressed=False)
 
-        # she is being addressed: hold the window open while the user speaks
-        self.conversation.open(speaker, now=now)
-
         words = _content_words(command)
         if not words:
-            reason = "awaiting_command" if wake_hit else "empty"
-            action = VerdictAction.WAIT if wake_hit else VerdictAction.IGNORE
-            return Verdict(action, reason, 0.0, complete=False, addressed=True)
+            # "Friday?" alone opens the window and waits; a wake-free empty
+            # blip is just noise — neither reopens the window
+            if wake_hit:
+                self.conversation.open(speaker, now=now)
+                return Verdict(VerdictAction.WAIT, "awaiting_command", 0.0,
+                               complete=False, addressed=True)
+            return Verdict(VerdictAction.IGNORE, "empty", 0.0,
+                           complete=False, addressed=True)
+
+        # a wake-free follow-up must clear a higher STT bar — otherwise ambient
+        # TV / background chatter in the open window gets answered. Ignored
+        # silently (no nag) and does NOT reopen the window, so ambient noise
+        # can't hold the conversation open indefinitely.
+        if not wake_hit and audio_confidence < self.follow_up_min_confidence:
+            return Verdict(VerdictAction.IGNORE, "weak_followup",
+                           audio_confidence, complete=True, addressed=True)
 
         complete, creason = self.completeness.is_complete(command)
         if not complete:
+            self.conversation.open(speaker, now=now)   # keep listening for the rest
             return Verdict(VerdictAction.WAIT, creason, audio_confidence,
                            complete=False, addressed=True)
 
@@ -176,7 +194,8 @@ class TranscriptVerifier:
             return Verdict(VerdictAction.CLARIFY, "low_audio_confidence",
                            audio_confidence, complete=True, addressed=True)
 
-        # accept — a small bonus for a clear wake + a known voice
+        # accept — a genuine turn; (re)open the window for the next follow-up
+        self.conversation.open(speaker, now=now)
         conf = audio_confidence
         if wake_hit:
             conf = min(1.0, conf + 0.05)
