@@ -61,6 +61,7 @@ class ReasonerModel(BaseModel):
         """The most relevant content the context builder retrieved (memories +
         knowledge), ranked by keyword overlap with the effective retrieval
         query (which, for follow-up prompts, includes the previous turn)."""
+        from core.intelligence.mini_brains import clean_snippet
         kws = set(_keywords(request.context.get("query") or request.prompt, k=8))
         candidates: list[str] = []
         for m in request.context.get("memories", []) or []:
@@ -71,7 +72,10 @@ class ReasonerModel(BaseModel):
             text = e.get("content") if isinstance(e, dict) else str(e)
             if text:
                 candidates.append(text)
-        scored = sorted(candidates,
+        # stored notes carry frontmatter/metadata in their body — strip it so
+        # she speaks prose, never `url:`/`fact_id:`/`relevance:` lines
+        cleaned = [c for c in (clean_snippet(t) for t in candidates) if c]
+        scored = sorted(cleaned,
                         key=lambda t: -len(kws & set(_keywords(t, k=12))))
         return [t.strip()[:300] for t in scored[:k]
                 if kws & set(_keywords(t, k=12))]

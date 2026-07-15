@@ -51,9 +51,13 @@ class _SpeechOutput:
     the boot."""
 
     def __init__(self, synthesizer: Optional[Callable[[str], None]] = None,
-                 stopper: Optional[Callable[[], None]] = None) -> None:
+                 stopper: Optional[Callable[[], None]] = None,
+                 on_spoken: Optional[Callable[[], None]] = None) -> None:
         self._synth = synthesizer
         self._stopper = stopper
+        # fired when an utterance finishes speaking — lets the bridge reopen the
+        # follow-up window from when she STOPS talking, not when she starts
+        self._on_spoken = on_spoken
         self._queue: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=8)
         self._worker: Optional[threading.Thread] = None
         self._interrupt = threading.Event()
@@ -97,6 +101,11 @@ class _SpeechOutput:
                     break
             else:
                 self.spoken += 1
+                if self._on_spoken is not None:
+                    try:
+                        self._on_spoken()
+                    except Exception:  # noqa: BLE001 — a hook never breaks speech
+                        log.debug("on_spoken hook failed", exc_info=True)
 
     def say(self, text: str) -> bool:
         text = (text or "").strip()
@@ -151,6 +160,7 @@ class ConversationBridge:
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
                  memory=None, self_model=None, goals=None, teacher=None,
                  knowledge=None, reasoner=None, core_memory=None, brains=None,
+                 conversation_state=None,
                  speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
@@ -170,6 +180,14 @@ class ConversationBridge:
             from core.memory.core_memory import get_core_memory
             self.core = get_core_memory()
         self.speech = speech if speech is not None else _SpeechOutput()
+        # keep the hands-free follow-up window open from when she STOPS
+        # speaking: on a slow CPU her own (long) reply used to eat an 8 s
+        # window timed from when she started, so the user had to re-say
+        # "Friday" every turn. Reopening on speech-completion makes it a real
+        # back-and-forth conversation.
+        self._conversation_state = conversation_state
+        if conversation_state is not None and self.speech._on_spoken is None:
+            self.speech._on_spoken = self._reopen_window
         self.speak_answers = speak_answers
         self.clarify_threshold = clarify_threshold
         self.escalate_threshold = escalate_threshold
@@ -687,6 +705,16 @@ class ConversationBridge:
         if self.speak_answers and getattr(response, "ok", False):
             self._say(getattr(response, "answer", ""))
         return response
+
+    def _reopen_window(self) -> None:
+        """Reopen the follow-up window when she finishes speaking, so a reply
+        needs no wake word (the window is measured from her last word)."""
+        state = self._conversation_state
+        if state is not None:
+            try:
+                state.open()
+            except Exception:  # noqa: BLE001
+                log.debug("conversation window reopen failed", exc_info=True)
 
     # ── wake acknowledgment (the pipeline heard only the wake word) ──────────────
     def wake_acknowledge(self, speaker: str = "") -> None:

@@ -290,15 +290,25 @@ class StartupSequence:
             if self_model is not None:
                 self_model._conversation = bridge
         # human-level listening (M31): require the wake word, verify transcripts,
-        # and hold a short follow-up window so natural conversation flows without
+        # and hold a follow-up window so natural conversation flows without
         # re-waking — so she stops answering TV, ambient speech, and herself
         lc = self.config.get("listening") or {}
         service = get_listening_service(
             microphone=LiveMicrophone(), intelligence_os=bridge,
             wake_required=lc.get("require_wake", True),
             verify=lc.get("verify", True),
-            conversation_window_s=lc.get("conversation_window_s", 8.0),
+            conversation_window_s=lc.get("conversation_window_s", 18.0),
             store_audio=False)
+        # hand the bridge the verifier's window so it reopens it when she
+        # finishes speaking — the follow-up is timed from her last word, not
+        # from when the answer was computed (otherwise her own slow reply eats
+        # the window and every turn needs the wake word again)
+        if bridge is not None:
+            verifier = getattr(service.pipeline, "verifier", None)
+            if verifier is not None and getattr(verifier, "conversation", None) is not None:
+                bridge._conversation_state = verifier.conversation
+                if bridge.speech._on_spoken is None:
+                    bridge.speech._on_spoken = bridge._reopen_window
         runtime = self.components.get("runtime")
         if runtime is not None:
             service.attach(runtime)

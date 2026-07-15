@@ -374,6 +374,25 @@ class DateMathBrain(MiniBrain):
 
 # ── Memory recall ──────────────────────────────────────────────────────────────
 
+_FRONTMATTER_RE = re.compile(r"^\s*---.*?---\s*", re.DOTALL)
+# stored vault notes carry YAML frontmatter + sidecar keys in their body; none
+# of it is speakable. A leading `key: value` line (url, fact_id, source,
+# relevance, embed_idx, fetched_at, …) is metadata, not prose.
+_META_LINE_RE = re.compile(
+    r"^\s*(url|fact_id|source|category|title|relevance|embed_idx|"
+    r"fetched_at|expires_at|created|updated|id|type|status|kind|tier|"
+    r"importance|confidence|score|private)\s*:", re.IGNORECASE)
+
+
+def clean_snippet(text: str) -> str:
+    """Strip note frontmatter + metadata lines so only real prose is spoken.
+    A note that is nothing BUT metadata collapses to '' (caller drops it)."""
+    text = _FRONTMATTER_RE.sub("", text or "", count=1)
+    lines = [ln for ln in text.splitlines()
+             if ln.strip() and ln.strip() != "---" and not _META_LINE_RE.match(ln)]
+    return " ".join(lines).strip()
+
+
 class RecallBrain(MiniBrain):
     name = "recall"
 
@@ -401,8 +420,8 @@ class RecallBrain(MiniBrain):
         keep = []
         for r in rows:
             score = r.get("score")
-            content = (r.get("content") or "").strip()
-            if not content:
+            content = clean_snippet(r.get("content") or "")
+            if not content:                    # metadata-only note → nothing to say
                 continue
             relevant = (score >= self._MIN_SCORE) if score is not None else \
                 bool(topic_words & set(re.findall(r"[a-z0-9']+", content.lower())))
@@ -422,7 +441,9 @@ class RecallBrain(MiniBrain):
         if not contents:
             try:
                 from core.knowledge.friday_chronicle import search_keyword
-                contents = [r["content"] for r in search_keyword(topic, limit=3)]
+                contents = [clean_snippet(r["content"])
+                            for r in search_keyword(topic, limit=3)]
+                contents = [c for c in contents if c]
             except Exception:  # noqa: BLE001
                 return None
         if not contents:
