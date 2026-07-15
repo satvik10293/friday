@@ -65,6 +65,7 @@
     }
   },
   "ui": {
+    "mode": "tray",
     "primary_interface": "dashboard",
     "voice_mode_default": true,
     "speech_panel_enabled": true,
@@ -83,11 +84,11 @@
       "vision": "cpu"
     },
     "measured": {
-      "cpu": 64.49,
+      "cpu": 89.65,
       "speedup": 0.0
     },
     "detected": [],
-    "measured_at": 1784120946.9944909,
+    "measured_at": 1784124587.2921717,
     "version": 1
   }
 }

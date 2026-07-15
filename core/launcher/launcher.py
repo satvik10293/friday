@@ -42,6 +42,8 @@ class Launcher:
         self.config = self._load_config(config)
         self.report: Optional[dict] = None
         self.components: dict = {}
+        self._tray = None
+        self._shutdown = threading.Event()
 
     # ── configuration ────────────────────────────────────────────────────────────
     def _load_config(self, override: Optional[dict]) -> dict:
@@ -72,8 +74,13 @@ class Launcher:
 
     # ── boot ─────────────────────────────────────────────────────────────────────
     def run(self) -> dict:
+        import sys
         self.platform.ensure_dirs()
+        # windowless launch (pythonw) has no console — sys.stdout is None, so a
+        # console log handler would crash. Log to file only in that case.
+        has_console = sys.stdout is not None and sys.stderr is not None
         log_report = configure_logging(log_dir=self.platform.log_dir(),
+                                       console=has_console,
                                        debug=(self.profile == "development"))
         first_run = self.first_run()               # idempotent: no-op after the first boot
         deps = self.validate_dependencies()
@@ -99,20 +106,73 @@ class Launcher:
         from .diagnostics import Diagnostics
         return Diagnostics(components=self.components).report()
 
-    # ── optional UI (guarded; never required) ────────────────────────────────────
-    def start_ui(self) -> bool:
+    # ── the app surface (guarded; never required) ────────────────────────────────
+    def start_ui(self) -> str:
+        """Bring up FRIDAY's app surface. `ui.mode` config picks it:
+          tray  (default) — a system-tray presence (icon + mute + quit +
+                            notifications); voice-first, no browser, no console
+          hud             — the legacy cinematic HUD (Flask + Edge WebView2)
+          none            — headless-resident (voice only)
+        Returns the surface actually started ("tray" | "hud" | "none")."""
         if self.headless:
-            return False
+            return "none"
+        mode = str((self.config.get("ui") or {}).get("mode", "tray")).lower()
+        if mode == "tray" and self._start_tray():
+            return "tray"
+        if mode == "hud" and self._start_hud():
+            return "hud"
+        if mode == "tray":                       # tray asked but unavailable → HUD
+            return "hud" if self._start_hud() else "none"
+        return "none"
+
+    def _start_tray(self) -> bool:
+        try:
+            from core.io.tray import TrayApp, available, notify
+            if not available():
+                return False
+            listening = self.components.get("listening")
+            self._tray = TrayApp(
+                listening=listening,
+                on_quit=self._request_shutdown,
+                open_logs=self._open_log_dir)
+            if self._tray.start():
+                notify("FRIDAY", "I'm online and listening.")
+                return True
+        except Exception:  # noqa: BLE001
+            log.debug("tray start failed", exc_info=True)
+        return False
+
+    def _start_hud(self) -> bool:
         try:
             import subprocess
             import sys
             entry = self.platform.config_dir() / "friday_app.py"
             if entry.exists():
-                subprocess.Popen([sys.executable, str(entry)], cwd=str(self.platform.config_dir()))
+                subprocess.Popen([sys.executable, str(entry)],
+                                 cwd=str(self.platform.config_dir()))
                 return True
         except Exception:  # noqa: BLE001
-            log.debug("UI start failed", exc_info=True)
+            log.debug("HUD start failed", exc_info=True)
         return False
+
+    def _open_log_dir(self) -> None:
+        import os
+        import subprocess
+        import sys
+        log_dir = self.platform.data_dir() / "logs"
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(log_dir))       # noqa: S606 — user-initiated
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(log_dir)])
+            else:
+                subprocess.Popen(["xdg-open", str(log_dir)])
+        except Exception:  # noqa: BLE001
+            log.debug("open log dir failed", exc_info=True)
+
+    def _request_shutdown(self) -> None:
+        """Tray 'Quit' → end the process cleanly."""
+        self._shutdown.set()
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -156,11 +216,14 @@ def main(argv: Optional[list] = None) -> int:
     # background cognition live on daemon threads and die with the process,
     # so exiting after the report would silently take FRIDAY down with it
     if ready and not args.headless:
-        ui = launcher.start_ui()
-        print(f"  ui window: {'launched' if ui else 'not started'}")
-        print("  FRIDAY is listening - press Ctrl+C to shut down.", flush=True)
+        surface = launcher.start_ui()
+        print(f"  app surface: {surface}")
+        print("  FRIDAY is running — quit from the tray, or Ctrl+C here.", flush=True)
         try:
-            threading.Event().wait()
+            launcher._shutdown.wait()             # tray 'Quit' sets this
         except KeyboardInterrupt:
             print("shutting down.")
+        finally:
+            if launcher._tray is not None:
+                launcher._tray.stop()
     return 0 if ready else 1

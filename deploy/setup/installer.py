@@ -123,14 +123,21 @@ def create_shortcuts(dest: Path) -> list[str]:
     """Desktop + Start Menu shortcuts (Windows); a .desktop entry (Linux).
     Best-effort — an install without shortcuts is still an install."""
     created: list[str] = []
-    launcher = dest / "Launch-FRIDAY.bat"
+    # the proper app: a windowless .vbs (pythonw, no console) that brings up
+    # the tray. Falls back to the console .bat if the .vbs isn't present.
+    app_vbs = dest / "deploy" / "windows" / "friday-app.vbs"
+    launcher = app_vbs if app_vbs.exists() else (dest / "Launch-FRIDAY.bat")
     if sys.platform.startswith("win") and launcher.exists():
+        target = ("wscript.exe" if launcher.suffix == ".vbs"
+                  else str(launcher))
+        args = f"\"{launcher}\"" if launcher.suffix == ".vbs" else ""
         script = (
             "$sh = New-Object -ComObject WScript.Shell; "
             "foreach ($dir in @([Environment]::GetFolderPath('Desktop'), "
             "[Environment]::GetFolderPath('Programs'))) { "
             "  $lnk = $sh.CreateShortcut((Join-Path $dir 'FRIDAY.lnk')); "
-            f"  $lnk.TargetPath = '{launcher}'; "
+            f"  $lnk.TargetPath = '{target}'; "
+            f"  $lnk.Arguments = '{args}'; "
             f"  $lnk.WorkingDirectory = '{dest}'; "
             "  $lnk.Description = 'Launch FRIDAY'; $lnk.Save(); "
             "  Write-Output (Join-Path $dir 'FRIDAY.lnk') }")
@@ -166,9 +173,18 @@ def create_cli_command(dest: Path) -> Optional[str]:
             if not windows_apps.is_dir():
                 return None
             shim = windows_apps / "friday.cmd"
-            shim.write_text("@echo off\r\n"
-                            f"\"{dest / 'Launch-FRIDAY.bat'}\" %*\r\n",
-                            encoding="ascii")
+            app_vbs = dest / "deploy" / "windows" / "friday-app.vbs"
+            bat = dest / "Launch-FRIDAY.bat"
+            # `friday`         → the windowless app (tray, no console)
+            # `friday --console` → console mode (logs in the terminal, for debugging)
+            shim.write_text(
+                "@echo off\r\n"
+                'if /I "%~1"=="--console" (\r\n'
+                f'  "{bat}" %*\r\n'
+                ") else (\r\n"
+                f'  wscript.exe "{app_vbs}"\r\n'
+                ")\r\n",
+                encoding="ascii")
             return str(shim)
         bin_dir = Path.home() / ".local" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)

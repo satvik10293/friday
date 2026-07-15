@@ -150,7 +150,25 @@ class StartupSequence:
     def _stage_perception(self):
         brains = self.components.get("brains", {})
         present = [n for n in ("vision_brain", "audio_brain", "spatial_brain") if n in brains]
-        return "ok", "perception brains: " + ", ".join(present)
+        detail = "perception brains: " + ", ".join(present)
+        # live camera vision is OPT-IN (perception.live in config, default off):
+        # continuously running a camera + detectors is heavy for a CPU box, so
+        # it only starts when the owner asks. The vision brain has a real
+        # backend either way; without live capture it simply sees nothing.
+        if (self.config.get("perception") or {}).get("live") and not self.headless:
+            try:
+                from core.vision.service import get_vision_system
+                vision = get_vision_system(runtime=self.components.get("runtime"))
+                vision.start()
+                kernel = self.components.get("kernel")
+                if kernel is not None:
+                    kernel.register("vision", vision)
+                self.components["vision"] = vision
+                detail += " (+live camera)"
+            except Exception as e:  # noqa: BLE001 — vision must never break the boot
+                log.debug("live vision unavailable", exc_info=True)
+                detail += f" (live vision failed: {type(e).__name__})"
+        return "ok", detail
 
     def _stage_simulation(self):
         from core.brains.simulation import SimulationService
@@ -234,14 +252,17 @@ class StartupSequence:
         kernel = self.components.get("kernel")
         if kernel is not None:
             kernel.register("skills", executor)  # brains/executive reach actions here
-            # give the brains real backends for the world + system sensing they
-            # already try to observe (lightweight; no camera/mic capture here)
+            # give the brains real backends for the world + spatial + system
+            # sensing they already try to observe (lightweight; no camera/mic
+            # capture here — that's opt-in, see the perception stage)
             for name, factory in (("world", self._world_service),
-                                  ("sensors", self._sensors_service)):
+                                  ("sensors", self._sensors_service),
+                                  ("spatial", self._spatial_service)):
                 try:
                     svc = factory()
                     if svc is not None:
                         kernel.register(name, svc)
+                        self.components[name] = svc
                 except Exception:  # noqa: BLE001 — an optional backend never fails boot
                     log.debug("optional service %s unavailable", name, exc_info=True)
         return "ok", f"action layer online ({len(registry)} governed skills)"
@@ -255,6 +276,11 @@ class StartupSequence:
     def _sensors_service():
         from core.sensors.manager import SensorManager
         return SensorManager()
+
+    @staticmethod
+    def _spatial_service():
+        from core.spatial.service import SpatialService
+        return SpatialService()      # scene-graph engine; no camera
 
     def _stage_mind(self):
         """Internal Mind (M23): thought stream + self model + background cognition."""
@@ -342,6 +368,7 @@ class StartupSequence:
             conversation_window_s=lc.get("conversation_window_s", 18.0),
             follow_up_min_confidence=lc.get("follow_up_min_confidence", 0.62),
             store_audio=False)
+        self.components["listening"] = service   # the tray mutes the mic through this
         # hand the bridge the verifier's window so it reopens it when she
         # finishes speaking — the follow-up is timed from her last word, not
         # from when the answer was computed (otherwise her own slow reply eats

@@ -43,6 +43,23 @@ def _venv_python(venv_dir: Path) -> Path:
     return venv_dir / "bin" / "python"
 
 
+def _windowless() -> bool:
+    """True when we were started without a console (pythonw / the .vbs app
+    launcher) — so the child launcher should also run windowless."""
+    return sys.platform.startswith("win") and (
+        sys.executable.lower().endswith("pythonw.exe") or sys.stdout is None)
+
+
+def _launch_python(venv_dir: Path) -> Path:
+    """python.exe normally; pythonw.exe when we're running windowless, so the
+    app has no console window at all."""
+    if _windowless():
+        pyw = venv_dir / "Scripts" / "pythonw.exe"
+        if pyw.exists():
+            return pyw
+    return _venv_python(venv_dir)
+
+
 def venv_ready(venv_dir: Path = _VENV) -> bool:
     return _venv_python(venv_dir).exists()
 
@@ -116,12 +133,21 @@ def run_first_run(venv_dir: Path = _VENV, *, root: Path = _ROOT) -> None:
 
 
 def launch(entry: str = "launch", venv_dir: Path = _VENV, *, root: Path = _ROOT) -> int:
-    py = _venv_python(venv_dir)
+    py = _launch_python(venv_dir)
     target = root / _ENTRIES.get(entry, _ENTRIES["launch"])
     if not target.exists():
         target = root / _ENTRIES["launch"]
-    print(f"[bootstrap] launching {target.name} ...")
+    windowless = _windowless()
+    if not windowless:
+        print(f"[bootstrap] launching {target.name} ...")
     try:
+        creationflags = 0
+        if windowless and hasattr(subprocess, "CREATE_NO_WINDOW"):
+            creationflags = subprocess.CREATE_NO_WINDOW
+        if windowless:                       # detached app: don't block the .vbs
+            subprocess.Popen([str(py), str(target)], cwd=str(root),
+                             creationflags=creationflags)
+            return 0
         return subprocess.call([str(py), str(target)], cwd=str(root))
     except Exception as e:  # noqa: BLE001
         print(f"[bootstrap] launch failed: {e}")

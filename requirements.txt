@@ -54,3 +54,4 @@ pywhatkit
 # ── Notifications ────────────────────────────────────────────────────
 plyer
 win10toast ; sys_platform == "win32"
+pystray
