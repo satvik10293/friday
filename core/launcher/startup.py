@@ -22,7 +22,7 @@ log = logging.getLogger("friday.launcher.startup")
 
 STARTUP_STAGES = ("configuration", "kernel", "runtime", "brains", "memory", "knowledge",
                   "perception", "simulation", "coordinator", "executive", "plugins",
-                  "intelligence", "mind", "voice", "wake_word", "ui", "ready")
+                  "intelligence", "skills", "mind", "voice", "wake_word", "ui", "ready")
 
 
 @dataclass
@@ -215,6 +215,47 @@ class StartupSequence:
         loaded = ios.health_report().get("models_loaded", 0)
         return "ok", f"intelligence OS online ({loaded} local models)"
 
+    def _stage_skills(self):
+        """Her body (M47): the governed action layer. Build the skill registry
+        (37 tiered action skills) + the SkillExecutor, which self-wires the M3
+        security pipeline (policy → clearance → approval → sandbox → audit).
+        Nothing here acts; it makes acting POSSIBLE and safe."""
+        from core.observability.decision_log import get_decision_log
+        from core.skills import SkillRegistry
+        from core.skills.builtin import register_builtins
+        from core.skills.executor import SkillExecutor
+
+        registry = SkillRegistry()
+        register_builtins(registry)              # memory/system reads + 37 actions
+        executor = SkillExecutor(registry=registry,
+                                 decision_log=get_decision_log(),
+                                 runtime=self.components.get("runtime"))
+        self.components["skills"] = executor
+        kernel = self.components.get("kernel")
+        if kernel is not None:
+            kernel.register("skills", executor)  # brains/executive reach actions here
+            # give the brains real backends for the world + system sensing they
+            # already try to observe (lightweight; no camera/mic capture here)
+            for name, factory in (("world", self._world_service),
+                                  ("sensors", self._sensors_service)):
+                try:
+                    svc = factory()
+                    if svc is not None:
+                        kernel.register(name, svc)
+                except Exception:  # noqa: BLE001 — an optional backend never fails boot
+                    log.debug("optional service %s unavailable", name, exc_info=True)
+        return "ok", f"action layer online ({len(registry)} governed skills)"
+
+    @staticmethod
+    def _world_service():
+        from core.world.world_model import WorldModel
+        return WorldModel()
+
+    @staticmethod
+    def _sensors_service():
+        from core.sensors.manager import SensorManager
+        return SensorManager()
+
     def _stage_mind(self):
         """Internal Mind (M23): thought stream + self model + background cognition."""
         from core.cognition.background import BackgroundCognition
@@ -281,7 +322,8 @@ class StartupSequence:
                 self_model=self.components.get("self_model"),
                 goals=self.components.get("goals"), teacher=teacher,
                 knowledge=knowledge, reasoner=reasoner,
-                brains=self.components.get("brains"))   # addressable society (M46)
+                brains=self.components.get("brains"),   # addressable society (M46)
+                skills=self.components.get("skills"))   # governed action layer (M47)
             self.components["conversation"] = bridge
             kernel = self.components.get("kernel")
             if kernel is not None:       # the M46 voice/reasoning brains observe this

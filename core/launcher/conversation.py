@@ -160,7 +160,7 @@ class ConversationBridge:
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
                  memory=None, self_model=None, goals=None, teacher=None,
                  knowledge=None, reasoner=None, core_memory=None, brains=None,
-                 conversation_state=None,
+                 conversation_state=None, skills=None,
                  speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
@@ -172,6 +172,7 @@ class ConversationBridge:
         self.knowledge = knowledge          # M7 KnowledgeService → librarian (M40)
         self.reasoner = reasoner            # cloud-primary basic reasoner (M42)
         self.brains = dict(brains or {})    # addressable brain society (M46)
+        self.skills = skills                # governed action executor (M47)
         from core.memory.learning_gate import LearningGate
         self.gate = LearningGate()          # selective learning (M27)
         if core_memory is not None:
@@ -198,6 +199,7 @@ class ConversationBridge:
         self._teacher_turns = 0
         self._librarian_turns = 0
         self._cloud_turns = 0
+        self._skill_turns = 0
         self._echoes_dropped = 0
         self._noise_dropped = 0
         self._last_clarify_ts = 0.0
@@ -316,6 +318,91 @@ class ConversationBridge:
         except Exception:  # noqa: BLE001
             log.debug("proposal handling failed", exc_info=True)
             return None
+
+    # ── her body: the governed action layer (M47) ───────────────────────────────
+    # action-shaped voice commands run through the SkillExecutor, which enforces
+    # the M3 security pipeline (policy → clearance → approval → sandbox → audit).
+    # VOICE POLICY: only SAFE-permission skills run hands-free. Anything needing
+    # approval (app.close, input.*, keystrokes) or admin (shell.run, power.*,
+    # startup.*) is refused from voice — a mic is untrusted (anyone in the room),
+    # and the executor's approval path blocks, which a real-time turn cannot.
+    #
+    # Each route: (compiled pattern, skill name, args builder, spoken response).
+    # `args` receives the regex match; `render` receives the skill Result.data.
+    _SKILL_ROUTES = None            # built lazily (see _skill_routes)
+
+    @classmethod
+    def _skill_routes(cls):
+        if cls._SKILL_ROUTES is not None:
+            return cls._SKILL_ROUTES
+        def _num(m):
+            return {"level": max(0, min(100, int(m.group("n"))))}   # clamp 0–100
+        routes = [
+            (r"\b(take|grab|capture)\b.*\bscreenshot\b|\bscreenshot\b", "system.screenshot",
+             None, lambda d: "I've taken a screenshot."),
+            (r"\b(what'?s|whats|my|check).{0,12}\bip\b|\bip address\b", "net.ip",
+             None, lambda d: f"Your IP address is {d}."),
+            (r"\b(am i (online|connected)|check (the )?internet|do i have internet)\b",
+             "net.check_internet", None,
+             lambda d: "Yes, you're online." if d else "No, you appear to be offline."),
+            (r"\b(wifi|wi-fi|wireless)\b.{0,10}\b(status|network|connected)\b|\bwhat wifi\b",
+             "net.wifi_status", None,
+             lambda d: (f"You're connected to {d.get('ssid') or 'Wi-Fi'}."
+                        if isinstance(d, dict) and d.get("connected")
+                        else "You're not connected to Wi-Fi.")),
+            (r"\b(system (status|summary|health)|how'?s the (system|computer|machine)|"
+             r"how are you doing|status report)\b", "system.summary",
+             None, lambda d: str(d)),
+            (r"\bmute\b", "audio.mute", None, lambda d: "Muted."),
+            (r"\bunmute\b", "audio.unmute", None, lambda d: "Unmuted."),
+            (r"\b(set (the )?volume to|volume to)\s+(?P<n>\d{1,3})\b", "audio.set_volume",
+             _num, lambda d: "Done."),
+            (r"\b(play|pause|play ?pause|resume)\b.{0,10}(music|media|track|song|it)?\b",
+             "media.play_pause", None, lambda d: "Done."),
+            (r"\bnext (track|song)\b|\bskip\b", "media.next", None, lambda d: "Next track."),
+            (r"\b(previous|last) (track|song)\b|\bgo back a (track|song)\b", "media.prev",
+             None, lambda d: "Previous track."),
+            (r"\bbrightness up\b|\bbrighter\b", "display.brightness_up",
+             None, lambda d: "Brightness up."),
+            (r"\bbrightness down\b|\bdimmer\b|\bdim (the )?screen\b", "display.brightness_down",
+             None, lambda d: "Brightness down."),
+        ]
+        cls._SKILL_ROUTES = [(re.compile(p, re.I), name, args, render)
+                             for p, name, args, render in routes]
+        return cls._SKILL_ROUTES
+
+    def _try_skill(self, command: str) -> Optional[tuple]:
+        """Run an action-shaped command through the governed executor. Returns
+        (route_key, spoken_answer) or None (→ normal path). Never raises."""
+        if self.skills is None:
+            return None
+        q = (command or "").strip()
+        for pattern, skill_name, args_fn, render in self._skill_routes():
+            m = pattern.search(q)
+            if not m:
+                continue
+            try:
+                from core.skills.permissions import Permission
+                skill = self.skills._registry.get(skill_name)
+                if skill.permission != Permission.SAFE:
+                    # matched a governed action above SAFE — never voice-run it
+                    return (f"skill:{skill_name}:refused",
+                            "That action needs your approval, which I can't take "
+                            "by voice yet.")
+                args = args_fn(m) if args_fn else {}
+                result = self.skills.execute(skill_name, args)
+            except Exception:  # noqa: BLE001 — an action fault never breaks the turn
+                log.debug("skill route failed: %s", skill_name, exc_info=True)
+                return None
+            if getattr(result, "success", False):
+                try:
+                    answer = render(result.data)
+                except Exception:  # noqa: BLE001
+                    answer = "Done."
+                return (f"skill:{skill_name}", answer)
+            return (f"skill:{skill_name}",
+                    f"I couldn't do that — {getattr(result, 'error', 'it failed')}.")
+        return None
 
     # ── addressable brain society (M46) ──────────────────────────────────────────
     # every module has a brain, and every brain answers for itself when named:
@@ -604,6 +691,15 @@ class ConversationBridge:
             key, answer = asked
             return self._respond_directly(turn, f"brain:{key}", answer, t0)
 
+        # her body (M47): action-shaped commands ("take a screenshot", "system
+        # status", "set volume to 40") run through the governed skill executor.
+        # No `command=` — an action confirmation is not conversational context.
+        acted = self._try_skill(command)
+        if acted is not None:
+            key, answer = acted
+            self._skill_turns += 1
+            return self._respond_directly(turn, key, answer, t0)
+
         # the conversation window rides along so follow-ups have an anchor
         ctx["recent_turns"] = list(self._window)
 
@@ -742,6 +838,7 @@ class ConversationBridge:
                 "teacher_turns": self._teacher_turns,
                 "librarian_turns": self._librarian_turns,
                 "cloud_turns": self._cloud_turns,
+                "skill_turns": self._skill_turns,
                 "echoes_dropped": self._echoes_dropped,
                 "noise_dropped": self._noise_dropped,
                 "reasoner": self.reasoner.status() if self.reasoner
