@@ -22,7 +22,8 @@ log = logging.getLogger("friday.launcher.startup")
 
 STARTUP_STAGES = ("configuration", "kernel", "runtime", "brains", "memory", "knowledge",
                   "perception", "simulation", "coordinator", "executive", "plugins",
-                  "intelligence", "skills", "mind", "voice", "wake_word", "ui", "ready")
+                  "intelligence", "skills", "mind", "nervous", "voice", "wake_word",
+                  "ui", "ready")
 
 
 @dataclass
@@ -340,6 +341,63 @@ class StartupSequence:
         thoughts.think("observation", "I'm awake. Systems are coming online.",
                        source="startup")
         return "ok", "thought stream + self model + background cognition online"
+
+    def _stage_nervous(self):
+        """The nervous system (M50): grow a nerve for every module + brain, so
+        each one is sensed, self-healed by a safe reflex, and relayed to the
+        brain already repaired. The Executive reaches modules through the
+        nervous system's gated access — never a module a nerve knows is broken."""
+        from core.nervous import NervousSystem
+
+        executive = self.components.get("executive")
+        nervous = NervousSystem(report_sink=self._relay_health_to_brain)
+
+        # every cognitive brain is a module with a nerve
+        for name, brain in (self.components.get("brains") or {}).items():
+            nervous.register(name, brain)
+        # plus the executive and the standing subsystems/services
+        for name in ("executive", "coordinator", "simulation", "memory_service",
+                     "knowledge", "goals", "intelligence", "skills", "world",
+                     "sensors", "spatial", "listening", "conversation",
+                     "self_model", "background_cognition"):
+            module = self.components.get(name)
+            if module is not None:
+                nervous.register(name, module)
+
+        self.components["nervous"] = nervous
+        kernel = self.components.get("kernel")
+        if kernel is not None:
+            kernel.register("nervous", nervous)
+        if executive is not None:
+            executive._nervous = nervous     # the brain's gated access to modules
+
+        picture = nervous.pulse()            # first heartbeat: sense + heal now
+        runtime = self.components.get("runtime")
+        if runtime is not None and self.start_runtime:
+            every = float((self.config.get("nervous") or {}).get("pulse_s", 30.0))
+            nervous.attach(runtime, every_s=every)
+        healed = len(picture.get("healed", []))
+        detail = f"{picture['modules']} nerves, overall {picture['overall']}"
+        if healed:
+            detail += f" (+{healed} self-healed)"
+        return "ok", detail
+
+    def _relay_health_to_brain(self, picture: dict) -> None:
+        """Relay the consolidated, healed health picture up to the Executive as
+        a health situation — the brain's true, self-corrected body map."""
+        executive = self.components.get("executive")
+        if executive is None or not hasattr(executive, "receive"):
+            return
+        try:
+            executive.receive({
+                "summary": f"Body status: {picture.get('overall', 'ok')} "
+                           f"({picture.get('modules', 0)} modules, "
+                           f"{len(picture.get('degraded', []))} degraded).",
+                "category": "health",
+                "priority": 0.8 if picture.get("degraded") else 0.2,
+                "data": {"health": picture}})
+        except Exception:  # noqa: BLE001 — relaying must never break the pulse
+            log.debug("relay health to brain failed", exc_info=True)
 
     def _stage_voice(self):
         if self.headless:

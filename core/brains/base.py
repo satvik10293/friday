@@ -25,6 +25,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from core.nervous.reflexes import reflex as _reflex   # @reflex marker (M50)
+
 log = logging.getLogger("friday.brains")
 
 
@@ -153,6 +155,7 @@ class CognitiveBrain:
         self._reports = 0
         self._errors = 0
         self._last_tick_ok = True
+        self._service_attrs: set = set()      # attrs holding service handles (recover)
         self._last_report: Optional[SituationReport] = None
 
     # ── lifecycle hooks (override) ───────────────────────────────────────────────
@@ -219,7 +222,20 @@ class CognitiveBrain:
             svc = self._service(name)
             if svc is not None:
                 setattr(self, attr, svc)
+        # remember which attrs hold service handles, so recover() can drop them
+        self._service_attrs.add(attr)
         return svc
+
+    @_reflex
+    def recover(self):
+        """The nervous system's reflex (M50) for a wedged brain: drop cached
+        service handles so they re-resolve fresh, and clear the transient
+        error latch so the next tick re-evaluates honestly. Safe + idempotent —
+        it re-reads state, never destroys any. (@reflex: fired autonomously.)"""
+        for attr in list(self._service_attrs):
+            setattr(self, attr, None)
+        self._last_tick_ok = True
+        return "recovered"
 
     def _report(self, summary: str, *, confidence: float = 0.6, priority: float = 0.5,
                 category: str = "status", evidence: Optional[list] = None,

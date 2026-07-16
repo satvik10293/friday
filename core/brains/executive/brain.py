@@ -179,6 +179,23 @@ class ExecutiveBrain:
         except Exception:  # noqa: BLE001
             return {}
 
+    # ── module access (through the nervous system, M50) ──────────────────────────
+    def reach(self, name: str):
+        """Reach a module — but only through the nervous system, which returns
+        it only if a nerve last saw it healthy or self-healed. The brain never
+        touches a module the body knows is broken. Falls back to direct service
+        lookup when no nervous system is wired."""
+        nervous = getattr(self, "_nervous", None)
+        if nervous is not None:
+            return nervous.access(name)
+        return _svc(self.services, name)
+
+    def body_status(self) -> dict:
+        """The brain's map of its own body — the last consolidated health
+        picture from the nervous system."""
+        nervous = getattr(self, "_nervous", None)
+        return nervous.picture() if nervous is not None else {"overall": "unknown"}
+
     # ── memory access (ONLY via the Memory Brain) ────────────────────────────────
     def request_memory(self, query: str, *, limit: int = 5) -> list:
         if self._memory_brain is None:                   # late-registered brain
