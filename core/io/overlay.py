@@ -66,6 +66,9 @@ class Overlay:
         self._thread: Optional[threading.Thread] = None
         self._root = None
         self._widgets: dict = {}
+        self._content: dict = {"state": "idle", "heard": "", "answer": ""}
+        self._answer_hide_at: Optional[float] = None
+        self._transparent = False
         self._stop = threading.Event()
         self._started = False
         self.captured_excluded = False    # set True once affinity is applied
@@ -125,47 +128,78 @@ class Overlay:
             self._root = root
             root.overrideredirect(True)                 # borderless
             root.attributes("-topmost", True)           # always on top
-            root.attributes("-alpha", self.opacity)
+            # fully opaque text; the SEE-THROUGH comes from the transparent
+            # colour key (below), not from window alpha — dimming alpha would
+            # make the text faint too. The box disappears; only text floats.
+            root.attributes("-alpha", 1.0)
             root.configure(bg=_TRANSPARENT_KEY)
+            self._transparent = False
             try:
                 root.attributes("-transparentcolor", _TRANSPARENT_KEY)
+                self._transparent = True                 # Windows: real blend
             except tk.TclError:
-                pass                                     # non-Windows: solid bg
+                root.attributes("-alpha", self.opacity)  # non-Windows: dim box
             self._build_widgets(tk, root)
-            self._place(root)
             self._apply_win32(root)
+            self._redraw()
             root.after(120, self._drain)
             root.mainloop()
         except Exception:  # noqa: BLE001 — the overlay must never crash the app
             log.debug("overlay thread failed", exc_info=True)
 
     def _build_widgets(self, tk, root) -> None:
-        card = tk.Frame(root, bg="#0e1524", bd=0, highlightthickness=0)
-        card.pack(fill="both", expand=True, padx=2, pady=2)
-        dot = tk.Label(card, text="●", fg=_STATE_COLORS["idle"], bg="#0e1524",
-                       font=("Segoe UI", 11))
-        dot.grid(row=0, column=0, sticky="w", padx=(8, 4), pady=(6, 0))
-        name = tk.Label(card, text="FRIDAY", fg="#cdd6ff", bg="#0e1524",
-                        font=("Segoe UI Semibold", 10))
-        name.grid(row=0, column=1, sticky="w", pady=(6, 0))
-        heard = tk.Label(card, text="", fg="#8fa0c8", bg="#0e1524",
-                         font=("Segoe UI", 9), wraplength=self.width - 30,
-                         justify="left", anchor="w")
-        heard.grid(row=1, column=0, columnspan=2, sticky="we", padx=8, pady=(2, 0))
-        answer = tk.Label(card, text="", fg="#eef2ff", bg="#0e1524",
-                          font=("Segoe UI", 10), wraplength=self.width - 30,
-                          justify="left", anchor="w")
-        answer.grid(row=2, column=0, columnspan=2, sticky="we", padx=8, pady=(2, 8))
-        card.grid_columnconfigure(1, weight=1)
-        self._widgets = {"card": card, "dot": dot, "heard": heard, "answer": answer}
+        # a transparent canvas: its background is the colour key, so it renders
+        # fully clear. Text is drawn directly onto it (outlined for readability
+        # on any wallpaper), so the words float on your screen — no box.
+        canvas = tk.Canvas(root, bg=_TRANSPARENT_KEY, highlightthickness=0, bd=0)
+        canvas.pack(fill="both", expand=True)
+        self._widgets = {"canvas": canvas}
+        self._content = {"state": "idle", "heard": "", "answer": ""}
         self._answer_hide_at = None
 
-    def _place(self, root) -> None:
-        root.update_idletasks()
+    _OUTLINE_OFFSETS = ((-1, -1), (-1, 1), (1, -1), (1, 1),
+                        (-1, 0), (1, 0), (0, -1), (0, 1), (2, 2))
+
+    def _text(self, canvas, x: int, y: int, text: str, fill: str, font,
+              width: Optional[int] = None) -> int:
+        """Draw outlined text (dark halo + drop shadow behind bright glyphs) so
+        it reads on light OR dark backgrounds. Returns the bottom y."""
+        kw = {"anchor": "nw", "font": font, "justify": "left"}
+        if width:
+            kw["width"] = width
+        for dx, dy in self._OUTLINE_OFFSETS:
+            canvas.create_text(x + dx, y + dy, text=text, fill="#000000", **kw)
+        item = canvas.create_text(x, y, text=text, fill=fill, **kw)
+        box = canvas.bbox(item)
+        return box[3] if box else y + 16
+
+    def _redraw(self) -> None:  # pragma: no cover - GUI thread
+        canvas = self._widgets.get("canvas")
+        if canvas is None:
+            return
+        canvas.delete("all")
+        pad, x = 10, 10
+        y = 8
+        wrap = self.width - 2 * pad
+        color = _STATE_COLORS.get(self._content["state"], _STATE_COLORS["idle"])
+        canvas.create_oval(x, y + 4, x + 11, y + 15, fill=color, outline="#000000")
+        y = self._text(canvas, x + 20, y, "FRIDAY", "#e8eeff",
+                       ("Segoe UI Semibold", 11)) + 5
+        if self._content["heard"]:
+            y = self._text(canvas, x, y, "you:  " + self._content["heard"],
+                           "#cdd8f0", ("Segoe UI", 10), width=wrap) + 4
+        if self._content["answer"]:
+            y = self._text(canvas, x, y, self._content["answer"], "#ffffff",
+                           ("Segoe UI Semibold", 11), width=wrap) + 6
+        box = canvas.bbox("all")
+        self._resize(int(box[3] + 8) if box else 56)
+
+    def _resize(self, h: int) -> None:  # pragma: no cover - GUI thread
+        root = self._root
+        if root is None:
+            return
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-        w = self.width
-        h = max(90, root.winfo_reqheight())
-        margin = 24
+        w, h, margin = self.width, max(48, h), 24
         x = sw - w - margin if "right" in self.corner else margin
         y = margin if "top" in self.corner else sh - h - margin - 48
         root.geometry(f"{w}x{h}+{x}+{y}")
@@ -195,35 +229,37 @@ class Overlay:
 
     def _drain(self) -> None:  # pragma: no cover - GUI thread
         import time
+        dirty = False
         try:
             while True:
-                event = self._q.get_nowait()
-                self._apply(event, now=time.time())
+                self._apply(self._q.get_nowait(), now=time.time())
+                dirty = True
         except queue.Empty:
             pass
         # fade the answer once its time is up
         if self._answer_hide_at is not None and time.time() > self._answer_hide_at:
-            self._widgets["answer"].config(text="")
+            self._content["answer"] = ""
             self._answer_hide_at = None
+            dirty = True
+        if dirty:
+            self._redraw()
         if not self._stop.is_set() and self._root is not None:
             self._root.after(150, self._drain)
 
     def _apply(self, event: dict, *, now: float) -> None:  # pragma: no cover
         kind = event.get("kind")
-        w = self._widgets
         if kind == "state":
-            color = _STATE_COLORS.get(event.get("state", "idle"), _STATE_COLORS["idle"])
-            w["dot"].config(fg=color)
+            self._content["state"] = event.get("state", "idle")
         elif kind == "heard":
-            w["heard"].config(text="“" + event.get("text", "") + "”")
+            self._content["heard"] = event.get("text", "")
         elif kind == "answer":
-            w["answer"].config(text=event.get("text", ""))
+            self._content["answer"] = event.get("text", "")
             self._answer_hide_at = now + self.answer_ttl_s
         elif kind == "notice":
-            w["answer"].config(text=event.get("text", ""))
+            self._content["answer"] = event.get("text", "")
             self._answer_hide_at = now + 6.0
-        self._place(self._root)
 
     def status(self) -> dict:
         return {"started": self._started, "excluded_from_capture": self.captured_excluded,
+                "transparent": getattr(self, "_transparent", False),
                 "corner": self.corner}
