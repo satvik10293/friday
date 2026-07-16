@@ -196,6 +196,25 @@ def test_speech_is_spoken_sentence_by_sentence_and_barge_in_stops_it():
     assert speech.interrupted == 1
 
 
+def test_one_failed_sentence_does_not_swallow_the_rest_of_the_answer():
+    # a network blip on one sentence used to break the whole answer (she "only
+    # said part of it"); now she skips the bad sentence and keeps speaking
+    spoken, done = [], threading.Event()
+
+    def flaky_synth(sentence):
+        if "Two" in sentence:
+            raise RuntimeError("edge-tts hiccup")
+        spoken.append(sentence)
+        if "Four" in sentence:
+            done.set()
+
+    speech = _SpeechOutput(synthesizer=flaky_synth, stopper=lambda: None)
+    speech.say("One. Two. Three. Four.")
+    assert done.wait(2.0)
+    time.sleep(0.1)
+    assert spoken == ["One.", "Three.", "Four."]   # only the failing one dropped
+
+
 def test_interrupt_drops_queued_utterances():
     gate = threading.Event()
     speech = _SpeechOutput(synthesizer=lambda s: gate.wait(1.0), stopper=lambda: None)

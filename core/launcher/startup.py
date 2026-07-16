@@ -525,15 +525,20 @@ class StartupSequence:
             log.debug("voice control subscription failed", exc_info=True)
 
     def _wire_barge_in(self, service, bridge) -> None:
-        """The user starting to speak stops FRIDAY mid-answer."""
+        """Let the user interrupt FRIDAY mid-answer — but only on a DELIBERATE
+        signal (the wake word, or an explicit interrupt request), never on raw
+        speech onset. On a CPU box with no echo cancellation, her own voice
+        coming out of the speakers trips SPEECH_DETECTED and used to cut her
+        off after one sentence — that was the "she only says part of it" bug.
+        Saying "Friday" while she talks still stops her; her own voice can't."""
         from core.audio.listener.events import AudioEvent
 
-        def on_user_speech(_event) -> None:
+        def on_interrupt(_event) -> None:
             bridge.interrupt()
 
         try:
-            service.bus.on(AudioEvent.SPEECH_DETECTED, on_user_speech)
-            service.bus.on(AudioEvent.INTERRUPT_REQUESTED, on_user_speech)
+            service.bus.on(AudioEvent.WAKE_WORD_DETECTED, on_interrupt)
+            service.bus.on(AudioEvent.INTERRUPT_REQUESTED, on_interrupt)
         except Exception:  # noqa: BLE001
             log.debug("barge-in wiring failed", exc_info=True)
 

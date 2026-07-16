@@ -93,12 +93,14 @@ class _SpeechOutput:
             self._interrupt.clear()
             for sentence in self._sentences(text):
                 if self._interrupt.is_set():
-                    break
+                    break                        # deliberate barge-in: stop now
                 try:
                     self._synthesize(sentence)
                 except Exception:  # noqa: BLE001 — audio output is best-effort
-                    log.debug("speech synthesis failed", exc_info=True)
-                    break
+                    # one sentence failing (a network blip) must not swallow the
+                    # rest of her answer — skip it and keep speaking
+                    log.debug("speech synthesis failed on a sentence", exc_info=True)
+                    continue
             else:
                 self.spoken += 1
                 if self._on_spoken is not None:
