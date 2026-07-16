@@ -43,6 +43,7 @@ class Launcher:
         self.report: Optional[dict] = None
         self.components: dict = {}
         self._tray = None
+        self._overlay = None
         self._shutdown = threading.Event()
 
     # ── configuration ────────────────────────────────────────────────────────────
@@ -116,7 +117,12 @@ class Launcher:
         Returns the surface actually started ("tray" | "hud" | "none")."""
         if self.headless:
             return "none"
-        mode = str((self.config.get("ui") or {}).get("mode", "tray")).lower()
+        ui = self.config.get("ui") or {}
+        # the private overlay (M51) is an ADDITIONAL layer — it runs alongside
+        # whatever surface, so you always see her state + answers on-screen
+        # (and it's excluded from screen shares). Default on.
+        self._start_overlay(ui.get("overlay"))
+        mode = str(ui.get("mode", "tray")).lower()
         if mode == "tray" and self._start_tray():
             return "tray"
         if mode == "hud" and self._start_hud():
@@ -124,6 +130,32 @@ class Launcher:
         if mode == "tray":                       # tray asked but unavailable → HUD
             return "hud" if self._start_hud() else "none"
         return "none"
+
+    def _start_overlay(self, cfg) -> bool:
+        cfg = cfg if isinstance(cfg, dict) else {}
+        if cfg.get("enabled", True) is False:
+            return False
+        try:
+            from core.io.overlay import Overlay, available
+            if not available():
+                return False
+            overlay = Overlay(
+                corner=cfg.get("corner", "top-right"),
+                opacity=float(cfg.get("opacity", 0.9)),
+                exclude_capture=bool(cfg.get("exclude_capture", True)),
+                click_through=bool(cfg.get("click_through", True)))
+            if not overlay.start():
+                return False
+            self._overlay = overlay
+            bridge = self.components.get("conversation")
+            if bridge is not None:
+                bridge.overlay = overlay         # her answers flow onto the layer
+            overlay.set_state("idle")
+            overlay.notice("FRIDAY is online.")
+            return True
+        except Exception:  # noqa: BLE001 — the overlay never blocks the app
+            log.debug("overlay start failed", exc_info=True)
+            return False
 
     def _start_tray(self) -> bool:
         try:
@@ -226,4 +258,6 @@ def main(argv: Optional[list] = None) -> int:
         finally:
             if launcher._tray is not None:
                 launcher._tray.stop()
+            if launcher._overlay is not None:
+                launcher._overlay.stop()
     return 0 if ready else 1

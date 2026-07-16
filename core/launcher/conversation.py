@@ -160,7 +160,7 @@ class ConversationBridge:
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
                  memory=None, self_model=None, goals=None, teacher=None,
                  knowledge=None, reasoner=None, core_memory=None, brains=None,
-                 conversation_state=None, skills=None,
+                 conversation_state=None, skills=None, overlay=None,
                  speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
@@ -173,6 +173,7 @@ class ConversationBridge:
         self.reasoner = reasoner            # cloud-primary basic reasoner (M42)
         self.brains = dict(brains or {})    # addressable brain society (M46)
         self.skills = skills                # governed action executor (M47)
+        self.overlay = overlay              # private on-screen overlay (M51)
         from core.memory.learning_gate import LearningGate
         self.gate = LearningGate()          # selective learning (M27)
         if core_memory is not None:
@@ -485,6 +486,12 @@ class ConversationBridge:
         if not text:
             return
         self._recent_speech.append((self._norm(text), time.time()))
+        if self.overlay is not None:                 # show it on the private layer
+            try:
+                self.overlay.answer(text)
+                self.overlay.set_state("speaking")
+            except Exception:  # noqa: BLE001 — the overlay is best-effort
+                log.debug("overlay answer failed", exc_info=True)
         self.speech.say(text)
 
     def _is_self_echo(self, command: str) -> bool:
@@ -664,6 +671,14 @@ class ConversationBridge:
         if self._is_self_echo(command):
             self._echoes_dropped += 1
             return self._drop(turn, "self_echo", 1.0, t0)
+
+        # surface what she heard on the private overlay + show she's working
+        if self.overlay is not None:
+            try:
+                self.overlay.heard(command)
+                self.overlay.set_state("thinking")
+            except Exception:  # noqa: BLE001
+                log.debug("overlay heard failed", exc_info=True)
 
         # heard badly → ask again instead of guessing (once, then stay quiet)
         heard = ctx.get("audio_confidence")
