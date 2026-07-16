@@ -55,3 +55,6 @@ pywhatkit
 plyer
 win10toast ; sys_platform == "win32"
 pystray
+winocr; sys_platform == 'win32'
+rapidocr-onnxruntime
+ocrmac; sys_platform == 'darwin'

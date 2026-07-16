@@ -203,6 +203,7 @@ class ConversationBridge:
         self._librarian_turns = 0
         self._cloud_turns = 0
         self._skill_turns = 0
+        self._screen_reads = 0
         self._echoes_dropped = 0
         self._noise_dropped = 0
         self._last_clarify_ts = 0.0
@@ -320,6 +321,43 @@ class ConversationBridge:
                     f"approval: {titles}.")
         except Exception:  # noqa: BLE001
             log.debug("proposal handling failed", exc_info=True)
+            return None
+
+    # ── her screen sight (M52): read the screen, on-device ───────────────────────
+    _SCREEN_RE = re.compile(
+        r"\b(read|scan|look at|check|what'?s?( is)? on|what does).{0,20}\b(my |the )?"
+        r"screen\b|\bwhat am i (looking at|seeing)\b|\bwhat'?s this (error|on screen)\b",
+        re.I)
+
+    def _read_screen(self, command: str) -> Optional[tuple]:
+        """Capture + OCR the screen locally and answer about it. The screenshot
+        NEVER leaves the machine — only the extracted text is reasoned over.
+        Returns (route_key, answer) or None. Never raises."""
+        if not self._SCREEN_RE.search(command or ""):
+            return None
+        try:
+            from core.io import screen
+            if not screen.available():
+                return ("screen", "I can't read your screen yet — the on-device "
+                        "text reader isn't installed.")
+            result = screen.read_screen()
+            if not result.get("ok"):
+                return ("screen", "I couldn't read any text on your screen just now.")
+            text = result["text"]
+            # answer the user's actual ask, grounded in the on-screen text; the
+            # image stays local, only the text is reasoned over
+            if self.reasoner is not None and self.reasoner.available():
+                grounded = self.reasoner.reason(
+                    f"This is the text currently on the user's screen "
+                    f"(read on-device by OCR):\n\"\"\"\n{text[:4000]}\n\"\"\"\n\n"
+                    f"The user asked: {command}\nAnswer concisely from what's on "
+                    f"the screen; if it isn't there, say so.")
+                if getattr(grounded, "ok", False):
+                    return ("screen", grounded.answer)
+            snippet = text[:280] + ("…" if len(text) > 280 else "")
+            return ("screen", f"Here's what I can read on your screen: {snippet}")
+        except Exception:  # noqa: BLE001 — screen reading must never break a turn
+            log.debug("screen read failed", exc_info=True)
             return None
 
     # ── her body: the governed action layer (M47) ───────────────────────────────
@@ -717,6 +755,14 @@ class ConversationBridge:
             self._skill_turns += 1
             return self._respond_directly(turn, key, answer, t0)
 
+        # her screen sight (M52): "read my screen" / "what's this error" — OCR
+        # on-device, answer grounded in the text; the image stays local
+        seen = self._read_screen(command)
+        if seen is not None:
+            key, answer = seen
+            self._screen_reads += 1
+            return self._respond_directly(turn, key, answer, t0, command=command)
+
         # the conversation window rides along so follow-ups have an anchor
         ctx["recent_turns"] = list(self._window)
 
@@ -856,6 +902,7 @@ class ConversationBridge:
                 "librarian_turns": self._librarian_turns,
                 "cloud_turns": self._cloud_turns,
                 "skill_turns": self._skill_turns,
+                "screen_reads": self._screen_reads,
                 "echoes_dropped": self._echoes_dropped,
                 "noise_dropped": self._noise_dropped,
                 "reasoner": self.reasoner.status() if self.reasoner
