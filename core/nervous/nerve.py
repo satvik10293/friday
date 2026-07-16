@@ -16,12 +16,18 @@ from typing import Callable, Optional
 log = logging.getLogger("friday.nervous.nerve")
 
 _HEALTHY = {"ok", "healthy", "ready", "nominal", "online", "placeholder"}
+# soft states: the module is UP and usable, just not at full capacity (under
+# load, warming up, consolidating). Honest to surface, but NOT a fault — no
+# reflex fixes RAM pressure, and it must not drag the whole body to "degraded".
+_SOFT = {"strained", "busy", "warming", "warming_up", "limited", "loading",
+         "consolidating", "throttled", "degraded_but_working"}
 
 
 class NerveStatus(str, Enum):
     OK = "ok"              # healthy on probe
     HEALED = "healed"      # was unhealthy, a reflex fixed it
-    DEGRADED = "degraded"  # unhealthy, heal budget spent / no reflex
+    STRAINED = "strained"  # up + usable but under load — noted, not a fault
+    DEGRADED = "degraded"  # a real fault: heal budget spent / no reflex
     FAILED = "failed"      # a reflex ran but the module is still unhealthy
 
 
@@ -37,8 +43,10 @@ class NerveReport:
 
     @property
     def usable(self) -> bool:
-        """Whether the brain may reach this module — healthy or self-healed."""
-        return self.status in (NerveStatus.OK, NerveStatus.HEALED)
+        """Whether the brain may reach this module — healthy, self-healed, or
+        merely strained (up and working, just under load)."""
+        return self.status in (NerveStatus.OK, NerveStatus.HEALED,
+                               NerveStatus.STRAINED)
 
     def to_dict(self) -> dict:
         return {"name": self.name, "status": self.status.value,
@@ -46,22 +54,26 @@ class NerveReport:
                 "reflex": self.reflex, "detail": self.detail[:200]}
 
 
-def _healthy(probe_result) -> tuple[bool, str]:
-    """Normalise a probe result to (is_healthy, detail). Accepts a health/status
-    dict, a bool, or None."""
+def _classify(probe_result) -> tuple[str, str]:
+    """Normalise a probe result to (class, detail) where class is
+    'ok' | 'soft' | 'fault'. Accepts a health/status dict, a bool, or None."""
     if probe_result is None:
-        return False, "no health signal"
+        return "fault", "no health signal"
     if isinstance(probe_result, bool):
-        return probe_result, "" if probe_result else "unhealthy"
+        return ("ok", "") if probe_result else ("fault", "unhealthy")
     if isinstance(probe_result, dict):
         status = str(probe_result.get("status", "")).lower()
         if status:
-            return status in _HEALTHY, status
-        # no explicit status key → presence of an "error"/"failed" flag decides
+            if status in _HEALTHY:
+                return "ok", status
+            if status in _SOFT:
+                return "soft", status
+            return "fault", status
+        # no explicit status key → an "error"/"failed" flag is a fault
         if probe_result.get("error") or probe_result.get("failed"):
-            return False, str(probe_result.get("error") or "failed")
-        return True, "ok"
-    return True, str(probe_result)[:80]
+            return "fault", str(probe_result.get("error") or "failed")
+        return "ok", "ok"
+    return "ok", str(probe_result)[:80]
 
 
 class ModuleNerve:
@@ -84,11 +96,16 @@ class ModuleNerve:
     # ── the reflex arc (never raises) ────────────────────────────────────────────
     def check(self, *, now: Optional[float] = None) -> NerveReport:
         now = now if now is not None else time.time()
-        healthy, detail = self._sense()
-        if healthy:
+        cls, detail = self._sense()
+        if cls == "ok":
             return self._record(NerveReport(self.name, NerveStatus.OK, detail=detail))
+        if cls == "soft":
+            # up and usable, just under load — surface it, but never reflex
+            # (nothing to fix) and never count it as a fault
+            return self._record(NerveReport(self.name, NerveStatus.STRAINED,
+                                            detail=detail))
 
-        # unhealthy → reflex, if we have one and haven't been healing too often
+        # a real fault → reflex, if we have one and haven't been healing too often
         if self._heal is None:
             return self._record(NerveReport(self.name, NerveStatus.DEGRADED,
                                             detail=detail))
@@ -97,18 +114,19 @@ class ModuleNerve:
                                             heal_count=len(self._heal_times),
                                             detail="heal budget spent: " + detail))
         reflex_name = self._fire_reflex(now)
-        healed, detail2 = self._sense()
+        cls2, detail2 = self._sense()
+        healed = cls2 in ("ok", "soft")            # back to usable = healed
         status = NerveStatus.HEALED if healed else NerveStatus.FAILED
         return self._record(NerveReport(
             self.name, status, healed=healed, heal_count=len(self._heal_times),
             reflex=reflex_name, detail=detail2 or detail))
 
     # ── internals ────────────────────────────────────────────────────────────────
-    def _sense(self) -> tuple[bool, str]:
+    def _sense(self) -> tuple[str, str]:
         try:
-            return _healthy(self._probe())
+            return _classify(self._probe())
         except Exception as e:  # noqa: BLE001 — a probe that throws IS a fault
-            return False, f"probe raised: {type(e).__name__}"
+            return "fault", f"probe raised: {type(e).__name__}"
 
     def _heal_budget(self, now: float) -> bool:
         cutoff = now - self._window_s

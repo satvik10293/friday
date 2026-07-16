@@ -59,6 +59,22 @@ the heavy runtime stays Python-source based for reliability.
 
 ---
 
+## What she can do now (M42–M51)
+
+- **Reasons** — cloud-primary basic reasoner (gpt-oss-120b on Groq) for substantive
+  questions, grounded in a standing **core memory** + conversation window; the full
+  local chain is the fallback and personal questions never leave the box. *(The cloud
+  tier is a temporary bridge; local reasoning stays the destination.)*
+- **Acts** — 37 governed, risk-tiered **action skills** (screenshot, system status,
+  volume, media, app control…) behind a security pipeline; only SAFE tiers run by voice.
+- **Remembers** — a One Memory store + an always-loaded **core memory** of durable facts.
+- **A brain per module** — a 12-brain society, each addressable ("ask the vision brain…").
+- **Self-heals** — a **nervous system**: every module has a nerve that senses trouble,
+  fires a safe recovery reflex, and reports the healed status to the brain.
+- **Is present** — a **system-tray** app (windowless) + a **private on-screen overlay**
+  that shows her answers but is invisible to screen shares; **proactively** notifies.
+- **Installs in one step** — an official one-file installer, or `npx github:…/friday`.
+
 ## Architecture
 
 FRIDAY is a society of specialized **Cognitive Brains**, each owning local reasoning,

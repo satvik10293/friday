@@ -83,19 +83,29 @@ class NervousSystem:
 
     def _aggregate(self, reports: list[NerveReport]) -> dict:
         by_status: dict[str, int] = {}
-        healed_now, degraded = [], []
+        healed_now, degraded, strained = [], [], []
         for r in reports:
             by_status[r.status.value] = by_status.get(r.status.value, 0) + 1
             if r.status is NerveStatus.HEALED:
                 healed_now.append(r.name)
             elif r.status in (NerveStatus.DEGRADED, NerveStatus.FAILED):
                 degraded.append(r.name)
-        # "healing" whenever a reflex fired this pulse (self-repair is active),
-        # "degraded" only when something is broken and nothing healed, else "ok"
-        overall = "healing" if healed_now else ("degraded" if degraded else "ok")
+            elif r.status is NerveStatus.STRAINED:
+                strained.append(r.name)
+        # overall, most urgent first: a real fault → "degraded"; a reflex fired
+        # → "healing"; something under load → "strained"; else "ok". A strained
+        # module (RAM pressure, warming up) is NOT a degraded body.
+        if degraded:
+            overall = "degraded"
+        elif healed_now:
+            overall = "healing"
+        elif strained:
+            overall = "strained"
+        else:
+            overall = "ok"
         return {"overall": overall, "modules": len(reports),
                 "by_status": by_status, "healed": healed_now,
-                "degraded": degraded,
+                "degraded": degraded, "strained": strained,
                 "reports": {r.name: r.to_dict() for r in reports},
                 "pulses": self._pulses, "total_heals": self._heals}
 

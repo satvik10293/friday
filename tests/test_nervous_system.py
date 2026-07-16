@@ -64,6 +64,20 @@ def test_unhealable_is_reported_degraded_not_hidden():
     assert r.status is NerveStatus.DEGRADED and not r.healed
 
 
+def test_strained_is_usable_not_a_fault():
+    # "strained" (RAM pressure, warming up) means up-but-loaded — the module is
+    # still reachable, no reflex fires, and it never drags the body to degraded
+    class _Strained:
+        def health(self):
+            return {"status": "strained"}
+        @reflex
+        def reset(self):
+            raise AssertionError("a reflex fired on a merely-strained module!")
+    n = ModuleNerve("s", _Strained().health, heal=derive_reflex(_Strained()))
+    r = n.check()
+    assert r.status is NerveStatus.STRAINED and r.usable
+
+
 def test_a_probe_that_raises_is_a_fault():
     def boom():
         raise RuntimeError("sensor dead")
@@ -171,9 +185,17 @@ def test_pulse_heals_and_reports_the_whole_picture():
     ns.register("healthy", healthy)
     ns.register("broken", broken)
     pic = ns.pulse()
-    assert pic["overall"] == "healing"           # something self-healed
+    # a still-broken module is the honest headline even though flaky healed
+    assert pic["overall"] == "degraded"
     assert "flaky" in pic["healed"] and "broken" in pic["degraded"]
     assert pic["reports"]["flaky"]["status"] == "healed"
+
+
+def test_overall_is_healing_when_nothing_remains_broken():
+    ns = NervousSystem()
+    ns.register("flaky", _Flaky())               # heals; nothing else broken
+    pic = ns.pulse()
+    assert pic["overall"] == "healing" and not pic["degraded"]
 
 
 def test_brain_reaches_only_usable_modules():
@@ -185,6 +207,19 @@ def test_brain_reaches_only_usable_modules():
     assert ns.access("flaky") is flaky           # self-healed → reachable
     assert ns.access("broken") is None           # degraded → the brain can't touch it
     assert ns.access("missing") is None
+
+
+def test_strained_module_stays_reachable_and_body_is_not_degraded():
+    class _Strained:
+        def health(self):
+            return {"status": "strained"}
+    ns = NervousSystem()
+    s = _Strained()
+    ns.register("busy", s)
+    pic = ns.pulse()
+    assert pic["overall"] == "strained" and "busy" in pic["strained"]
+    assert not pic["degraded"]
+    assert ns.access("busy") is s                # a loaded module is still reachable
 
 
 def test_report_sink_receives_the_healed_picture():
