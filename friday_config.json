@@ -64,6 +64,13 @@
       "ok": "approve"
     }
   },
+  "proactive": {
+    "enabled": true,
+    "min_confidence": 0.6,
+    "cooldown_s": 300.0,
+    "max_per_hour": 6,
+    "speak_aloud": false
+  },
   "ui": {
     "mode": "tray",
     "primary_interface": "dashboard",

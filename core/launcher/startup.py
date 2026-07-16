@@ -282,6 +282,17 @@ class StartupSequence:
         from core.spatial.service import SpatialService
         return SpatialService()      # scene-graph engine; no camera
 
+    def _proactive_speak(self, text: str) -> None:
+        """Speak a proactive nudge through the conversation bridge (resolved at
+        call time — the bridge is built in the later voice stage, but proactive
+        ticks only run once the runtime is up)."""
+        bridge = self.components.get("conversation")
+        if bridge is not None and getattr(bridge, "speak_answers", False):
+            try:
+                bridge.announce(text)
+            except Exception:  # noqa: BLE001
+                log.debug("proactive announce failed", exc_info=True)
+
     def _stage_mind(self):
         """Internal Mind (M23): thought stream + self model + background cognition."""
         from core.cognition.background import BackgroundCognition
@@ -301,10 +312,27 @@ class StartupSequence:
         if self.components.get("goals") is not None:
             from core.goals.generator import GoalGenerator
             generator = GoalGenerator(self.components["goals"], thoughts=thoughts)
+        # proactive presence (M49): surface salient thoughts/proposals as tray
+        # notifications. Notifications-only, config-gated, rate-limited. Not on
+        # headless boots (no owner to notify).
+        notifier = None
+        pcfg = self.config.get("proactive") or {}
+        if pcfg.get("enabled", True) and not self.headless:
+            from core.io.proactive import ProactiveNotifier
+            from core.io.tray import notify as _tray_notify
+            notifier = ProactiveNotifier(
+                thoughts=thoughts, goals=self.components.get("goals"),
+                notify=_tray_notify,
+                speak=(lambda t: self._proactive_speak(t)),
+                min_confidence=float(pcfg.get("min_confidence", 0.6)),
+                cooldown_s=float(pcfg.get("cooldown_s", 300.0)),
+                max_per_hour=int(pcfg.get("max_per_hour", 6)),
+                speak_aloud=bool(pcfg.get("speak_aloud", False)))
+            self.components["proactive"] = notifier
         background = BackgroundCognition(
             thoughts=thoughts, memory=self.components.get("memory_service"),
             goals=self.components.get("goals"), self_model=self_model,
-            generator=generator)
+            generator=generator, notifier=notifier)
         self.components["background_cognition"] = background
         runtime = self.components.get("runtime")
         if runtime is not None and self.start_runtime:

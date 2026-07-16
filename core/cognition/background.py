@@ -36,12 +36,13 @@ def _active_goals(goals) -> list:
 
 class BackgroundCognition:
     def __init__(self, *, thoughts, memory=None, goals=None, self_model=None,
-                 generator=None, interval_s: float = 300.0) -> None:
+                 generator=None, notifier=None, interval_s: float = 300.0) -> None:
         self.thoughts = thoughts
         self.memory = memory
         self.goals = goals
         self.self_model = self_model
         self.generator = generator          # GoalGenerator (M28)
+        self.notifier = notifier            # ProactiveNotifier (M49) — optional
         self.interval_s = interval_s
         self.ticks = 0
         self.last_report: dict = {}
@@ -69,6 +70,13 @@ class BackgroundCognition:
             report["consolidation"] = self._consolidate()
             report["curiosity"] = self._wonder()
             report["proposals"] = self._propose()
+
+        # proactive presence (M49): after thinking, surface the single most
+        # salient new thought/proposal to the owner (rate-limited, never nags)
+        if self.notifier is not None:
+            surfaced = self.notifier.check()
+            if surfaced:
+                report["notified"] = surfaced
 
         self.ticks += 1
         report["ms"] = round((time.perf_counter() - t0) * 1000.0, 1)
