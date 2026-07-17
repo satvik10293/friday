@@ -38,34 +38,26 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from core.intelligence.cloud_reasoner import ReasonedAnswer  # shared contract
+from core.reasoning import exact
 from core.reasoning.substrate import Substrate
 from core.society import worker_tasks as wt
 
 log = logging.getLogger("friday.reasoning.engine")
 
-# a run of numbers/operators/parens with at least one binary operator between
-# operands — a computable arithmetic expression embedded in prose
-_EXPR = re.compile(r"\d[\d\s.]*(?:\s*(?:\*\*|[-+*/%])\s*\(?\d[\d\s.]*\)?)+")
-_PERCENT_OF = re.compile(r"(\d+(?:\.\d+)?)\s*%\s*of\s+(\d+(?:\.\d+)?)", re.I)
-_POWER = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(?:\^|\*\*|to the power of|raised to(?: the power of)?)\s*"
-    r"(\d+(?:\.\d+)?)", re.I)
-_CALC_INTENT = re.compile(
-    r"\b(calculate|compute|what(?:'s| is)|how much is|solve|sum of|product of|"
-    r"times|plus|minus|divided by|multiplied by|percent|power)\b", re.I)
 _STEP_LEAD = re.compile(r"^\s*(?:step\s*\d+[:.)]?|\d+[:.)]|[-*•])\s*", re.I)
 # a question complex enough to earn decomposition (System 2); anything else
 # stays a single direct pass (System 1) so she doesn't over-think "hi"
 _COMPLEX = re.compile(
     r"\b(and|then|after|before|steps?|how (?:do|to|can|does)|why|explain|"
     r"compare|difference between|pros and cons|walk me through|list)\b", re.I)
-
-
-def _fmt(value) -> str:
-    """Render a computed number cleanly (2.0 → 2)."""
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value)
+# a coding ask: the answer is code, so it gets the verify-repair loop
+_CODE_RE = re.compile(
+    r"\b(write|create|implement|fix|debug)\b.{0,40}\b(function|code|script|"
+    r"python|program|method|class)\b", re.I)
+# a recall-shaped step: consult the knowledge base, not the language faculty
+_RECALL_RE = re.compile(
+    r"\b(recall|remember|look up|search|find out|check (?:the |my )?"
+    r"(?:notes|knowledge)|definition of|what is known about)\b", re.I)
 
 
 @dataclass
@@ -89,17 +81,24 @@ class DeliberateReasoner:
 
     def __init__(self, substrate: Substrate, *, name: str = "deliberate",
                  self_consistency: int = 1, max_steps: int = 4,
-                 decompose: bool = True) -> None:
+                 decompose: bool = True, retriever=None) -> None:
         self.substrate = substrate
         self.name = name
         self.self_consistency = max(1, int(self_consistency))
         self.max_steps = max(1, int(max_steps))
         self.decompose = decompose
+        # retrieval as a reasoning tool: a callable(query) -> str that consults
+        # her own knowledge base, so recall-shaped steps read notes instead of
+        # asking the language faculty to "remember"
+        self.retriever = retriever
         self.asked = 0
         self.answered = 0
         self.failed = 0
         self.exact_answers = 0
         self.math_steps = 0
+        self.recall_steps = 0
+        self.code_checked = 0
+        self.code_repaired = 0
         self.total_latency_ms = 0.0
 
     def available(self) -> bool:
@@ -137,12 +136,19 @@ class DeliberateReasoner:
     def _deliberate(self, question: str, context: Optional[dict]) -> Deliberation:
         base = float(getattr(self.substrate, "base_confidence", 0.6))
 
-        # 1. exact first: a calculation is COMPUTED, never guessed (full trust)
-        exact = self._exact_arithmetic(question)
-        if exact is not None:
-            return Deliberation(answer=exact,
-                                steps=[Step(question, "math", exact, 1.0)],
+        # 1. exact first: anything checkable (arithmetic incl. spoken operators,
+        #    percent, powers, unit conversions, dates, comparisons) is COMPUTED,
+        #    never guessed — full trust
+        solved = exact.solve(question)
+        if solved is not None:
+            return Deliberation(answer=solved,
+                                steps=[Step(question, "math", solved, 1.0)],
                                 confidence=1.0, exact=True)
+
+        # 1b. a coding ask gets the verify-repair loop: generate → AST-check →
+        #     repair once → confidence reflects whether the code actually parses
+        if _CODE_RE.search(question or ""):
+            return self._code(question, context, base)
 
         # 2. adaptive depth: only complex questions earn System-2 decomposition;
         #    simple ones stay a single direct pass so she doesn't over-think
@@ -180,40 +186,54 @@ class DeliberateReasoner:
         return bool(q.count("?") > 1 or _COMPLEX.search(q)
                     or len(q.split()) >= 12)
 
-    # ── exact truth: real arithmetic, not a guess ────────────────────────────────
-    def _exact_arithmetic(self, question: str) -> Optional[str]:
-        """If the question is essentially a calculation, compute it exactly —
-        percent-of, powers, and general arithmetic. Guarded: needs calculation
-        intent (or a near-bare expression) so 'born in 1990' isn't 'solved'."""
-        q = question or ""
-        stripped = re.sub(r"[\d\s.+\-*/%()^]", "", q)
-        near_bare = len(stripped) <= 4
-        intent = bool(_CALC_INTENT.search(q))
+    # ── coding: generate → verify (AST) → repair once ────────────────────────────
+    def _code(self, question: str, context: Optional[dict], base: float
+              ) -> Deliberation:
+        """The answer is code, so it can be CHECKED: parse it with the real
+        Python AST. Invalid code gets one repair pass with the actual issues;
+        code that still doesn't parse is reported at low confidence so the
+        caller escalates instead of shipping something broken."""
+        prompt = (question + "\n\nGive only the code, as plain indented text, "
+                  "no explanations, no markdown fences.")
+        code = self.substrate.generate(prompt, context=context, temperature=0.2)
+        if not (code or "").strip():
+            return Deliberation(answer="", steps=[], confidence=0.15)
+        self.code_checked += 1
+        issues = self._lint(code)
+        steps = [Step(question, "code", "draft generated", base)]
+        if issues:
+            fix_prompt = (question + "\n\nYour previous code:\n" + code
+                          + "\n\nIt has these problems: " + "; ".join(issues[:4])
+                          + "\nGive only the corrected code, plain text.")
+            fixed = self.substrate.generate(fix_prompt, context=context,
+                                            temperature=0.2)
+            if (fixed or "").strip():
+                new_issues = self._lint(fixed)
+                if len(new_issues) < len(issues):
+                    code, issues = fixed, new_issues
+                    self.code_repaired += 1
+                    steps.append(Step("repair", "code", "repaired", base))
+        valid = not any("syntax" in i.lower() or "parse" in i.lower()
+                        for i in issues)
+        conf = min(0.85, base + 0.15) if valid and not issues else \
+            (base * 0.9 if valid else 0.3)
+        steps.append(Step("verify", "code",
+                          "parses clean" if not issues else "; ".join(issues[:3]),
+                          1.0 if not issues else 0.3))
+        return Deliberation(answer=code.strip(), steps=steps,
+                            confidence=round(conf, 3))
 
-        pm = _PERCENT_OF.search(q)              # "15% of 200"
-        if pm and (intent or near_bare or "%" in q):
-            val = float(pm.group(1)) / 100.0 * float(pm.group(2))
-            return f"{pm.group(1)}% of {pm.group(2)} = {_fmt(val)}"
-
-        pw = _POWER.search(q)                   # "2^10", "2 to the power of 10"
-        if pw and (intent or near_bare):
-            try:
-                val = wt.math_solve(f"{pw.group(1)} ** {pw.group(2)}")["value"]
-            except Exception:  # noqa: BLE001
-                return None
-            return f"{pw.group(1)}^{pw.group(2)} = {_fmt(val)}"
-
-        m = _EXPR.search(q)                      # general "48 * 12 + 5"
-        if not m:
-            return None
-        expr = m.group(0).strip()
-        if not re.search(r"[-+*/%]", expr) or not (intent or near_bare):
-            return None
+    @staticmethod
+    def _lint(code: str) -> list[str]:
+        """Real verification: the Python AST either parses the code or it
+        doesn't. Non-Python answers simply report a parse issue → low trust."""
         try:
-            value = wt.math_solve(expr)["value"]
-        except Exception:  # noqa: BLE001 — not really arithmetic; fall through
-            return None
-        return f"{expr} = {_fmt(value)}"
+            result = wt.debug_python(code)
+            return list(result.get("issues") or [])
+        except SyntaxError as e:
+            return [f"syntax error: {e.msg} (line {e.lineno})"]
+        except Exception as e:  # noqa: BLE001
+            return [f"could not parse: {e}"]
 
     # ── decomposition ────────────────────────────────────────────────────────────
     def _plan(self, question: str, context: Optional[dict]) -> list[str]:
@@ -231,10 +251,21 @@ class DeliberateReasoner:
 
     def _solve_step(self, step: str, question: str, context: Optional[dict],
                     memory: list[str]) -> Step:
-        exact = self._exact_arithmetic(step)
-        if exact is not None:
+        # exact tools first: a checkable step is computed, never generated
+        solved = exact.solve(step)
+        if solved is not None:
             self.math_steps += 1
-            return Step(step, "math", exact, 1.0)
+            return Step(step, "math", solved, 1.0)
+        # recall-shaped steps read her own notes, not the language faculty
+        if self.retriever is not None and _RECALL_RE.search(step):
+            try:
+                found = (self.retriever(step) or "").strip()
+            except Exception:  # noqa: BLE001 — retrieval faults fall to reasoning
+                log.debug("retriever failed on step", exc_info=True)
+                found = ""
+            if found:
+                self.recall_steps += 1
+                return Step(step, "recall", found[:400], 0.75)
         prior = ("\n".join(memory[-3:]) + "\n") if memory else ""
         prompt = (f"Question: {question}\n{prior}Now do this step and give only "
                   f"its result: {step}")
@@ -281,5 +312,9 @@ class DeliberateReasoner:
                 "asked": self.asked, "answered": self.answered,
                 "failed": self.failed, "exact_answers": self.exact_answers,
                 "math_steps": self.math_steps,
+                "recall_steps": self.recall_steps,
+                "code_checked": self.code_checked,
+                "code_repaired": self.code_repaired,
+                "has_retriever": self.retriever is not None,
                 "avg_latency_ms": round(self.total_latency_ms / self.answered, 1)
                 if self.answered else 0.0}

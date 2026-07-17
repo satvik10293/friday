@@ -34,20 +34,35 @@ def _reasoning_config() -> dict:
         return {}
 
 
-def build_reasoner(*, local_reasoner=None, ios=None) -> Optional[DeliberateReasoner]:
+def build_reasoner(*, local_reasoner=None, ios=None, knowledge=None
+                   ) -> Optional[DeliberateReasoner]:
     """Assemble the deliberate brain over the sharpest available substrate (the
-    pulled local model if ready, else the builtin team). Returns None only when
-    there is no faculty at all. Never raises."""
+    pulled local model if ready, else the builtin team), with her knowledge
+    base wired in as the recall tool. Returns None only when there is no
+    faculty at all. Never raises."""
     try:
         substrate = best_substrate(local_reasoner=local_reasoner, ios=ios)
         if substrate is None:
             return None
+        retriever = None
+        if knowledge is not None:
+            def retriever(query: str) -> str:
+                """Recall steps read her own notes (cleaned of metadata)."""
+                try:
+                    entries = knowledge.search_knowledge(query, k=2)
+                except Exception:  # noqa: BLE001
+                    return ""
+                from core.intelligence.mini_brains import clean_snippet
+                parts = [clean_snippet(getattr(e, "content", "") or "")
+                         for e in entries or []]
+                return " ".join(p for p in parts if p)[:600]
         cfg = _reasoning_config()
         return DeliberateReasoner(
             substrate,
             self_consistency=int(cfg.get("self_consistency", 1)),
             max_steps=int(cfg.get("max_steps", 4)),
-            decompose=cfg.get("decompose", True))
+            decompose=cfg.get("decompose", True),
+            retriever=retriever)
     except Exception as e:  # noqa: BLE001 — the brain is optional, boot never breaks
         log.debug("reasoner build failed: %s", e)
         return None
