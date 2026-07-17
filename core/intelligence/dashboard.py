@@ -25,7 +25,7 @@ class IntelligenceDashboard:
                             "benchmarks": m.get("benchmark_scores", {})} for m in infos]}
 
     def resources_panel(self) -> dict:
-        return {"system": self._ios.health.system(),
+        return {"system": self._ios.monitor.system(),
                 "memory_mb": self._ios.models.memory_usage_mb(),
                 "cache": self._ios.cache.stats()}
 
@@ -37,7 +37,7 @@ class IntelligenceDashboard:
                             "ms": t["execution_ms"]} for t in traces]}
 
     def health_panel(self) -> dict:
-        return self._ios.health.health()
+        return self._ios.monitor.health()
 
     def snapshot(self) -> dict:
         return {

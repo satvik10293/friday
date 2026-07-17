@@ -244,6 +244,7 @@ class GoalService:
     def health(self) -> dict:
         c = self._store.counts_by_status()
         return {
+            "status": "ok",          # the DI health sweep requires a verdict
             "active": c.get("active", 0),
             "blocked": c.get("blocked", 0),
             "completed": c.get("completed", 0),

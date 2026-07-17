@@ -52,9 +52,12 @@ class IntelligenceOS:
         # core
         self.registry = IntelligenceRegistry(self._store)
         self.cache = IntelligenceCache(capacity=cache_capacity)
-        self.health = HealthMonitor()
-        self.models = ModelManager(self.registry, health=self.health)
-        self.execution = ExecutionManager(self.registry, health=self.health, cache=self.cache)
+        # NB: named `monitor`, not `health` — the DI container's health sweep
+        # calls `svc.health()` on every service, and an attribute named
+        # `health` shadows that protocol (a HealthMonitor isn't callable)
+        self.monitor = HealthMonitor()
+        self.models = ModelManager(self.registry, health=self.monitor)
+        self.execution = ExecutionManager(self.registry, health=self.monitor, cache=self.cache)
         self.confidence = ConfidenceEngine()
         self.critic = CriticEngine()
         self.reasoning = ReasoningEngine(
@@ -74,7 +77,7 @@ class IntelligenceOS:
         self.learning = IntelligenceLearningEngine(knowledge_service)
         self.benchmark = BenchmarkSystem(self._store)
         self.optimizer = Optimizer(cache=self.cache, model_manager=self.models,
-                                   health=self.health)
+                                   health=self.monitor)
         # M33: deterministic fast path — specialist mini brains answer common
         # task shapes in milliseconds before the model team is consulted.
         # RecallBrain shares One Memory so "do you remember…" sees everything
@@ -175,7 +178,11 @@ class IntelligenceOS:
     def health_report(self) -> dict:
         return {"status": "ok", "local_first": True,
                 "models_loaded": len(self.models.loaded_models()),
-                "health": self.health.health(), "cache": self.cache.stats()}
+                "health": self.monitor.health(), "cache": self.cache.stats()}
+
+    def health(self) -> dict:
+        """The DI container's health-sweep protocol (`svc.health()`)."""
+        return self.health_report()
 
     def attach(self, runtime) -> None:
         try:
