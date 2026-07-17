@@ -159,6 +159,16 @@ class TrayApp:
         if blocking:
             self._icon.run()
             return True
+        # Prefer pystray's own non-blocking API: on macOS the AppKit backend
+        # must drive its run loop itself (a background thread calling run() is
+        # rejected), and run_detached() handles that per-backend. Fall back to a
+        # daemon thread where run_detached isn't supported (older pystray/Linux).
+        try:
+            self._icon.run_detached()
+            return True
+        except Exception:  # noqa: BLE001 — not every backend supports detached
+            log.debug("tray run_detached unavailable; using a daemon thread",
+                      exc_info=True)
         self._thread = threading.Thread(target=self._icon.run, name="friday-tray",
                                         daemon=True)
         self._thread.start()

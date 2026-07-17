@@ -76,23 +76,33 @@ class FridayVoice:
             time.sleep(0.05)
         pygame.mixer.music.unload()      # release the file handle (Windows)
 
-    # ── offline fallback (Windows SAPI — built in, no dependencies) ───────────
+    # ── offline fallback (OS-native TTS — built in, no dependencies) ──────────
+    # Windows → SAPI (System.Speech); macOS → the `say` command. Both ship with
+    # the OS, so she keeps her voice when edge-tts (network) is unavailable.
     @staticmethod
     def _speak_offline(text: str) -> bool:
-        if sys.platform != "win32":
-            return False
-        try:
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "Add-Type -AssemblyName System.Speech; "
-                 "(New-Object System.Speech.Synthesis.SpeechSynthesizer)"
-                 ".Speak([Console]::In.ReadToEnd())"],
-                input=text, text=True, timeout=60, check=True,
-                capture_output=True)
-            return True
-        except Exception:  # noqa: BLE001
-            log.debug("SAPI fallback failed", exc_info=True)
-            return False
+        if sys.platform == "win32":
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     "Add-Type -AssemblyName System.Speech; "
+                     "(New-Object System.Speech.Synthesis.SpeechSynthesizer)"
+                     ".Speak([Console]::In.ReadToEnd())"],
+                    input=text, text=True, timeout=60, check=True,
+                    capture_output=True)
+                return True
+            except Exception:  # noqa: BLE001
+                log.debug("SAPI fallback failed", exc_info=True)
+                return False
+        if sys.platform == "darwin":
+            try:
+                subprocess.run(["say", text], timeout=60, check=True,
+                               capture_output=True)
+                return True
+            except Exception:  # noqa: BLE001
+                log.debug("macOS `say` fallback failed", exc_info=True)
+                return False
+        return False
 
     # ── the public voice ──────────────────────────────────────────────────────
     def say(self, text):
