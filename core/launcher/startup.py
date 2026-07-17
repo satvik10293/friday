@@ -187,7 +187,34 @@ class StartupSequence:
         self.components["executive"] = executive
         self.components["coordinator"] = CognitiveCoordinator(
             services=kernel, report_bus=self.components.get("report_bus"), executive=executive)
+        # THE COORDINATION LOOP: tick every brain each interval so the society
+        # actually runs — observe → report → Coordinator merges → Executive.
+        # Without this the 12 brains are built but dormant (they never report).
+        runtime = self.components.get("runtime")
+        if runtime is not None and self.start_runtime and hasattr(runtime, "schedule"):
+            cs = float((self.config.get("coordinator") or {}).get("cycle_s", 2.0))
+            try:
+                runtime.schedule("cognitive_cycle", self._run_cognitive_cycle, cs)
+            except Exception:  # noqa: BLE001 — the boot never fails on this
+                log.debug("cognitive cycle scheduling failed", exc_info=True)
         return "ok", "coordinator + executive wired"
+
+    def _run_cognitive_cycle(self) -> None:
+        """One coordinated pass over the whole society: every brain observes and
+        reports, then the Coordinator merges those Situation Reports into
+        Unified Situations for the Executive. This is what keeps every module
+        coordinated — it runs on the runtime scheduler each cycle."""
+        for brain in (self.components.get("brains") or {}).values():
+            try:
+                brain.tick()            # observe → report → publish (never raises)
+            except Exception:  # noqa: BLE001 — one brain never stalls the cycle
+                log.debug("brain tick failed in cycle", exc_info=True)
+        coordinator = self.components.get("coordinator")
+        if coordinator is not None:
+            try:
+                coordinator.coordinate()   # merge → Unified Situations → Executive
+            except Exception:  # noqa: BLE001
+                log.debug("coordinate failed in cycle", exc_info=True)
 
     def _stage_executive(self):
         return ("ok", "executive ready") if self.components.get("executive") is not None \

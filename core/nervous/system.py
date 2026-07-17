@@ -130,6 +130,11 @@ class NervousSystem:
         """Pulse periodically on the runtime scheduler (autonomic — it just
         keeps beating). Best-effort."""
         try:
+            # the Runtime's real API is schedule(name, fn, every); older/other
+            # schedulers expose every()/add_interval() — try all.
+            if hasattr(runtime, "schedule"):
+                runtime.schedule("nervous_pulse", self.pulse, every_s)
+                return True
             scheduler = getattr(runtime, "scheduler", None) or runtime
             for meth in ("every", "schedule_every", "add_interval"):
                 fn = getattr(scheduler, meth, None)
