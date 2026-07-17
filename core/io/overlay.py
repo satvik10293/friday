@@ -69,6 +69,7 @@ class Overlay:
         self._content: dict = {"state": "idle", "heard": "", "answer": ""}
         self._answer_hide_at: Optional[float] = None
         self._transparent = False
+        self._canvas_bg = _TRANSPARENT_KEY
         self._stop = threading.Event()
         self._started = False
         self.captured_excluded = False    # set True once affinity is applied
@@ -128,19 +129,35 @@ class Overlay:
             self._root = root
             root.overrideredirect(True)                 # borderless
             root.attributes("-topmost", True)           # always on top
-            # fully opaque text; the SEE-THROUGH comes from the transparent
-            # colour key (below), not from window alpha — dimming alpha would
-            # make the text faint too. The box disappears; only text floats.
+            # fully opaque text; the SEE-THROUGH comes from a transparent
+            # window, not from dimming alpha (which would fade the text too).
+            import sys
             root.attributes("-alpha", 1.0)
-            root.configure(bg=_TRANSPARENT_KEY)
             self._transparent = False
-            try:
-                root.attributes("-transparentcolor", _TRANSPARENT_KEY)
-                self._transparent = True                 # Windows: real blend
-            except tk.TclError:
-                root.attributes("-alpha", self.opacity)  # non-Windows: dim box
+            if sys.platform == "darwin":
+                # macOS: no transparentcolor key — use the native transparent
+                # window attribute (Tk 8.6 on Aqua). UNVERIFIED (built on
+                # Windows); the canvas bg becomes systemTransparent so only the
+                # outlined text shows.
+                try:
+                    root.attributes("-transparent", True)
+                    root.configure(bg="systemTransparent")
+                    self._canvas_bg = "systemTransparent"
+                    self._transparent = True
+                except tk.TclError:
+                    root.configure(bg=_TRANSPARENT_KEY)
+                    self._canvas_bg = _TRANSPARENT_KEY
+                    root.attributes("-alpha", self.opacity)
+            else:
+                root.configure(bg=_TRANSPARENT_KEY)
+                self._canvas_bg = _TRANSPARENT_KEY
+                try:
+                    root.attributes("-transparentcolor", _TRANSPARENT_KEY)
+                    self._transparent = True             # Windows: real blend
+                except tk.TclError:
+                    root.attributes("-alpha", self.opacity)   # e.g. Linux: dim
             self._build_widgets(tk, root)
-            self._apply_win32(root)
+            self._apply_platform(root)
             self._redraw()
             root.after(120, self._drain)
             root.mainloop()
@@ -151,7 +168,8 @@ class Overlay:
         # a transparent canvas: its background is the colour key, so it renders
         # fully clear. Text is drawn directly onto it (outlined for readability
         # on any wallpaper), so the words float on your screen — no box.
-        canvas = tk.Canvas(root, bg=_TRANSPARENT_KEY, highlightthickness=0, bd=0)
+        canvas = tk.Canvas(root, bg=getattr(self, "_canvas_bg", _TRANSPARENT_KEY),
+                           highlightthickness=0, bd=0)
         canvas.pack(fill="both", expand=True)
         self._widgets = {"canvas": canvas}
         self._content = {"state": "idle", "heard": "", "answer": ""}
@@ -204,10 +222,17 @@ class Overlay:
         y = margin if "top" in self.corner else sh - h - margin - 48
         root.geometry(f"{w}x{h}+{x}+{y}")
 
-    def _apply_win32(self, root) -> None:
+    def _apply_platform(self, root) -> None:
+        """Apply the OS-specific window magic: exclude from screen capture and
+        make it click-through. Windows and macOS have different APIs; Linux has
+        neither (the overlay is simply visible)."""
         import sys
-        if not sys.platform.startswith("win"):
-            return
+        if sys.platform.startswith("win"):
+            self._apply_win32(root)
+        elif sys.platform == "darwin":
+            self._apply_macos(root)
+
+    def _apply_win32(self, root) -> None:
         try:
             import ctypes
             u = ctypes.windll.user32
@@ -226,6 +251,32 @@ class Overlay:
             u.SetWindowLongW(hwnd, _GWL_EXSTYLE, ex)
         except Exception:  # noqa: BLE001
             log.debug("overlay win32 setup failed", exc_info=True)
+
+    def _apply_macos(self, root) -> None:
+        """macOS equivalent of the Win32 setup — UNVERIFIED (written on Windows;
+        needs a real Mac). Screen-capture exclusion via NSWindow.sharingType =
+        NSWindowSharingNone; click-through via ignoresMouseEvents. The NSWindow
+        is located by a unique title we stamp on the Tk window."""
+        try:
+            token = "friday-overlay-%d" % id(self)
+            root.title(token)               # a handle to find the NSWindow by
+            root.update_idletasks()
+            from AppKit import NSApp        # pyobjc; ships in the macOS edition
+            _NSWindowSharingNone = 0
+            for win in (NSApp.windows() or []):
+                try:
+                    if win.title() == token:
+                        if self.exclude_capture:
+                            win.setSharingType_(_NSWindowSharingNone)
+                            self.captured_excluded = True
+                        if self.click_through:
+                            win.setIgnoresMouseEvents_(True)
+                        win.setLevel_(3)     # NSFloatingWindowLevel ~ always on top
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
+        except Exception:  # noqa: BLE001 — mac window magic is best-effort
+            log.debug("overlay macOS setup failed", exc_info=True)
 
     def _drain(self) -> None:  # pragma: no cover - GUI thread
         import time

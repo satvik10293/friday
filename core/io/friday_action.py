@@ -21,6 +21,14 @@ if str(_ROOT) not in sys.path:
 log = logging.getLogger("friday.action")
 
 _IS_WIN = platform.system() == "Windows"
+_IS_MAC = platform.system() == "Darwin"
+
+
+def _osa(script: str) -> subprocess.CompletedProcess:
+    """Run an AppleScript one-liner (macOS). The scripting bridge for volume,
+    media, apps — the mac equivalent of the Win32 calls below."""
+    return subprocess.run(["osascript", "-e", script],
+                          capture_output=True, text=True, timeout=6)
 
 
 class FridayAction:
@@ -126,10 +134,20 @@ class FridayAction:
             "word":         "winword.exe",
             "excel":        "excel.exe",
         }
-        key     = name.lower().strip()
-        exe     = _WIN_APPS.get(key, name)
-        flags   = subprocess.CREATE_NO_WINDOW if _IS_WIN else 0
-        subprocess.Popen(exe, creationflags=flags, shell=True)
+        key = name.lower().strip()
+        if _IS_MAC:                                  # macOS: `open -a <App>`
+            _MAC_APPS = {"terminal": "Terminal", "vs code": "Visual Studio Code",
+                         "vscode": "Visual Studio Code", "chrome": "Google Chrome",
+                         "calculator": "Calculator", "notepad": "TextEdit",
+                         "explorer": "Finder", "finder": "Finder"}
+            app = _MAC_APPS.get(key, name)
+            subprocess.Popen(["open", "-a", app])
+            return f"Opened {name}"
+        if not _IS_WIN:                              # Linux: xdg-open / direct
+            subprocess.Popen([name])
+            return f"Opened {name}"
+        exe = _WIN_APPS.get(key, name)
+        subprocess.Popen(exe, creationflags=subprocess.CREATE_NO_WINDOW, shell=True)
         return f"Opened {name}"
 
     def close_app(self, name: str) -> str:
@@ -244,6 +262,17 @@ class FridayAction:
                 subprocess.run(f"nircmd setsysvolume {int(level * 655.35)}",
                                shell=True, capture_output=True)
                 return f"Volume set to {level}%"
+        if _IS_MAC:                                  # macOS: AppleScript
+            _osa(f"set volume output volume {level}")
+            return f"Volume set to {level}%"
+        # Linux: try amixer / pactl, best-effort
+        for cmd in ([f"amixer -q sset Master {level}%"],
+                    [f"pactl set-sink-volume @DEFAULT_SINK@ {level}%"]):
+            try:
+                subprocess.run(cmd[0], shell=True, capture_output=True, timeout=5)
+                return f"Volume set to {level}%"
+            except Exception:  # noqa: BLE001
+                continue
         return f"Volume control not implemented for {platform.system()}"
 
     # ── Web ─────────────────────────────────────────────────────────────────────
@@ -363,6 +392,9 @@ class FridayAction:
             return -1
 
     def mute(self) -> str:
+        if _IS_MAC:
+            _osa("set volume output muted true")
+            return "Muted"
         if not _IS_WIN:
             return "Mute not implemented on this platform"
         try:
@@ -378,6 +410,9 @@ class FridayAction:
             return f"Mute error: {e}"
 
     def unmute(self) -> str:
+        if _IS_MAC:
+            _osa("set volume output muted false")
+            return "Unmuted"
         if not _IS_WIN:
             return "Unmute not implemented on this platform"
         try:
@@ -396,6 +431,19 @@ class FridayAction:
 
     def get_wifi_status(self) -> dict:
         try:
+            if _IS_MAC:                              # macOS: networksetup
+                out = subprocess.run(
+                    ["networksetup", "-getairportnetwork", "en0"],
+                    capture_output=True, text=True, timeout=5).stdout
+                ssid = out.split(": ", 1)[-1].strip() if ":" in out else ""
+                # "You are not associated…" means not connected
+                connected = bool(ssid) and "not associated" not in out.lower()
+                return {"ssid": ssid if connected else "", "signal": "",
+                        "connected": connected}
+            if not _IS_WIN:                          # Linux: iwgetid
+                ssid = subprocess.run(["iwgetid", "-r"], capture_output=True,
+                                      text=True, timeout=5).stdout.strip()
+                return {"ssid": ssid, "signal": "", "connected": bool(ssid)}
             result = subprocess.run("netsh wlan show interfaces",
                                     capture_output=True, text=True, shell=True, timeout=5)
             ssid = signal = ""

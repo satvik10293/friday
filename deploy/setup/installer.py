@@ -147,6 +147,23 @@ def create_shortcuts(dest: Path) -> list[str]:
             created = [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
         except Exception:  # noqa: BLE001
             pass
+    elif sys.platform == "darwin":
+        # macOS: make the .command launcher executable and drop a Desktop alias
+        try:
+            import os
+            launcher = dest / "deploy" / "macos" / "friday-app.command"
+            if launcher.exists():
+                os.chmod(launcher, 0o755)
+                alias = Path.home() / "Desktop" / "FRIDAY.command"
+                try:
+                    if alias.exists() or alias.is_symlink():
+                        alias.unlink()
+                    alias.symlink_to(launcher)
+                    created = [str(alias)]
+                except OSError:
+                    created = [str(launcher)]        # symlink blocked → point at it
+        except Exception:  # noqa: BLE001
+            pass
     elif sys.platform.startswith("linux"):
         try:
             apps = Path.home() / ".local" / "share" / "applications"
