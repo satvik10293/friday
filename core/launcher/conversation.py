@@ -267,6 +267,43 @@ class ConversationBridge:
             log.debug("self model introspection failed", exc_info=True)
         return None
 
+    # ── truthful self-assessment: how independent is she, really ─────────────────
+    _INDEP_RE = re.compile(
+        r"\bhow (?:independent|self.?sufficient) are you\b|"
+        r"\bhow (?:often|much) do you (?:answer|think) (?:for )?yourself\b|"
+        r"\bare you getting smarter\b|\bhow smart (?:are you getting|have you "
+        r"(?:gotten|become))\b|\bhow much have you learn(?:ed|t)\b", re.I)
+
+    def _independence(self, command: str) -> Optional[str]:
+        """Answer 'are you getting smarter?' with MEASURED numbers — the
+        DecisionLog's independence metric plus the notebook's growth — never a
+        vibe. Returns None unless asked; never raises."""
+        if not self._INDEP_RE.search(command or ""):
+            return None
+        try:
+            stats = self._log().independence()
+        except Exception:  # noqa: BLE001
+            log.debug("independence query failed", exc_info=True)
+            return None
+        if not stats or not stats.get("total"):
+            return ("I haven't made enough decisions to measure yet — "
+                    "ask me again after we've talked a while.")
+        pct = stats.get("independence_pct")
+        answer = (f"Measured, not guessed: I've answered {pct}% of my "
+                  f"{stats['total']} decisions entirely on my own, no cloud.")
+        if self.distiller is not None:
+            try:
+                d = self.distiller.status()
+                if d.get("distilled"):
+                    n = d["distilled"]
+                    answer += (f" I've also distilled {n} topic"
+                               f"{'s' if n != 1 else ''} into my own knowledge"
+                               + (f", with {d['pending']} more queued to study."
+                                  if d.get("pending") else "."))
+            except Exception:  # noqa: BLE001
+                pass
+        return answer
+
     _APPROVAL_TTL_S = 60.0
 
     def _proposals(self, command: str) -> Optional[str]:
@@ -841,6 +878,13 @@ class ConversationBridge:
             return self._respond_directly(turn, "self_model", introspective, t0,
                                           command=command)
 
+        # "are you getting smarter?" → the measured answer (DecisionLog +
+        # notebook growth), never a vibe
+        measured = self._independence(command)
+        if measured is not None:
+            return self._respond_directly(turn, "independence", measured, t0,
+                                          command=command)
+
         # goal proposals (M28): list / approve / reject straight from the store
         proposal_answer = self._proposals(command)
         if proposal_answer is not None:
@@ -979,6 +1023,15 @@ class ConversationBridge:
                     route.append("groq_teacher")
                     self._teacher_turns += 1
                     self._note_gap(command)  # taught once → distilled forever
+
+            # she failed the turn everywhere → that's the STRONGEST gap signal:
+            # queue the topic so a later distiller cycle studies it, and next
+            # time she knows (learning from failure, not only from the cloud)
+            ended_weak = (not getattr(response, "ok", False)
+                          or float(getattr(response, "confidence", 0.0) or 0.0)
+                          < self.escalate_threshold)
+            if ended_weak and not self._is_personal(command):
+                self._note_gap(command)
 
         self._record(turn=turn, route=route, response=response,
                      latency_ms=int((time.perf_counter() - t0) * 1000),

@@ -50,6 +50,48 @@ def _safe_eval(expr: str) -> Optional[float]:
         return None
 
 
+# spoken numbers → digits ("forty eight" → 48), because STT sometimes writes
+# numbers out as words. Conversion is harmless in prose: the solvers still
+# require calculation intent + a computable shape before anything is 'solved'.
+_ONES = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+         "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+         "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+         "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+         "nineteen": 19}
+_TENS_W = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+           "seventy": 70, "eighty": 80, "ninety": 90}
+_SCALES = {"hundred": 100, "thousand": 1_000, "million": 1_000_000}
+_NUM_WORD = re.compile(
+    r"\b(?:(?:" + "|".join(list(_ONES) + list(_TENS_W) + list(_SCALES))
+    + r")(?:[\s-]+(?:and[\s-]+)?)?)+\b", re.I)
+
+
+def _words_to_int(phrase: str) -> Optional[int]:
+    total, current, saw = 0, 0, False
+    for word in re.split(r"[\s-]+", phrase.lower().strip()):
+        if word == "and":
+            continue
+        if word in _ONES:
+            current += _ONES[word]; saw = True
+        elif word in _TENS_W:
+            current += _TENS_W[word]; saw = True
+        elif word == "hundred":
+            current = (current or 1) * 100; saw = True
+        elif word in _SCALES:
+            total += (current or 1) * _SCALES[word]; current = 0; saw = True
+        else:
+            return None
+    return total + current if saw else None
+
+
+def _numberize(question: str) -> str:
+    """'forty eight times twelve' → '48 times 12'."""
+    def _sub(m: re.Match) -> str:
+        value = _words_to_int(m.group(0))
+        return m.group(0) if value is None else f" {value} "
+    return _NUM_WORD.sub(_sub, question or "")
+
+
 # spoken operators → symbols, so voice-transcribed math is computable.
 # Order matters: multi-word phrases first. "minus" only between number-ish
 # contexts is not enforced — the arithmetic guard (intent + computable
@@ -67,8 +109,9 @@ _WORD_OPS: list[tuple[re.Pattern, str]] = [
 
 
 def normalize(question: str) -> str:
-    """Spoken math → symbolic math ('48 times 12 plus 5' → '48 * 12 + 5')."""
-    q = question or ""
+    """Spoken math → symbolic math: number words become digits, operator words
+    become symbols ('forty eight times twelve plus five' → '48 * 12 + 5')."""
+    q = _numberize(question or "")
     for pattern, repl in _WORD_OPS:
         q = pattern.sub(repl, q)
     return q
@@ -92,7 +135,7 @@ _POWER = re.compile(r"(\d+(?:\.\d+)?)\s*(?:\^|\*\*)\s*(\d+(?:\.\d+)?)")
 
 
 def _clean_expr(expr: str) -> str:
-    return expr.replace(",", "").strip()
+    return re.sub(r"\s+", " ", expr.replace(",", "")).strip()
 
 
 def percent(question: str) -> Optional[str]:
@@ -283,10 +326,75 @@ def dates(question: str, *, today: Optional[_dt.date] = None) -> Optional[str]:
     return None
 
 
+# ── inverse algebra: solve for the unknown, exactly ──────────────────────────
+
+_X = r"(?:x|it|a number|what number|which number|some number|the number)"
+_EQ = r"(?:is|equals|makes|gives|will be|=)"
+# "what number plus 5 makes 12" / "if x * 3 is 21"
+_ALG_LEFT = re.compile(
+    rf"(?:if\s+)?{_X}\s*([+\-*/])\s*(\d+(?:\.\d+)?)\s+{_EQ}\s+(\d+(?:\.\d+)?)",
+    re.I)
+# "5 plus what number is 12" / "20 minus what is 8"
+_ALG_RIGHT = re.compile(
+    rf"(\d+(?:\.\d+)?)\s*([+\-*/])\s*(?:{_X}|what)\s+{_EQ}\s+(\d+(?:\.\d+)?)",
+    re.I)
+
+
+def algebra(question: str) -> Optional[str]:
+    q = normalize(question)
+    m = _ALG_LEFT.search(q)
+    if m:                                   # x OP n = m  →  invert the OP
+        op, n, target = m.group(1), float(m.group(2)), float(m.group(3))
+        if op == "/" and n == 0:
+            return None
+        x = {"+": target - n, "-": target + n, "*": (target / n if n else None),
+             "/": target * n}[op]
+        if x is None:
+            return None
+        return f"The number is {_fmt(x)}  ({_fmt(x)} {op} {_fmt(n)} = {_fmt(target)})."
+    m = _ALG_RIGHT.search(q)
+    if m:                                   # n OP x = m
+        n, op, target = float(m.group(1)), m.group(2), float(m.group(3))
+        x = {"+": target - n, "-": n - target,
+             "*": (target / n if n else None),
+             "/": (n / target if target else None)}[op]
+        if x is None:
+            return None
+        return f"The number is {_fmt(x)}  ({_fmt(n)} {op} {_fmt(x)} = {_fmt(target)})."
+    return None
+
+
+# ── aggregates: series sums and averages ─────────────────────────────────────
+
+_SERIES = re.compile(
+    r"sum of (?:all )?(?:the )?(?:numbers?|integers?)\s+(?:from|between)\s+"
+    r"(\d+)\s+(?:to|and)\s+(\d+)", re.I)
+_AVERAGE = re.compile(
+    r"\b(?:average|mean)\s+of\s+((?:\d+(?:\.\d+)?(?:\s*,\s*|\s+and\s+|\s+))+"
+    r"\d+(?:\.\d+)?)", re.I)
+
+
+def aggregate(question: str) -> Optional[str]:
+    q = normalize(question)
+    m = _SERIES.search(q)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        lo, hi = min(a, b), max(a, b)
+        total = (lo + hi) * (hi - lo + 1) // 2      # arithmetic series, exact
+        return f"The sum of the numbers from {lo} to {hi} is {total}."
+    m = _AVERAGE.search(q)
+    if m:
+        nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", m.group(1))]
+        if len(nums) >= 2:
+            return (f"The average of {', '.join(_fmt(n) for n in nums)} "
+                    f"is {_fmt(sum(nums) / len(nums))}.")
+    return None
+
+
 # ── the front door ────────────────────────────────────────────────────────────
 
 _SOLVERS: list[Callable[[str], Optional[str]]] = [
-    comparison, percent, power, units, dates, arithmetic]
+    comparison, percent, power, units, dates, algebra, aggregate, arithmetic]
 
 
 def solve(question: str) -> Optional[str]:

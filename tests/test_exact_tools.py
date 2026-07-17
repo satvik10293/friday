@@ -35,6 +35,39 @@ def test_prose_with_numbers_is_not_solved():
     assert exact.solve("I met him 3 times last week") is None
 
 
+# ── numbers spoken as words (STT does this) ───────────────────────────────────
+
+def test_word_numbers_are_computed():
+    assert exact.solve("what is forty eight times twelve") == "48 * 12 = 576"
+    assert exact.solve("what is one hundred and five plus twenty") == \
+        "105 + 20 = 125"
+    assert exact.solve("what is two thousand minus three hundred") == \
+        "2000 - 300 = 1700"
+
+
+# ── inverse algebra: solve for the unknown ────────────────────────────────────
+
+def test_solves_for_the_unknown():
+    assert "The number is 7" in exact.solve("what number plus 5 makes 12")
+    assert "The number is 7" in exact.solve("if x times 3 is 21, what is x?")
+    assert "The number is 12" in exact.solve("20 minus what number is 8")
+    assert "The number is 4" in exact.solve("5 times what number equals 20")
+
+
+def test_division_by_zero_is_not_solved():
+    assert exact.algebra("what number divided by 0 makes 5") is None
+
+
+# ── aggregates ────────────────────────────────────────────────────────────────
+
+def test_series_sum_is_exact():
+    assert "5050" in exact.solve("what is the sum of the numbers from 1 to 100")
+
+
+def test_average_is_computed():
+    assert "is 6" in exact.solve("what is the average of 3, 5 and 10")
+
+
 # ── units ─────────────────────────────────────────────────────────────────────
 
 def test_unit_conversions_are_exact():

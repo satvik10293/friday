@@ -198,3 +198,40 @@ def test_uncovered_question_still_goes_to_the_cloud_and_queues_the_gap(tmp_path)
 def test_topic_key_is_order_insensitive():
     assert _topic_key("how does photosynthesis work") == \
         _topic_key("photosynthesis — how does it work?")
+
+
+def test_a_turn_she_failed_everywhere_queues_the_gap(tmp_path):
+    # no cloud, no teacher, weak local answer → the topic still gets studied
+    d = _distiller(tmp_path)
+
+    class _WeakIOS(_GroundingIOS):
+        def think(self, prompt, context=None, **kw):
+            r = super().think(prompt, context={}, **kw)   # no knowledge → weak
+            return r
+
+    bridge = ConversationBridge(
+        _WeakIOS(), decision_log=_Log(), distiller=d,
+        speech=_SpeechOutput(synthesizer=lambda t: None))
+    bridge.think("how does quantum tunneling work?")
+    assert d.status()["pending"] == 1            # learning from failure
+
+
+# ── "are you getting smarter?" → measured, never a vibe ───────────────────────
+
+class _MeasuredLog(_Log):
+    def independence(self):
+        return {"total": 40, "local_turns": 30, "independence_pct": 75.0,
+                "autonomous_pct": 0.0}
+
+
+def test_getting_smarter_is_answered_with_measured_numbers(tmp_path):
+    d = _distiller(tmp_path, _Knowledge(), _Teacher())
+    d.note_gap("how do volcanoes form?")
+    d.distill_once()
+    bridge = ConversationBridge(
+        _GroundingIOS(), decision_log=_MeasuredLog(), distiller=d,
+        speech=_SpeechOutput(synthesizer=lambda t: None))
+    resp = bridge.think("are you getting smarter?")
+    assert "75.0%" in resp.answer and "40" in resp.answer   # measured
+    assert "distilled 1 topic" in resp.answer               # notebook growth
+    assert "independence" in bridge._decision_log.rows[-1]["route"]
