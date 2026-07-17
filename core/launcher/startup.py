@@ -450,17 +450,42 @@ class StartupSequence:
                 reasoner = get_cloud_reasoner()  # None unless cloud-primary + key
             except Exception:  # noqa: BLE001 — cloud-off must never break boot
                 pass
+            local_reasoner = None
+            try:                             # her OWN deliberate reasoning brain (M54)
+                from core.intelligence.local_reasoner import get_local_reasoner
+                from core.reasoning import build_reasoner
+                # the deliberate mind reasons over the sharpest substrate: the
+                # pulled local model if ready, else the builtin team — so she
+                # reasons today and sharpens when weights arrive
+                local_reasoner = build_reasoner(
+                    local_reasoner=get_local_reasoner(), ios=ios)
+            except Exception:  # noqa: BLE001 — the local brain is always optional
+                pass
             knowledge = None
             try:                             # librarian: M7 bridge + world fetcher (M40)
                 from core.knowledge.knowledge_service import get_knowledge_service
                 knowledge = get_knowledge_service()
             except Exception:  # noqa: BLE001 — the librarian is always optional
                 pass
+            distiller = None
+            try:                             # the notebook trick (M55): every cloud
+                from core.knowledge.distiller import get_distiller
+                distiller = get_distiller()  # answer becomes a studied local note
+                runtime = self.components.get("runtime")
+                if distiller is not None and runtime is not None \
+                        and self.start_runtime and hasattr(runtime, "schedule"):
+                    dc = (self.config.get("distiller") or {})
+                    runtime.schedule("distiller_cycle", distiller.run_cycle,
+                                     float(dc.get("cycle_s", 600.0)))
+            except Exception:  # noqa: BLE001 — the notebook is always optional
+                pass
             bridge = ConversationBridge(
                 ios, memory=self.components.get("memory_service"),
                 self_model=self.components.get("self_model"),
                 goals=self.components.get("goals"), teacher=teacher,
                 knowledge=knowledge, reasoner=reasoner,
+                local_reasoner=local_reasoner,          # her own local brain (M54)
+                distiller=distiller,                    # the notebook trick (M55)
                 brains=self.components.get("brains"),   # addressable society (M46)
                 skills=self.components.get("skills"))   # governed action layer (M47)
             self.components["conversation"] = bridge

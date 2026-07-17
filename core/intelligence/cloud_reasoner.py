@@ -59,6 +59,10 @@ class ReasonedAnswer:
     model: str = ""
     latency_ms: float = 0.0
     error: str = ""
+    # how much the reasoner trusts this answer (0–1). The cloud is trusted by
+    # default; the local deliberate brain reports a calibrated value so a weak
+    # answer can still ESCALATE (librarian/cloud) instead of being taken.
+    confidence: float = 0.9
 
 
 @dataclass

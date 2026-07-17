@@ -161,7 +161,8 @@ class ConversationBridge:
 
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
                  memory=None, self_model=None, goals=None, teacher=None,
-                 knowledge=None, reasoner=None, core_memory=None, brains=None,
+                 knowledge=None, reasoner=None, local_reasoner=None,
+                 distiller=None, core_memory=None, brains=None,
                  conversation_state=None, skills=None, overlay=None,
                  speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
@@ -173,6 +174,8 @@ class ConversationBridge:
         self.teacher = teacher              # temporary cloud teacher (M30)
         self.knowledge = knowledge          # M7 KnowledgeService → librarian (M40)
         self.reasoner = reasoner            # cloud-primary basic reasoner (M42)
+        self.local_reasoner = local_reasoner  # her OWN local reasoning brain (M54)
+        self.distiller = distiller          # the notebook trick (M55)
         self.brains = dict(brains or {})    # addressable brain society (M46)
         self.skills = skills                # governed action executor (M47)
         self.overlay = overlay              # private on-screen overlay (M51)
@@ -202,6 +205,8 @@ class ConversationBridge:
         self._teacher_turns = 0
         self._librarian_turns = 0
         self._cloud_turns = 0
+        self._local_turns = 0
+        self._notebook_turns = 0
         self._skill_turns = 0
         self._screen_reads = 0
         self._echoes_dropped = 0
@@ -618,6 +623,111 @@ class ConversationBridge:
             latency_ms=reasoned.latency_ms)
         return response, memory_used
 
+    def _local_pass(self, command: str):
+        """(M54) Her OWN local reasoning brain: a real on-device model behind a
+        draft→self-critique→final scaffold, grounded in local memory. Runs when
+        the cloud didn't answer (off, personal, or failed), ahead of the
+        keyword team / librarian / teacher.
+
+        Unlike the cloud pass this MAY reason over private memory — nothing
+        leaves the box — so it is the brain personal questions are meant for.
+        Returns (RouterResponse, memory_used_ids) on a confident answer, else
+        (None, [])."""
+        facts: list[str] = []
+        memory_used: list = []
+        if self.memory is not None:
+            try:
+                for m in self.memory.recall(command, k=6):
+                    if isinstance(m, dict) and (m.get("content") or "").strip():
+                        facts.append(m["content"])
+                        if m.get("id") is not None:
+                            memory_used.append(m["id"])
+            except Exception:  # noqa: BLE001 — grounding is best-effort
+                log.debug("memory recall for local pass failed", exc_info=True)
+        try:                              # local stays on-box → private is fine
+            standing = self.core.render_block(include_private=True, query=command)
+        except Exception:  # noqa: BLE001
+            log.debug("core memory render (local) failed", exc_info=True)
+            standing = ""
+        reasoned = self.local_reasoner.reason(command, context={
+            "recent_turns": list(self._window), "facts": facts[:5],
+            "standing": standing})
+        if not getattr(reasoned, "ok", False) or not (reasoned.answer or "").strip():
+            return None, []
+        # honest confidence: a weak local answer (e.g. reasoning over the plain
+        # model team) DEFERS — return None so the chain escalates (deep pass →
+        # librarian → teacher). A confident local answer (exact math, or the
+        # pulled model) stands. Exact-grounded answers report ~1.0.
+        confidence = float(getattr(reasoned, "confidence", 0.9) or 0.0)
+        if confidence < self.escalate_threshold:
+            return None, []
+        from core.intelligence.router import RouterResponse
+        response = RouterResponse(
+            task="general", complexity="local", strategy="local_reasoner",
+            ok=True, answer=reasoned.answer, confidence=confidence,
+            models_used=[f"local:{reasoned.model}"],
+            latency_ms=reasoned.latency_ms)
+        return response, memory_used
+
+    # ── the notebook trick (M55): her own distilled notes answer FIRST ───────────
+    @staticmethod
+    def _query_keywords(text: str) -> set:
+        stop = {"the", "a", "an", "to", "of", "and", "or", "is", "are", "it",
+                "how", "do", "does", "i", "you", "what", "whats", "why", "when",
+                "where", "who", "this", "that", "with", "for", "in", "on",
+                "tell", "me", "about", "can", "please", "friday"}
+        return {w for w in re.findall(r"[a-z0-9']+", (text or "").lower())
+                if w not in stop and len(w) >= 3}
+
+    def _notebook_pass(self, command: str):
+        """Answer from her OWN knowledge base before phoning the cloud. Only a
+        note that clearly covers the question counts (keyword coverage + stored
+        confidence); her reader grounds the answer on the note, so it's
+        provenance over generation. Returns (RouterResponse, [note_id]) or
+        (None, []). Never raises."""
+        if self.knowledge is None:
+            return None, []
+        kws = self._query_keywords(command)
+        if len(kws) < 2:
+            return None, []                      # too thin to look up
+        try:
+            entries = self.knowledge.search_knowledge(command, k=3)
+        except Exception:  # noqa: BLE001 — the notebook must never break a turn
+            log.debug("notebook search failed", exc_info=True)
+            return None, []
+        best, best_cov = None, 0.0
+        for e in entries or []:
+            if float(getattr(e, "confidence", 0.0) or 0.0) < 0.6:
+                continue
+            body = f"{getattr(e, 'title', '')} {getattr(e, 'content', '')}".lower()
+            cov = sum(1 for w in kws if w in body) / len(kws)
+            if cov > best_cov:
+                best, best_cov = e, cov
+        if best is None or best_cov < 0.6:
+            return None, []                      # the notebook doesn't cover it
+        try:
+            grounded = self.ios.think(command, context={
+                "query": command, "memories": [],
+                "knowledge": [{"title": best.title, "content": best.content,
+                               "confidence": best.confidence}]},
+                build_context=False, use_mini_brains=False)
+        except Exception:  # noqa: BLE001
+            log.debug("notebook grounding failed", exc_info=True)
+            return None, []
+        if not getattr(grounded, "ok", False) or \
+                float(getattr(grounded, "confidence", 0.0) or 0.0) < self.escalate_threshold:
+            return None, []
+        return grounded, [getattr(best, "id", None)]
+
+    def _note_gap(self, command: str) -> None:
+        """The cloud just answered — that's a gap in her notebook. Queue the
+        topic for background distillation (personal never queues)."""
+        if self.distiller is not None:
+            try:
+                self.distiller.note_gap(command)
+            except Exception:  # noqa: BLE001 — harvesting never breaks a turn
+                log.debug("note_gap failed", exc_info=True)
+
     def _consult_librarian(self, command: str, reasoned_ctx: dict):
         """Look the question up in the world's reference library (M7 bridge →
         wikipedia) and ground HER OWN reader on the fetched extract. Returns a
@@ -774,13 +884,36 @@ class ConversationBridge:
         route: list = []
         memory_used: list = []
         cloud_tried = False
-        if self.reasoner is not None and self.reasoner.available() \
-                and not self._is_personal(command):
+
+        # (M55) THE NOTEBOOK FIRST: a question her own distilled notes clearly
+        # cover is answered locally — no cloud call. This is the independence
+        # flywheel: every cloud answer below queues its topic for distillation,
+        # so this branch catches more turns over time.
+        response, memory_used = self._notebook_pass(command)
+        if response is not None:
+            route.append("notebook")
+            self._notebook_turns += 1
+
+        if response is None and self.reasoner is not None \
+                and self.reasoner.available() and not self._is_personal(command):
             cloud_tried = True
             response, memory_used = self._cloud_pass(command)
             if response is not None:
                 route.append("cloud_reasoner")
                 self._cloud_turns += 1
+                self._note_gap(command)      # the notebook studies this topic
+
+        # (M54) her OWN local reasoning brain: when the cloud didn't answer
+        # (off, personal, or a failed cloud turn), a real on-device reasoning
+        # model tries BEFORE the keyword team / librarian / teacher. Personal
+        # questions land here by design — this path may use private memory.
+        if response is None and self.local_reasoner is not None \
+                and self.local_reasoner.available():
+            local_resp, memory_used = self._local_pass(command)
+            if local_resp is not None:
+                response = local_resp
+                route.append("local_reasoner")
+                self._local_turns += 1
 
         if response is None:
             response = self.ios.think(command, context=ctx)
@@ -845,6 +978,7 @@ class ConversationBridge:
                         latency_ms=taught.latency_ms)
                     route.append("groq_teacher")
                     self._teacher_turns += 1
+                    self._note_gap(command)  # taught once → distilled forever
 
         self._record(turn=turn, route=route, response=response,
                      latency_ms=int((time.perf_counter() - t0) * 1000),
@@ -901,12 +1035,18 @@ class ConversationBridge:
                 "teacher_turns": self._teacher_turns,
                 "librarian_turns": self._librarian_turns,
                 "cloud_turns": self._cloud_turns,
+                "local_turns": self._local_turns,
+                "notebook_turns": self._notebook_turns,
                 "skill_turns": self._skill_turns,
                 "screen_reads": self._screen_reads,
                 "echoes_dropped": self._echoes_dropped,
                 "noise_dropped": self._noise_dropped,
                 "reasoner": self.reasoner.status() if self.reasoner
                 else {"primary": "local"},
+                "local_reasoner": self.local_reasoner.status()
+                if self.local_reasoner else {"available": False},
+                "distiller": self.distiller.status()
+                if self.distiller else {"enabled": False},
                 "teacher": self.teacher.status() if self.teacher else {"enabled": False},
                 "core_memory": self.core.status(),
                 "learning": self.gate.status()}

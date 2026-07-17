@@ -32,6 +32,27 @@
     ],
     "max_tokens": 900
   },
+  "local_brain": {
+    "enabled": true,
+    "model_repo": "Qwen/Qwen2.5-3B-Instruct-GGUF",
+    "model_file": "qwen2.5-3b-instruct-q4_k_m.gguf",
+    "model_path": "",
+    "n_ctx": 4096,
+    "n_threads": 0,
+    "max_tokens": 700,
+    "temperature": 0.3,
+    "self_check": true
+  },
+  "reasoning": {
+    "self_consistency": 1,
+    "max_steps": 4,
+    "decompose": true
+  },
+  "distiller": {
+    "enabled": true,
+    "per_cycle": 2,
+    "cycle_s": 600.0
+  },
   "stt": {
     "model": "base",
     "device": "cpu",
@@ -104,11 +125,11 @@
       "vision": "cpu"
     },
     "measured": {
-      "cpu": 82.97,
+      "cpu": 64.2,
       "speedup": 0.0
     },
     "detected": [],
-    "measured_at": 1784295088.9111319,
+    "measured_at": 1784308685.4432824,
     "version": 1
   }
 }
