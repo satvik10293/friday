@@ -249,6 +249,17 @@ class Overlay:
             if self.click_through:
                 ex |= _WS_EX_TRANSPARENT
             u.SetWindowLongW(hwnd, _GWL_EXSTYLE, ex)
+            # CRITICAL: SetWindowLongW above RESETS the layered-window attributes
+            # that Tk set for -transparentcolor — which silently turns the panel
+            # back into a solid (dark) box. Re-apply the colour key so the
+            # background goes clear again and only the text floats.
+            if self._transparent:
+                _LWA_COLORKEY = 0x00000001
+                r = int(_TRANSPARENT_KEY[1:3], 16)
+                g = int(_TRANSPARENT_KEY[3:5], 16)
+                b = int(_TRANSPARENT_KEY[5:7], 16)
+                colorref = (b << 16) | (g << 8) | r        # COLORREF 0x00BBGGRR
+                u.SetLayeredWindowAttributes(hwnd, colorref, 255, _LWA_COLORKEY)
         except Exception:  # noqa: BLE001
             log.debug("overlay win32 setup failed", exc_info=True)
 
