@@ -398,11 +398,12 @@ def word_problem(question: str) -> Optional[str]:
         verb = re.sub(r"\s+up$|\s+away$", "", ev.group("verb").lower())
         if _LOSS_RE.match(verb):
             total -= n
-            trace.append(f"-{_fmt(n)}")
+            trace.append(f"- {_fmt(n)}")
         else:
             total += n
-            trace.append(f"+{_fmt(n)}")
-    return f"{_fmt(total)}  ({' '.join(trace).lstrip('+')})"
+            trace.append(f"+ {_fmt(n)}")
+    shown = " ".join(trace)[2:]                     # drop the leading "+ "
+    return f"{_fmt(total)}  ({shown})"
 
 
 _PCT_CHANGE = re.compile(

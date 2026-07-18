@@ -216,6 +216,35 @@ def test_a_turn_she_failed_everywhere_queues_the_gap(tmp_path):
     assert d.status()["pending"] == 1            # learning from failure
 
 
+def test_owner_can_direct_her_curriculum_by_voice(tmp_path):
+    d = _distiller(tmp_path, _Knowledge(), _Teacher())
+    bridge = ConversationBridge(
+        _GroundingIOS(), decision_log=_Log(), distiller=d,
+        speech=_SpeechOutput(synthesizer=lambda t: None))
+    resp = bridge.think("study quantum computing")
+    assert "study queue" in resp.answer
+    assert d.status()["pending"] == 1
+    # repeat → honest dedup, not a duplicate queue entry
+    resp2 = bridge.think("study quantum computing")
+    assert "already" in resp2.answer and d.status()["pending"] == 1
+
+
+def test_seed_topics_queue_a_curriculum(tmp_path):
+    d = _distiller(tmp_path, _Knowledge(), _Teacher())
+    assert d.seed(["how do vaccines work", "what is inflation",
+                   "what is inflation"]) == 2       # dedup inside seed
+    assert d.status()["pending"] == 2
+
+
+def test_personal_never_enters_the_curriculum(tmp_path):
+    d = _distiller(tmp_path, _Knowledge(), _Teacher())
+    bridge = ConversationBridge(
+        _GroundingIOS(), decision_log=_Log(), distiller=d,
+        speech=_SpeechOutput(synthesizer=lambda t: None))
+    bridge.think("study my wife's birthday")
+    assert d.status()["pending"] == 0               # personal guard held
+
+
 # ── "are you getting smarter?" → measured, never a vibe ───────────────────────
 
 class _MeasuredLog(_Log):

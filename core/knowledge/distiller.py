@@ -121,10 +121,13 @@ class KnowledgeDistiller:
             log.debug("distiller queue save failed", exc_info=True)
 
     # ── harvest side: the bridge notes every gap ─────────────────────────────────
-    def note_gap(self, question: str) -> bool:
+    def note_gap(self, question: str, *, deliberate: bool = False) -> bool:
         """A cloud answer just proved a gap. Queue the topic — unless it's
         personal (never leaves as a study topic), trivial, or already
-        queued/distilled. Returns whether it was queued. Never raises."""
+        queued/distilled. `deliberate` marks an owner-directed study request:
+        a single strong topic word ("inflation") is enough there, while
+        harvested conversation still needs ≥2 to filter chatter. Returns
+        whether it was queued. Never raises."""
         try:
             question = (question or "").strip()
             if not question:
@@ -133,7 +136,8 @@ class KnowledgeDistiller:
                 self.skipped_personal += 1
                 return False
             key = _topic_key(question)
-            if len(key.split()) < self.min_gap_words:
+            min_words = 1 if deliberate else self.min_gap_words
+            if len(key.split()) < min_words:
                 return False               # too thin to study ("what's up")
             with self._lock:
                 if key in self._done_keys or \
@@ -191,6 +195,16 @@ class KnowledgeDistiller:
             log.debug("distill_once failed", exc_info=True)
             return False
 
+    def seed(self, topics) -> int:
+        """Owner-directed curriculum: queue topics to study deliberately (from
+        config `distiller.seed_topics` or a voice command), same dedup and
+        personal guards as harvested gaps. Returns how many were queued."""
+        queued = 0
+        for topic in topics or []:
+            if isinstance(topic, str) and self.note_gap(topic, deliberate=True):
+                queued += 1
+        return queued
+
     def run_cycle(self) -> int:
         """One scheduled pass: close up to `per_cycle` gaps. Bounded, quiet,
         never raises — the runtime can call this on a timer forever."""
@@ -226,8 +240,10 @@ def get_distiller() -> Optional[KnowledgeDistiller]:
         teacher = get_teacher()
         if teacher is None:
             return None
-        return KnowledgeDistiller(get_knowledge_service(), teacher,
-                                  per_cycle=int(cfg.get("per_cycle", 2)))
+        distiller = KnowledgeDistiller(get_knowledge_service(), teacher,
+                                       per_cycle=int(cfg.get("per_cycle", 2)))
+        distiller.seed(cfg.get("seed_topics") or [])   # owner's curriculum
+        return distiller
     except Exception as e:  # noqa: BLE001 — the notebook is always optional
         log.debug("distiller unavailable: %s", e)
         return None

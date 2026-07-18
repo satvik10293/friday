@@ -756,6 +756,30 @@ class ConversationBridge:
             return None, []
         return grounded, [getattr(best, "id", None)]
 
+    # "Friday, study quantum computing" — deliberate growth by owner intent
+    _STUDY_RE = re.compile(
+        r"^(?:please\s+)?(?:study|learn about|read up on|research)\s+"
+        r"(?!my\b|me\b)(.{3,90}?)[.?!]?$", re.I)
+
+    def _study(self, command: str) -> Optional[str]:
+        """Owner-directed curriculum by voice: queue a topic for background
+        distillation. Returns the confirmation, or None (→ normal routing)."""
+        m = self._STUDY_RE.match((command or "").strip())
+        if not m:
+            return None
+        topic = m.group(1).strip()
+        if self.distiller is None:
+            return ("I can't study on my own right now — my teacher tier "
+                    "isn't configured.")
+        try:
+            if self.distiller.note_gap(topic, deliberate=True):
+                return (f"Added to my study queue: {topic}. I'll distill it "
+                        f"into my own knowledge in the background.")
+            return f"I've already studied or queued {topic}."
+        except Exception:  # noqa: BLE001 — a study request never breaks a turn
+            log.debug("study request failed", exc_info=True)
+            return None
+
     def _note_gap(self, command: str) -> None:
         """The cloud just answered — that's a gap in her notebook. Queue the
         topic for background distillation (personal never queues)."""
@@ -884,6 +908,11 @@ class ConversationBridge:
         if measured is not None:
             return self._respond_directly(turn, "independence", measured, t0,
                                           command=command)
+
+        # "study X" → owner-directed curriculum into the distiller (M55)
+        studied = self._study(command)
+        if studied is not None:
+            return self._respond_directly(turn, "study", studied, t0)
 
         # goal proposals (M28): list / approve / reject straight from the store
         proposal_answer = self._proposals(command)
