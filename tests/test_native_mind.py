@@ -85,6 +85,32 @@ def test_percent_change_is_computed():
     assert exact.percent_change("percent increase from 0 to 5") is None
 
 
+# ── exact text ops: the class frontier models famously fumble ─────────────────
+
+def test_she_counts_letters_perfectly():
+    out = exact.solve("how many r's are in strawberry?")
+    assert "3" in out and "positions 3, 8, 9" in out
+    # (the author of this test first wrote "2" here — SHE counted 3, and she
+    # was right: c-h-e-e-s-e. The exact class beats approximation.)
+    assert "3" in exact.solve("how many e's in cheese")
+
+
+def test_letter_counts_spelling_reversal_nth():
+    assert '"necessary" has 9 letters' in exact.solve(
+        "how many letters in necessary?")
+    assert '"drawer"' in exact.solve("spell drawer backwards") and \
+        '"reward"' in exact.solve("spell drawer backwards")
+    assert "N-E-C-E-S-S-A-R-Y" in exact.solve("how do you spell necessary?")
+    assert "'y'" in exact.solve("what is the last letter of necessary?")
+
+
+def test_list_ops_are_exact():
+    assert "The largest is 9" in exact.solve("which is the largest: 3, 9, 4?")
+    assert "The median is 5" in exact.solve("what is the median of 9, 1, 5?")
+    assert "Sorted: 1, 3, 7" in exact.solve("sort 7, 1, 3")
+    assert "Sorted: 7, 3, 1" in exact.solve("sort 7, 1, 3 in descending order")
+
+
 # ── 2. the NativeMind: her notes are the model ────────────────────────────────
 
 class _Knowledge:

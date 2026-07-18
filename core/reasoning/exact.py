@@ -598,11 +598,103 @@ def relations(question: str) -> Optional[str]:
     return None
 
 
+# ── exact text operations: the class frontier models famously fumble ─────────
+# "How many r's are in strawberry?" — a language model TOKENIZES and guesses;
+# she COUNTS. Letter counts, spelling, reversal, nth letter: provably perfect.
+
+_T_COUNT_LETTER = re.compile(
+    r"how many (?:times does )?(?:the letter )?['\"]?([a-z])['\"]?s?\s+"
+    r"(?:appear |are (?:there )?|is (?:there )?|occur )?in (?:the word )?"
+    r"['\"]?([a-z]+)['\"]?", re.I)
+_T_COUNT_LETTERS = re.compile(
+    r"how many (?:letters|characters) (?:are (?:there )?)?in (?:the word )?"
+    r"['\"]?([a-z]+)['\"]?", re.I)
+_T_BACKWARDS = re.compile(
+    r"(?:spell|say|write)\s+(?:the word )?['\"]?([a-z]+)['\"]?\s+backwards?\b|"
+    r"reverse (?:the word )?['\"]?([a-z]+)['\"]?", re.I)
+_T_SPELL = re.compile(
+    r"(?:how do you )?spell (?:the word )?['\"]?([a-z]+)['\"]?\s*\??$", re.I)
+_T_NTH = re.compile(
+    r"what(?:'s| is) the (first|second|third|fourth|fifth|last)\s+letter\s+"
+    r"(?:of|in) (?:the word )?['\"]?([a-z]+)['\"]?", re.I)
+_ORDINAL = {"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4,
+            "last": -1}
+
+
+def text_ops(question: str) -> Optional[str]:
+    q = (question or "").strip()
+    m = _T_COUNT_LETTER.search(q)
+    if m:
+        letter, word = m.group(1).lower(), m.group(2).lower()
+        if len(word) > 1:                # "in strawberry", not "in a"
+            n = word.count(letter)
+            positions = [i + 1 for i, ch in enumerate(word) if ch == letter]
+            where = (" (positions " + ", ".join(map(str, positions)) + ")"
+                     if 0 < n <= 6 else "")
+            plural = "s" if n != 1 else ""
+            return (f"There {'are' if n != 1 else 'is'} {n} "
+                    f"'{letter}'{plural} in \"{word}\"{where}.")
+    m = _T_COUNT_LETTERS.search(q)
+    if m and len(m.group(1)) > 2:
+        word = m.group(1)
+        return f"\"{word}\" has {len(word)} letters."
+    m = _T_BACKWARDS.search(q)
+    if m:
+        word = (m.group(1) or m.group(2) or "").lower()
+        if len(word) > 2:
+            return f"\"{word}\" backwards is \"{word[::-1]}\"."
+    m = _T_NTH.search(q)
+    if m:
+        word = m.group(2).lower()
+        idx = _ORDINAL[m.group(1).lower()]
+        if len(word) > abs(idx):
+            pos = m.group(1).lower()
+            return f"The {pos} letter of \"{word}\" is '{word[idx]}'."
+    m = _T_SPELL.search(q)
+    if m and len(m.group(1)) > 3:
+        word = m.group(1).lower()
+        return f"{word}: {'-'.join(word.upper())}"
+    return None
+
+
+# ── exact list operations: min / max / sort / median over stated numbers ─────
+
+_L_NUMS = re.compile(r"-?\d+(?:\.\d+)?")
+_L_ASK = re.compile(
+    r"\b(largest|biggest|greatest|highest|smallest|lowest|least|sort|order|"
+    r"median)\b.{0,30}?((?:-?\d+(?:\.\d+)?\s*(?:,|and|\s)\s*){2,}-?\d+(?:\.\d+)?)",
+    re.I)
+
+
+def list_ops(question: str) -> Optional[str]:
+    m = _L_ASK.search(_numberize(question or ""))
+    if not m:
+        return None
+    op = m.group(1).lower()
+    nums = [float(x) for x in _L_NUMS.findall(m.group(2))]
+    if len(nums) < 3:
+        return None                      # two-way is the comparison solver's job
+    if op in ("largest", "biggest", "greatest", "highest"):
+        return f"The largest is {_fmt(max(nums))}."
+    if op in ("smallest", "lowest", "least"):
+        return f"The smallest is {_fmt(min(nums))}."
+    if op == "median":
+        s = sorted(nums)
+        mid = len(s) // 2
+        med = s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
+        return f"The median is {_fmt(med)}."
+    if op in ("sort", "order"):
+        desc = re.search(r"\b(descending|decreasing|high(?:est)? to low)", question or "", re.I)
+        s = sorted(nums, reverse=bool(desc))
+        return "Sorted: " + ", ".join(_fmt(n) for n in s) + "."
+    return None
+
+
 # ── the front door ────────────────────────────────────────────────────────────
 
 _SOLVERS: list[Callable[[str], Optional[str]]] = [
-    syllogism, relations, comparison, percent_change, percent, power, units,
-    dates, word_problem, algebra, aggregate, arithmetic]
+    syllogism, relations, text_ops, comparison, percent_change, percent, power,
+    units, dates, word_problem, algebra, list_ops, aggregate, arithmetic]
 
 
 def solve(question: str) -> Optional[str]:
