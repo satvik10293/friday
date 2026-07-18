@@ -469,6 +469,24 @@ class StartupSequence:
                     memory=self.components.get("memory_service"))
             except Exception:  # noqa: BLE001 — the local brain is always optional
                 pass
+            neural = None
+            try:                             # her OWN weights (M58): a neural core
+                nc = (self.config.get("neural") or {})
+                if nc.get("enabled", True):  # born + trained on this machine
+                    from core.reasoning.neural import NeuralTrainer
+                    from core.reasoning.tokens import get_tokenizer
+                    neural = NeuralTrainer(
+                        get_tokenizer(knowledge), knowledge,
+                        steps_per_cycle=int(nc.get("steps_per_cycle", 150)),
+                        max_seconds=float(nc.get("max_seconds", 45.0)))
+                    runtime = self.components.get("runtime")
+                    if runtime is not None and self.start_runtime \
+                            and hasattr(runtime, "schedule"):
+                        runtime.schedule("neural_training", neural.train_cycle,
+                                         float(nc.get("train_s", 900.0)))
+                    self.components["neural"] = neural
+            except Exception:  # noqa: BLE001 — her own brain is always optional
+                pass
             distiller = None
             try:                             # the notebook trick (M55): every cloud
                 from core.knowledge.distiller import get_distiller
@@ -488,6 +506,7 @@ class StartupSequence:
                 knowledge=knowledge, reasoner=reasoner,
                 local_reasoner=local_reasoner,          # her own local brain (M54)
                 distiller=distiller,                    # the notebook trick (M55)
+                neural=neural,                          # her own weights (M58)
                 brains=self.components.get("brains"),   # addressable society (M46)
                 skills=self.components.get("skills"))   # governed action layer (M47)
             self.components["conversation"] = bridge

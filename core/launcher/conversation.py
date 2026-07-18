@@ -162,7 +162,7 @@ class ConversationBridge:
     def __init__(self, ios, *, decision_log=None, speech: Optional[_SpeechOutput] = None,
                  memory=None, self_model=None, goals=None, teacher=None,
                  knowledge=None, reasoner=None, local_reasoner=None,
-                 distiller=None, core_memory=None, brains=None,
+                 distiller=None, neural=None, core_memory=None, brains=None,
                  conversation_state=None, skills=None, overlay=None,
                  speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
@@ -176,6 +176,7 @@ class ConversationBridge:
         self.reasoner = reasoner            # cloud-primary basic reasoner (M42)
         self.local_reasoner = local_reasoner  # her OWN local reasoning brain (M54)
         self.distiller = distiller          # the notebook trick (M55)
+        self.neural = neural                # her own trained weights (M58)
         self.brains = dict(brains or {})    # addressable brain society (M46)
         self.skills = skills                # governed action executor (M47)
         self.overlay = overlay              # private on-screen overlay (M51)
@@ -300,6 +301,15 @@ class ConversationBridge:
                                f"{'s' if n != 1 else ''} into my own knowledge"
                                + (f", with {d['pending']} more queued to study."
                                   if d.get("pending") else "."))
+            except Exception:  # noqa: BLE001
+                pass
+        if self.neural is not None:
+            try:                             # her own weights: the growth curve
+                core = (self.neural.status() or {}).get("core") or {}
+                if core.get("steps_trained"):
+                    answer += (f" And my own neural core has trained "
+                               f"{core['steps_trained']} steps on my life "
+                               f"so far.")
             except Exception:  # noqa: BLE001
                 pass
         return answer
@@ -1131,6 +1141,8 @@ class ConversationBridge:
                 if self.local_reasoner else {"available": False},
                 "distiller": self.distiller.status()
                 if self.distiller else {"enabled": False},
+                "neural": self.neural.status()
+                if self.neural else {"enabled": False},
                 "teacher": self.teacher.status() if self.teacher else {"enabled": False},
                 "core_memory": self.core.status(),
                 "learning": self.gate.status()}
