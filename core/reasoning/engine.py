@@ -135,6 +135,10 @@ class DeliberateReasoner:
     # ── the deliberate loop ──────────────────────────────────────────────────────
     def _deliberate(self, question: str, context: Optional[dict]) -> Deliberation:
         base = float(getattr(self.substrate, "base_confidence", 0.6))
+        try:                # a per-answer trust signal some substrates provide
+            self.substrate.last_confidence = None
+        except Exception:  # noqa: BLE001 — optional protocol extension
+            pass
 
         # 1. exact first: anything checkable (arithmetic incl. spoken operators,
         #    percent, powers, unit conversions, dates, comparisons) is COMPUTED,
@@ -165,13 +169,17 @@ class DeliberateReasoner:
             answer = self._synthesize(question, memory, context)
             if self.self_consistency > 1:       # self-consistency verification
                 answer = self._vote(question, memory, context, first=answer)
-            # exact steps lift confidence; a barren decomposition sinks it
+            # honest trust: a per-answer signal (NativeMind coverage) beats the
+            # static base; exact steps lift it, a barren decomposition sinks it
+            dyn = getattr(self.substrate, "last_confidence", None)
+            core = float(dyn) if dyn is not None else base
             exact_frac = (sum(1 for s in steps if s.kind == "math") / len(steps)
                           if steps else 0.0)
-            conf = base + (1.0 - base) * exact_frac if memory else base * 0.5
+            conf = core + (1.0 - core) * exact_frac if memory else core * 0.5
         else:
             answer = self._synthesize(question, [], context)   # direct pass
-            conf = base
+            dyn = getattr(self.substrate, "last_confidence", None)
+            conf = float(dyn) if dyn is not None else base
 
         if not (answer or "").strip():
             return Deliberation(answer="", steps=[], confidence=0.15)
@@ -237,6 +245,13 @@ class DeliberateReasoner:
 
     # ── decomposition ────────────────────────────────────────────────────────────
     def _plan(self, question: str, context: Optional[dict]) -> list[str]:
+        # a structured faculty (NativeMind) decomposes natively — no prompt
+        if hasattr(self.substrate, "plan"):
+            try:
+                steps = [s for s in (self.substrate.plan(question) or []) if s]
+                return steps[:self.max_steps] or [question]
+            except Exception:  # noqa: BLE001 — fall back to the prompt path
+                log.debug("native plan failed", exc_info=True)
         prompt = (
             "Break the following question into 2 to 4 short, ordered reasoning "
             "steps needed to answer it. One step per line, no explanations, no "
@@ -266,6 +281,14 @@ class DeliberateReasoner:
             if found:
                 self.recall_steps += 1
                 return Step(step, "recall", found[:400], 0.75)
+        # a structured faculty solves the step by reading her own material
+        if hasattr(self.substrate, "solve_step"):
+            try:
+                result = (self.substrate.solve_step(step, question, memory)
+                          or "").strip()
+                return Step(step, "reason", result, 0.6 if result else 0.3)
+            except Exception:  # noqa: BLE001 — fall back to the prompt path
+                log.debug("native solve_step failed", exc_info=True)
         prior = ("\n".join(memory[-3:]) + "\n") if memory else ""
         prompt = (f"Question: {question}\n{prior}Now do this step and give only "
                   f"its result: {step}")
@@ -276,6 +299,12 @@ class DeliberateReasoner:
     # ── synthesis ────────────────────────────────────────────────────────────────
     def _synthesize(self, question: str, memory: list[str],
                     context: Optional[dict], temperature: float = 0.3) -> str:
+        # a structured faculty composes from the worked steps directly
+        if hasattr(self.substrate, "synthesize"):
+            try:
+                return (self.substrate.synthesize(question, memory) or "").strip()
+            except Exception:  # noqa: BLE001 — fall back to the prompt path
+                log.debug("native synthesize failed", exc_info=True)
         if not memory:
             return self.substrate.generate(question, context=context,
                                            temperature=temperature).strip()

@@ -364,6 +364,65 @@ def algebra(question: str) -> Optional[str]:
     return None
 
 
+# ── word problems: track the quantities, compute the answer ──────────────────
+# "I have 3 apples and buy 4 more, then eat 2. How many apples do I have?"
+# Deterministic state tracking: gain verbs add, loss verbs subtract. Only
+# fires on a "how many" ask with at least two quantity events — never on
+# ordinary prose that happens to contain numbers.
+
+_GAIN = r"(?:have|has|had|buy|buys|bought|get|gets|got|find|finds|found|" \
+        r"receive|receives|received|pick|picks|picked(?:\s+up)?|win|wins|won|" \
+        r"make|makes|made|add|adds|added|start(?:s|ed)? with)"
+_LOSS = r"(?:lose|loses|lost|give|gives|gave(?:\s+away)?|eat|eats|ate|" \
+        r"sell|sells|sold|drop|drops|dropped|spend|spends|spent|use|uses|" \
+        r"used|break|breaks|broke)"
+_QTY_EVENT = re.compile(
+    rf"\b(?P<verb>{_GAIN}|{_LOSS})\b[^.\d]{{0,24}}?(?P<n>\d+(?:\.\d+)?)", re.I)
+_HOW_MANY_LEFT = re.compile(
+    r"\bhow many\b.{0,40}\b(?:do|does|did|are|is|will|have|has|left|now|"
+    r"remain|in total|altogether)\b", re.I)
+_LOSS_RE = re.compile(rf"^{_LOSS}$", re.I)
+
+
+def word_problem(question: str) -> Optional[str]:
+    q = normalize(question)
+    if not _HOW_MANY_LEFT.search(q):
+        return None
+    events = list(_QTY_EVENT.finditer(q))
+    if len(events) < 2:
+        return None                      # one number is not a word problem
+    total = 0.0
+    trace = []
+    for ev in events:
+        n = float(ev.group("n"))
+        verb = re.sub(r"\s+up$|\s+away$", "", ev.group("verb").lower())
+        if _LOSS_RE.match(verb):
+            total -= n
+            trace.append(f"-{_fmt(n)}")
+        else:
+            total += n
+            trace.append(f"+{_fmt(n)}")
+    return f"{_fmt(total)}  ({' '.join(trace).lstrip('+')})"
+
+
+_PCT_CHANGE = re.compile(
+    r"\bpercent(?:age)?\s+(increase|decrease|change)\s+from\s+"
+    r"(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)", re.I)
+
+
+def percent_change(question: str) -> Optional[str]:
+    # numberize only — full normalize() rewrites the word "percent" to "%"
+    m = _PCT_CHANGE.search(_numberize(question))
+    if not m:
+        return None
+    old, new = float(m.group(2)), float(m.group(3))
+    if old == 0:
+        return None                      # undefined — refuse, don't guess
+    pct = (new - old) / old * 100.0
+    word = "increase" if pct >= 0 else "decrease"
+    return f"From {_fmt(old)} to {_fmt(new)} is a {_fmt(abs(round(pct, 2)))}% {word}."
+
+
 # ── aggregates: series sums and averages ─────────────────────────────────────
 
 _SERIES = re.compile(
@@ -391,10 +450,158 @@ def aggregate(question: str) -> Optional[str]:
     return None
 
 
+# ── syllogisms: SHE deduces, no model anywhere ───────────────────────────────
+# "All cats are animals. Sam is a cat. Is Sam an animal?" → chained deduction
+# over subset/membership/disjointness facts stated IN the question. Answers
+# only what the premises entail — anything else returns None (never guesses).
+
+_S_ALL = re.compile(r"\b(?:all|every)\s+([a-z]+?)s?\s+(?:are|is)\s+"
+                    r"(?:a\s+|an\s+)?([a-z]+?)s?\b", re.I)
+_S_NO = re.compile(r"\bno\s+([a-z]+?)s?\s+(?:are|is)\s+(?:a\s+|an\s+)?"
+                   r"([a-z]+?)s?\b", re.I)
+_S_ISA = re.compile(r"\b([a-z]+)\s+is\s+(?:a|an)\s+([a-z]+?)s?\b", re.I)
+_S_ASK = re.compile(r"\bis\s+([a-z]+)\s+(?:a|an)\s+([a-z]+?)s?\s*\?", re.I)
+
+
+def _sing(word: str) -> str:
+    w = word.lower()
+    return w[:-1] if w.endswith("s") and len(w) > 3 else w
+
+
+def _an(word: str) -> str:
+    return f"an {word}" if word[:1] in "aeiou" else f"a {word}"
+
+
+def syllogism(question: str) -> Optional[str]:
+    q = question or ""
+    ask = _S_ASK.search(q)
+    if not ask:
+        return None
+    premises = q[:ask.start()]                      # facts stated before the ask
+    subset: dict[str, set] = {}                     # class → superclasses
+    disjoint: set[tuple] = set()
+    member: dict[str, set] = {}                     # entity → classes
+    for a, b in _S_ALL.findall(premises):
+        subset.setdefault(_sing(a), set()).add(_sing(b))
+    for a, b in _S_NO.findall(premises):
+        disjoint.add((_sing(a), _sing(b)))
+        disjoint.add((_sing(b), _sing(a)))
+    for e, c in _S_ISA.findall(premises):
+        if e.lower() not in ("all", "every", "no", "it", "that", "this"):
+            member.setdefault(e.lower(), set()).add(_sing(c))
+    entity, target = ask.group(1).lower(), _sing(ask.group(2))
+    if entity not in member:
+        return None
+    # BFS the subset lattice from every class the entity belongs to
+    reached: dict[str, Optional[str]] = {c: None for c in member[entity]}
+    frontier = list(member[entity])
+    while frontier:
+        c = frontier.pop(0)
+        for parent in subset.get(c, ()):  # noqa: B909 — reached grows, fine
+            if parent not in reached:
+                reached[parent] = c
+                frontier.append(parent)
+    def _chain(to: str) -> str:
+        hops = []
+        node = to
+        while reached.get(node) is not None:
+            hops.append(f"every {reached[node]} is {_an(node)}")
+            node = reached[node]
+        return ((f"{entity.capitalize()} is {_an(node)}"
+                 + (", and " + ", and ".join(reversed(hops)) if hops else "")))
+    if target in reached:
+        return (f"Yes — {_chain(target)}, so {entity.capitalize()} is "
+                f"{_an(target)}.")
+    for c in reached:                               # a reached class excludes it?
+        if (c, target) in disjoint:
+            return (f"No — {_chain(c)}, and no {c} is {_an(target)}, so "
+                    f"{entity.capitalize()} is not {_an(target)}.")
+    return None                                     # premises don't entail it
+
+
+# ── transitive relations: order chains, deduced not guessed ──────────────────
+# "Tom is taller than Sam. Sam is taller than Ann. Who is the tallest?" /
+# "Is Tom taller than Ann?" — build the order from the stated comparatives and
+# walk the transitive closure. Opposite poles map onto one canonical order.
+
+_R_EDGE = re.compile(r"\b([A-Za-z]+)\s+is\s+([a-z]+er)\s+than\s+([A-Za-z]+)", re.I)
+_R_SUPER = re.compile(r"\bwho\s+is\s+the\s+([a-z]+est)\b", re.I)
+_R_ASK = re.compile(r"\bis\s+([A-Za-z]+)\s+([a-z]+er)\s+than\s+([A-Za-z]+)\s*\?", re.I)
+_R_INVERSE = {"shorter": "taller", "younger": "older", "smaller": "bigger",
+              "slower": "faster", "weaker": "stronger", "lighter": "heavier",
+              "lower": "higher", "colder": "hotter", "cheaper": "pricier"}
+
+
+def _canon(cmp_word: str) -> tuple[str, bool]:
+    """Map a comparative onto its canonical pole. ('shorter' → 'taller',
+    inverted)."""
+    w = cmp_word.lower()
+    return (_R_INVERSE[w], True) if w in _R_INVERSE else (w, False)
+
+
+def _superlative_to_comparative(word: str) -> str:
+    return word[:-3] + "er" if word.lower().endswith("est") else word
+
+
+def relations(question: str) -> Optional[str]:
+    q = question or ""
+    edges_raw = _R_EDGE.findall(q)
+    if len(edges_raw) < 1:
+        return None
+    graphs: dict[str, dict[str, set]] = {}          # rel → {greater: {lesser}}
+    for a, cmp_w, b in edges_raw:
+        rel, inverted = _canon(cmp_w)
+        a, b = a.lower(), b.lower()
+        hi, lo = (b, a) if inverted else (a, b)
+        graphs.setdefault(rel, {}).setdefault(hi, set()).add(lo)
+
+    def _above(rel: str, x: str) -> set:
+        """Everything x outranks, transitively."""
+        seen, frontier = set(), [x]
+        while frontier:
+            for below in graphs.get(rel, {}).get(frontier.pop(0), ()):
+                if below not in seen:
+                    seen.add(below)
+                    frontier.append(below)
+        return seen
+
+    m = _R_ASK.search(q)
+    if m:                                           # "is A taller than C?"
+        a, cmp_w, b = m.group(1).lower(), m.group(2), m.group(3).lower()
+        rel, inverted = _canon(cmp_w)
+        hi, lo = (b, a) if inverted else (a, b)
+        if lo in _above(rel, hi):
+            return (f"Yes — {m.group(1).capitalize()} is {cmp_w.lower()} than "
+                    f"{m.group(3).capitalize()}, by the chain of comparisons.")
+        if hi in _above(rel, lo):
+            return (f"No — it's the other way around: "
+                    f"{m.group(3).capitalize()} is {cmp_w.lower()} than "
+                    f"{m.group(1).capitalize()}.")
+        return None                                 # not entailed → don't guess
+    m = _R_SUPER.search(q)
+    if m and len(edges_raw) >= 2:                   # "who is the tallest?"
+        rel, inverted = _canon(_superlative_to_comparative(m.group(1)))
+        graph = graphs.get(rel)
+        if not graph:
+            return None
+        names = set(graph) | {n for lows in graph.values() for n in lows}
+        want_top = not inverted
+        winners = [n for n in names
+                   if len(_above(rel, n)) == len(names) - 1] if want_top else \
+                  [n for n in names
+                   if all(n in _above(rel, o) for o in names if o != n)]
+        if len(winners) == 1:
+            order = sorted(names, key=lambda n: -len(_above(rel, n)))
+            return (f"{winners[0].capitalize()} is the {m.group(1).lower()}: "
+                    + " > ".join(n.capitalize() for n in order) + ".")
+    return None
+
+
 # ── the front door ────────────────────────────────────────────────────────────
 
 _SOLVERS: list[Callable[[str], Optional[str]]] = [
-    comparison, percent, power, units, dates, algebra, aggregate, arithmetic]
+    syllogism, relations, comparison, percent_change, percent, power, units,
+    dates, word_problem, algebra, aggregate, arithmetic]
 
 
 def solve(question: str) -> Optional[str]:

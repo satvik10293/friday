@@ -938,6 +938,20 @@ class ConversationBridge:
             route.append("notebook")
             self._notebook_turns += 1
 
+        # (M56) SHE IS THE REASONING MODEL: her own deliberate mind gets first
+        # shot at every turn — exact tools (math, logic, dates, units), native
+        # reasoning over her own knowledge — confidence-gated, so she only
+        # keeps answers she can stand behind. The cloud is demoted to the
+        # fallback teacher for what she can't yet cover. This path may use
+        # private memory — nothing leaves the box.
+        if response is None and self.local_reasoner is not None \
+                and self.local_reasoner.available():
+            local_resp, memory_used = self._local_pass(command)
+            if local_resp is not None:
+                response = local_resp
+                route.append("local_reasoner")
+                self._local_turns += 1
+
         if response is None and self.reasoner is not None \
                 and self.reasoner.available() and not self._is_personal(command):
             cloud_tried = True
@@ -946,18 +960,6 @@ class ConversationBridge:
                 route.append("cloud_reasoner")
                 self._cloud_turns += 1
                 self._note_gap(command)      # the notebook studies this topic
-
-        # (M54) her OWN local reasoning brain: when the cloud didn't answer
-        # (off, personal, or a failed cloud turn), a real on-device reasoning
-        # model tries BEFORE the keyword team / librarian / teacher. Personal
-        # questions land here by design — this path may use private memory.
-        if response is None and self.local_reasoner is not None \
-                and self.local_reasoner.available():
-            local_resp, memory_used = self._local_pass(command)
-            if local_resp is not None:
-                response = local_resp
-                route.append("local_reasoner")
-                self._local_turns += 1
 
         if response is None:
             response = self.ios.think(command, context=ctx)

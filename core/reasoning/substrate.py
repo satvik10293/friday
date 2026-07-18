@@ -88,9 +88,16 @@ class ModelTeamSubstrate:
             return ""
 
 
-def best_substrate(*, local_reasoner=None, ios=None) -> Optional[Substrate]:
-    """Pick the sharpest available substrate: the pulled local model if ready,
-    else the builtin team, else None (no faculty at all)."""
+def best_substrate(*, local_reasoner=None, ios=None, knowledge=None,
+                   memory=None, prefer_native: bool = True
+                   ) -> Optional[Substrate]:
+    """Pick her faculty. With `prefer_native` (the owner-directed default),
+    HER OWN NativeMind — extractive reasoning over her own knowledge, no
+    external model — outranks everything; a pulled local model is next; the
+    builtin team is the floor. None only when there is no faculty at all."""
+    if prefer_native and (knowledge is not None or memory is not None):
+        from core.reasoning.native import NativeMind
+        return NativeMind(knowledge, memory)
     if local_reasoner is not None:
         sub = LocalSubstrate(local_reasoner)
         if sub.available():

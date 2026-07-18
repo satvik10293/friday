@@ -46,7 +46,8 @@
   "reasoning": {
     "self_consistency": 1,
     "max_steps": 4,
-    "decompose": true
+    "decompose": true,
+    "native": true
   },
   "distiller": {
     "enabled": true,
@@ -125,11 +126,11 @@
       "vision": "cpu"
     },
     "measured": {
-      "cpu": 64.2,
+      "cpu": 108.21,
       "speedup": 0.0
     },
     "detected": [],
-    "measured_at": 1784308685.4432824,
+    "measured_at": 1784380894.5944083,
     "version": 1
   }
 }

@@ -23,7 +23,14 @@ _CONFIG_PATH = Path(__file__).resolve().parents[2] / "friday_config.json"
 
 __all__ = ["DeliberateReasoner", "Deliberation", "Step", "Substrate",
            "LocalSubstrate", "ModelTeamSubstrate", "best_substrate",
-           "build_reasoner"]
+           "build_reasoner", "NativeMind"]
+
+
+def __getattr__(name):
+    if name == "NativeMind":                      # lazy — avoids import cycles
+        from core.reasoning.native import NativeMind
+        return NativeMind
+    raise AttributeError(name)
 
 
 def _reasoning_config() -> dict:
@@ -34,14 +41,18 @@ def _reasoning_config() -> dict:
         return {}
 
 
-def build_reasoner(*, local_reasoner=None, ios=None, knowledge=None
-                   ) -> Optional[DeliberateReasoner]:
-    """Assemble the deliberate brain over the sharpest available substrate (the
-    pulled local model if ready, else the builtin team), with her knowledge
-    base wired in as the recall tool. Returns None only when there is no
-    faculty at all. Never raises."""
+def build_reasoner(*, local_reasoner=None, ios=None, knowledge=None,
+                   memory=None) -> Optional[DeliberateReasoner]:
+    """Assemble the deliberate brain over her best faculty — by default HER
+    OWN NativeMind (extractive reasoning over her knowledge and memory, no
+    external model; `reasoning.native: false` restores the model substrates) —
+    with the knowledge base wired in as the recall tool. Returns None only
+    when there is no faculty at all. Never raises."""
     try:
-        substrate = best_substrate(local_reasoner=local_reasoner, ios=ios)
+        cfg = _reasoning_config()
+        substrate = best_substrate(
+            local_reasoner=local_reasoner, ios=ios, knowledge=knowledge,
+            memory=memory, prefer_native=cfg.get("native", True))
         if substrate is None:
             return None
         retriever = None
@@ -56,7 +67,6 @@ def build_reasoner(*, local_reasoner=None, ios=None, knowledge=None
                 parts = [clean_snippet(getattr(e, "content", "") or "")
                          for e in entries or []]
                 return " ".join(p for p in parts if p)[:600]
-        cfg = _reasoning_config()
         return DeliberateReasoner(
             substrate,
             self_consistency=int(cfg.get("self_consistency", 1)),

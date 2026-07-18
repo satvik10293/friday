@@ -465,7 +465,8 @@ class StartupSequence:
                 # knowledge base wired in as the recall tool
                 local_reasoner = build_reasoner(
                     local_reasoner=get_local_reasoner(), ios=ios,
-                    knowledge=knowledge)
+                    knowledge=knowledge,
+                    memory=self.components.get("memory_service"))
             except Exception:  # noqa: BLE001 — the local brain is always optional
                 pass
             distiller = None
