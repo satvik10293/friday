@@ -81,7 +81,11 @@ class DeliberateReasoner:
 
     def __init__(self, substrate: Substrate, *, name: str = "deliberate",
                  self_consistency: int = 1, max_steps: int = 4,
-                 decompose: bool = True, retriever=None) -> None:
+                 decompose: bool = True, retriever=None,
+                 tokenizer=None, think_in_tokens: bool = False) -> None:
+        # NB: token thinking defaults OFF here and ON via build_reasoner
+        # (config `reasoning.tokens`) — direct constructions (tests, embeds)
+        # must never pay tokenizer training implicitly.
         self.substrate = substrate
         self.name = name
         self.self_consistency = max(1, int(self_consistency))
@@ -91,6 +95,14 @@ class DeliberateReasoner:
         # her own knowledge base, so recall-shaped steps read notes instead of
         # asking the language faculty to "remember"
         self.retriever = retriever
+        # (M57) she thinks in TOKENS: her own learned vocabulary carries every
+        # internal stage — question, plan, steps, working memory, answer — and
+        # natural language exists only at the boundary. The trace of a turn is
+        # a readable program of her mind (<q> … <plan> <step> … <answer> …).
+        self.tokenizer = tokenizer
+        self.think_in_tokens = think_in_tokens
+        self.last_thought: list[int] = []
+        self.tokens_thought = 0
         self.asked = 0
         self.answered = 0
         self.failed = 0
@@ -106,6 +118,43 @@ class DeliberateReasoner:
             return self.substrate.available()
         except Exception:  # noqa: BLE001
             return False
+
+    # ── (M57) her token mind ─────────────────────────────────────────────────────
+    def _tok(self):
+        if not self.think_in_tokens:
+            return None
+        if self.tokenizer is None:
+            try:
+                from core.reasoning.tokens import get_tokenizer
+                self.tokenizer = get_tokenizer()
+            except Exception:  # noqa: BLE001 — thinking still works untokenized
+                log.debug("tokenizer unavailable", exc_info=True)
+                self.think_in_tokens = False
+                return None
+        return self.tokenizer
+
+    def _think(self, text: str, op: str) -> str:
+        """Pass one internal payload through her token space: encode with the
+        cognitive op, record it on the trace, and hand the DECODED form to the
+        next stage — so every stage consumes what survived her vocabulary
+        (lossless for printable text by construction, lowercased: thought has
+        no capital letters)."""
+        tok = self._tok()
+        if tok is None or not (text or "").strip():
+            return text
+        ids = tok.encode(text, marker=op)
+        self.last_thought.extend(ids)
+        self.tokens_thought += len(ids)
+        return tok.decode(ids)
+
+    def thought_trace(self) -> dict:
+        """The last turn's thinking, as tokens — inspectable, not a vibe."""
+        tok = self._tok()
+        if tok is None or not self.last_thought:
+            return {"tokens": 0, "trace": "", "text": ""}
+        return {"tokens": len(self.last_thought),
+                "trace": " ".join(tok.explain(self.last_thought))[:2000],
+                "text": tok.decode(self.last_thought)[:800]}
 
     # ── the public contract (mirrors LocalReasoner/CloudReasoner) ────────────────
     def reason(self, question: str, *, context: Optional[dict] = None) -> ReasonedAnswer:
@@ -140,11 +189,17 @@ class DeliberateReasoner:
         except Exception:  # noqa: BLE001 — optional protocol extension
             pass
 
+        # (M57) natural language ends here: the question enters her token
+        # space, and every internal stage below consumes token-surviving text
+        self.last_thought = []
+        thought_q = self._think(question, "<q>") or question
+
         # 1. exact first: anything checkable (arithmetic incl. spoken operators,
         #    percent, powers, unit conversions, dates, comparisons) is COMPUTED,
         #    never guessed — full trust
-        solved = exact.solve(question)
+        solved = exact.solve(thought_q)
         if solved is not None:
+            self._think(solved, "<exact>")
             return Deliberation(answer=solved,
                                 steps=[Step(question, "math", solved, 1.0)],
                                 confidence=1.0, exact=True)
@@ -152,23 +207,31 @@ class DeliberateReasoner:
         # 1b. a coding ask gets the verify-repair loop: generate → AST-check →
         #     repair once → confidence reflects whether the code actually parses
         if _CODE_RE.search(question or ""):
-            return self._code(question, context, base)
+            deliberated = self._code(question, context, base)
+            if (deliberated.answer or "").strip():
+                self._think(deliberated.answer, "<code>")
+            return deliberated
 
         # 2. adaptive depth: only complex questions earn System-2 decomposition;
         #    simple ones stay a single direct pass so she doesn't over-think
-        if self._should_decompose(question):
-            plan = self._plan(question, context)
+        if self._should_decompose(thought_q):
+            plan = self._plan(thought_q, context)
             steps: list[Step] = []
             memory: list[str] = []
             for raw in plan[:self.max_steps]:
-                step = self._solve_step(raw, question, context, memory)
+                raw = self._think(raw, "<step>") or raw      # step → token space
+                step = self._solve_step(raw, thought_q, context, memory)
                 if not step.result.strip():
                     continue                    # prune failed steps — no pollution
+                op = {"math": "<exact>", "recall": "<recall>"}.get(step.kind,
+                                                                   "<native>")
+                result = self._think(step.result, op) or step.result
+                step = Step(step.text, step.kind, result, step.confidence)
                 steps.append(step)
                 memory.append(f"{step.text} -> {step.result}")
-            answer = self._synthesize(question, memory, context)
+            answer = self._synthesize(thought_q, memory, context)
             if self.self_consistency > 1:       # self-consistency verification
-                answer = self._vote(question, memory, context, first=answer)
+                answer = self._vote(thought_q, memory, context, first=answer)
             # honest trust: a per-answer signal (NativeMind coverage) beats the
             # static base; exact steps lift it, a barren decomposition sinks it
             dyn = getattr(self.substrate, "last_confidence", None)
@@ -177,12 +240,16 @@ class DeliberateReasoner:
                           if steps else 0.0)
             conf = core + (1.0 - core) * exact_frac if memory else core * 0.5
         else:
-            answer = self._synthesize(question, [], context)   # direct pass
+            answer = self._synthesize(thought_q, [], context)  # direct pass
             dyn = getattr(self.substrate, "last_confidence", None)
             conf = float(dyn) if dyn is not None else base
 
         if not (answer or "").strip():
+            self._think(question, "<defer>")     # the trace shows she declined
             return Deliberation(answer="", steps=[], confidence=0.15)
+        # the answer leaves token space here — the BOUNDARY back to natural
+        # language (the trace records its tokens; the user hears the words)
+        self._think(answer, "<answer>")
         return Deliberation(answer=answer, confidence=round(min(conf, 1.0), 3))
 
     def _should_decompose(self, question: str) -> bool:
@@ -345,5 +412,8 @@ class DeliberateReasoner:
                 "code_checked": self.code_checked,
                 "code_repaired": self.code_repaired,
                 "has_retriever": self.retriever is not None,
+                "thinks_in_tokens": bool(self.think_in_tokens),
+                "tokens_thought": self.tokens_thought,
+                "vocab": self.tokenizer.size if self.tokenizer else 0,
                 "avg_latency_ms": round(self.total_latency_ms / self.answered, 1)
                 if self.answered else 0.0}

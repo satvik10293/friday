@@ -67,12 +67,28 @@ def build_reasoner(*, local_reasoner=None, ios=None, knowledge=None,
                 parts = [clean_snippet(getattr(e, "content", "") or "")
                          for e in entries or []]
                 return " ".join(p for p in parts if p)[:600]
+        think_in_tokens = cfg.get("tokens", True)
+        if think_in_tokens:
+            # (M57) warm her tokenizer off-thread: the first-ever training runs
+            # over her corpus (cached to disk after), and a voice turn must
+            # never pay that cost inline
+            import threading
+
+            def _warm():
+                try:
+                    from core.reasoning.tokens import get_tokenizer
+                    get_tokenizer(knowledge)
+                except Exception:  # noqa: BLE001 — she thinks untokenized then
+                    log.debug("tokenizer warmup failed", exc_info=True)
+            threading.Thread(target=_warm, name="friday-tokenizer",
+                             daemon=True).start()
         return DeliberateReasoner(
             substrate,
             self_consistency=int(cfg.get("self_consistency", 1)),
             max_steps=int(cfg.get("max_steps", 4)),
             decompose=cfg.get("decompose", True),
-            retriever=retriever)
+            retriever=retriever,
+            think_in_tokens=think_in_tokens)
     except Exception as e:  # noqa: BLE001 — the brain is optional, boot never breaks
         log.debug("reasoner build failed: %s", e)
         return None

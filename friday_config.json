@@ -47,7 +47,8 @@
     "self_consistency": 1,
     "max_steps": 4,
     "decompose": true,
-    "native": true
+    "native": true,
+    "tokens": true
   },
   "distiller": {
     "enabled": true,
@@ -127,11 +128,11 @@
       "vision": "cpu"
     },
     "measured": {
-      "cpu": 108.33,
+      "cpu": 105.46,
       "speedup": 0.0
     },
     "detected": [],
-    "measured_at": 1784381300.6242845,
+    "measured_at": 1784383207.8919444,
     "version": 1
   }
 }
