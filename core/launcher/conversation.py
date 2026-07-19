@@ -375,6 +375,49 @@ class ConversationBridge:
             log.debug("proposal handling failed", exc_info=True)
             return None
 
+    # ── understanding vs ACTION (M59.1): the command gate ────────────────────────
+    # A clear device command must ACT, request approval, or honestly decline —
+    # never fall through to a reasoner that writes an essay about how one
+    # might do it. Speech-act verbs (tell/explain/summarize/write...) are
+    # deliberately absent: those are understanding, and understanding keeps
+    # its existing path untouched.
+    _ABOVE_SAFE_VERBS = {
+        "close": "app.close", "quit": "app.close", "kill": "app.close",
+        "type": "input.type_text", "press": "input.press_key",
+        "click": "input.click", "restart": "power.restart",
+        "reboot": "power.restart", "shutdown": "power.restart",
+        "sleep": "power.sleep", "execute": "shell.run",
+    }
+    _DEVICE_VERBS = ("open", "launch", "close", "quit", "kill", "minimize",
+                     "maximize", "focus", "mute", "unmute", "pause", "resume",
+                     "click", "type", "press", "restart", "reboot", "shutdown",
+                     "sleep", "lock", "eject", "uninstall", "install")
+    _IMPERATIVE_RE = re.compile(
+        r"^(?:please\s+|friday[,\s]+)*(" + "|".join(_DEVICE_VERBS) + r")\b(.*)$",
+        re.I)
+
+    def _command_gate(self, command: str) -> Optional[tuple]:
+        """Runs AFTER the skill routes: an imperative that no route matched is
+        still a command. Above-SAFE verbs get the M47 approval refusal; the
+        rest get an honest 'no such action yet' — one sentence, no essay, no
+        cloud. Questions never enter here. Returns (route_key, answer) or
+        None. Never raises."""
+        q = (command or "").strip()
+        if not q or q.endswith("?"):
+            return None
+        m = self._IMPERATIVE_RE.match(q)
+        if not m:
+            return None
+        verb = m.group(1).lower()
+        skill_name = self._ABOVE_SAFE_VERBS.get(verb)
+        if skill_name is not None:
+            return (f"skill:{skill_name}:refused",
+                    "That action needs your approval, which I can't take by "
+                    "voice yet.")
+        return ("command:unavailable",
+                "That sounds like a command, but I don't have an action for "
+                "it yet — ask me 'what can you do' for my action list.")
+
     # ── her screen sight (M52): read the screen, on-device ───────────────────────
     _SCREEN_RE = re.compile(
         r"\b(read|scan|look at|check|what'?s?( is)? on|what does).{0,20}\b(my |the )?"
@@ -459,6 +502,39 @@ class ConversationBridge:
              None, lambda d: "Brightness up."),
             (r"\bbrightness down\b|\bdimmer\b|\bdim (the )?screen\b", "display.brightness_down",
              None, lambda d: "Brightness down."),
+            # ── understanding vs ACTION (M59.1): clear commands act ──────────
+            (r"\b(?:set (?:the )?brightness to|brightness to)\s+(?P<n>\d{1,3})\b",
+             "display.set_brightness", _num, lambda d: "Done."),
+            (r"\b(?:open|go to|visit)\s+(?P<url>(?:https?://\S+|[\w.-]+\.(?:com|org|net|io|dev|ai|gov|edu)\S*))",
+             "web.open_url",
+             lambda m: {"url": (m.group("url") if m.group("url").startswith("http")
+                                else "https://" + m.group("url"))},
+             lambda d: "Opening it in your browser."),
+            (r"\b(?:open|launch|start)\s+(?:the\s+)?(?P<name>[A-Za-z][\w .+-]{1,40})$",
+             "app.open", lambda m: {"name": m.group("name").strip()},
+             lambda d: "Opening it now."),
+            (r"\b(?:focus|switch to)\s+(?:the\s+)?(?P<title>[\w .+-]{2,40})\s*(?:window)?$",
+             "window.focus", lambda m: {"title": m.group("title").strip()},
+             lambda d: "Focused."),
+            (r"\bminimi[sz]e\b.{0,15}\bwindow\b|\bminimi[sz]e (?:this|it)\b",
+             "window.minimize", None, lambda d: "Minimized."),
+            (r"\bmaximi[sz]e\b.{0,15}\bwindow\b|\bmaximi[sz]e (?:this|it)\b",
+             "window.maximize", None, lambda d: "Maximized."),
+            (r"\bsearch (?:my )?files (?:for|named)\s+(?P<q>.{2,60})$|"
+             r"\bfind (?:the |a )?files?\s+(?:named|called|for)\s+(?P<q2>.{2,60})$",
+             "files.search",
+             lambda m: {"query": (m.group("q") or m.group("q2") or "").strip(" ?.")},
+             lambda d: (f"I found {len(d)} matching files."
+                        if isinstance(d, list) else "Search done.")),
+            (r"\b(?:recent files|what files did i (?:change|edit) recently)\b",
+             "files.recent", None,
+             lambda d: (f"Your most recent files: "
+                        + ", ".join(str(x) for x in d[:3]) if isinstance(d, list)
+                        else "Done.")),
+            (r"\b(?:what'?s (?:on|in) (?:my|the) clipboard|read (?:my|the) clipboard)\b",
+             "clipboard.get", None,
+             lambda d: (f"Your clipboard says: {str(d)[:180]}" if d
+                        else "Your clipboard is empty.")),
         ]
         cls._SKILL_ROUTES = [(re.compile(p, re.I), name, args, render)
                              for p, name, args, render in routes]
@@ -955,6 +1031,13 @@ class ConversationBridge:
             key, answer = seen
             self._screen_reads += 1
             return self._respond_directly(turn, key, answer, t0, command=command)
+
+        # the command gate (M59.1): an imperative no route matched is STILL a
+        # command — approval-refuse or honestly decline; never essay about it
+        gated = self._command_gate(command)
+        if gated is not None:
+            key, answer = gated
+            return self._respond_directly(turn, key, answer, t0)
 
         # the conversation window rides along so follow-ups have an anchor
         ctx["recent_turns"] = list(self._window)

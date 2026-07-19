@@ -169,12 +169,19 @@ def test_memory_provenance_comes_from_the_reasoned_context():
 
 
 def test_nothing_in_the_bridge_references_a_cloud():
+    # the invariant: the bridge NEVER talks to a network itself — no HTTP
+    # library, no keys, no endpoints. (A bare "https://" STRING is allowed:
+    # the web.open_url route normalizes a spoken domain into a URL *argument*
+    # for the governed browser skill — the skill acts, the bridge never
+    # connects.)
     import inspect
 
     import core.launcher.conversation as conversation
     source = inspect.getsource(conversation).lower()
     assert "import requests" not in source and "import urllib" not in source
-    assert "api_key" not in source and "http" not in source
+    assert "requests.post" not in source and "requests.get" not in source
+    assert "api_key" not in source
+    assert "api.groq.com" not in source and "openai.com" not in source
 
 
 # ── speaking: interruptible ───────────────────────────────────────────────────

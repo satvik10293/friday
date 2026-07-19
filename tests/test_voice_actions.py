@@ -95,16 +95,22 @@ def test_approval_tier_skill_is_refused_from_voice():
 
 
 def test_dangerous_commands_are_not_routed_to_skills():
-    # shell/power/keystroke commands aren't in the route table at all → they
-    # fall through to normal reasoning, never the executor
+    # shell/power/keystroke commands NEVER reach the executor. Since the M59.1
+    # command gate they no longer fall through to reasoning either: a device
+    # imperative gets an explicit one-sentence approval refusal (strictly
+    # stronger — no essay about rm -rf, and still zero execution paths).
     ex = _FakeExecutor(_SAFE)
     ios = _LocalIOS(confidence=0.9)
     bridge = _bridge(ex, ios=ios)
+    refusals = 0
     for cmd in ("run shell rm -rf /", "restart the computer", "type my password",
                 "press enter", "shut down"):
-        bridge.think(cmd)
+        r = bridge.think(cmd)
+        if "approval" in (r.answer or "").lower():
+            refusals += 1
     assert ex.calls == [], f"a dangerous command reached the executor: {ex.calls}"
-    assert ios.thinks == 5                             # all went to normal reasoning
+    assert refusals >= 3                   # restart/type/press explicitly refused
+    assert refusals + ios.thinks == 5      # the rest went to normal reasoning
 
 
 def test_failed_action_reports_gracefully():
