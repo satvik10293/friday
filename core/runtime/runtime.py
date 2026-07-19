@@ -128,9 +128,27 @@ class Runtime:
 
     def emit(self, signal: Signal, data=None, source: str = "runtime", priority: int = 5) -> Future:
         """Thread-safe publish from ANY thread. Returns a concurrent.futures.Future
-        (fire-and-forget — you normally ignore it)."""
-        return asyncio.run_coroutine_threadsafe(
-            self._bus.emit(signal, data, source, priority), self._loop)
+        (fire-and-forget — you normally ignore it).
+
+        Safe on a runtime that was never started (or already stopped): the
+        event is dropped cleanly and a completed Future returned. Without this
+        guard every headless/driver run leaked 'coroutine AsyncEventBus.emit
+        was never awaited' warnings — the coroutine was created for a loop
+        that would never schedule it (M59 sweep, module 2)."""
+        coro = self._bus.emit(signal, data, source, priority)
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            coro.close()                 # never scheduled → close, no warning
+            done: Future = Future()
+            done.set_result(None)
+            return done
+        try:
+            return asyncio.run_coroutine_threadsafe(coro, loop)
+        except RuntimeError:             # loop stopped between check and call
+            coro.close()
+            done = Future()
+            done.set_result(None)
+            return done
 
     async def emit_async(self, signal: Signal, data=None, source: str = "runtime", priority: int = 5) -> None:
         """Publish from inside the loop (e.g. from a handler)."""
