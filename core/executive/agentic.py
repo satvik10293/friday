@@ -51,21 +51,60 @@ log = logging.getLogger("friday.executive.agentic")
 _NEEDS_APPROVAL = "needs_approval"
 
 
+def run_one_shot_approved(executor, skill_name: str, args=None, context=None):
+    """Run an above-SAFE skill through the FULL M47 pipeline, satisfying ONLY
+    its human-approval step, for this one call and this one skill. The caller
+    MUST have obtained explicit human approval (a two-step voice confirm) — this
+    does not weaken anything else: policy, role clearance, sandbox, and audit
+    all still run, so a step the caller's role can't clear still fails. Shared
+    by the autonomy gate (approved paused goals) and the conversation bridge
+    (approved direct commands). Never leaves the auto-decider installed."""
+    appr = getattr(executor, "_approvals", None)
+    if appr is None:                              # no approval manager → run plainly
+        return executor.execute(skill_name, args, context)
+    prev = getattr(appr, "_auto", None)
+    fired = [False]
+
+    def _decider(req):
+        if not fired[0] and getattr(req, "skill_name", None) == skill_name:
+            fired[0] = True
+            return True                           # approve THIS request only
+        return prev(req) if prev is not None else None
+
+    appr._auto = _decider
+    try:
+        return executor.execute(skill_name, args, context)
+    finally:
+        appr._auto = prev                         # always restore
+
+
 class SafeAutonomyGate:
     """SAFE-only wrapper around the M47 SkillExecutor for autonomous work.
 
     Above-SAFE skills are refused with error='needs_approval' (never invoking
     the executor, whose approval path BLOCKS on a human) so the workflow can
     pause the goal instead of hanging. The full security pipeline still runs
-    for SAFE skills — this gate narrows, never widens."""
+    for SAFE skills — this gate narrows, never widens.
+
+    One exception, and only one: a `grant_once(skill, args)` — recorded ONLY
+    by an explicit human approval upstream (M59.2 two-step voice confirm) —
+    lets that exact step run through the executor a SINGLE time. Even then the
+    full M47 pipeline still runs (policy → clearance → sandbox → audit): the
+    grant satisfies just the human-approval step, and clearance still refuses
+    anything above USER_APPROVAL (admin/system are unreachable by voice)."""
 
     def __init__(self, executor) -> None:
         self._executor = executor
+        self._grants: dict[str, dict] = {}       # skill_name → args (one-shot)
 
     @property
     def registry(self):
         # the Orchestrator's deliberation hook reads .registry for risk levels
         return self._executor.registry
+
+    def grant_once(self, skill_name: str, args: Optional[dict] = None) -> None:
+        """Authorize ONE execution of skill_name (human-approved upstream)."""
+        self._grants[skill_name] = dict(args or {})
 
     def execute(self, skill_name: str, args: Optional[dict] = None,
                 context=None) -> Result:
@@ -75,12 +114,21 @@ class SafeAutonomyGate:
             return Result(success=False, error=f"unknown skill: {e}",
                           error_type="UnknownSkill")
         if skill.permission != Permission.SAFE:
-            return Result(
-                success=False, error=_NEEDS_APPROVAL,
-                error_type="AutonomyPolicy",
-                metadata={"skill": skill_name,
-                          "permission": skill.permission.name})
+            granted = self._grants.pop(skill_name, None)   # one-shot: consume
+            if granted is None:
+                return Result(
+                    success=False, error=_NEEDS_APPROVAL,
+                    error_type="AutonomyPolicy",
+                    metadata={"skill": skill_name,
+                              "permission": skill.permission.name})
+            return self._run_preapproved(skill_name, args, context)
         return self._executor.execute(skill_name, args, context)
+
+    def _run_preapproved(self, skill_name: str, args, context) -> Result:
+        """Run a human-approved above-SAFE step through the FULL M47 pipeline,
+        satisfying only its human-approval step (for this one call, this one
+        skill) — policy, clearance, sandbox, and audit all still apply."""
+        return run_one_shot_approved(self._executor, skill_name, args, context)
 
 
 class AgenticWorkflow:
@@ -105,6 +153,8 @@ class AgenticWorkflow:
         self.completed = 0
         self.paused = 0
         self.failed = 0
+        self.approved_resumes = 0
+        self.rejected = 0
         self._lock = threading.Lock()
         self._last: dict = {}
 
@@ -190,12 +240,80 @@ class AgenticWorkflow:
         except Exception:  # noqa: BLE001 — reflection is best-effort
             log.debug("goal reflection failed", exc_info=True)
 
+    # ── human-in-the-loop: resume a paused goal (M59.2) ──────────────────────────
+    def _skill_permission(self, skill_name: str) -> str:
+        if self.gate is None:
+            return "SAFE"
+        try:
+            return self.gate.registry.get(skill_name).permission.name
+        except Exception:  # noqa: BLE001
+            return "SAFE"
+
+    def list_paused(self) -> list[dict]:
+        """The goals paused awaiting the owner's approval, with the exact skill
+        each one needs. Reads the goal store (survives restarts) and reports
+        only above-SAFE, skill-bearing blocks — a dependency-failed block on a
+        SAFE goal is not an approval pause. Never raises."""
+        out: list[dict] = []
+        try:
+            from core.goals import GoalStatus
+            for g in self.goals.list_goals(status=GoalStatus.BLOCKED):
+                meta = getattr(g, "metadata", None) or {}
+                skill = meta.get("skill")
+                if not skill:
+                    continue
+                perm = self._skill_permission(skill)
+                if perm == "SAFE":
+                    continue                        # SAFE never pauses for approval
+                out.append({"goal_id": g.goal_id, "title": g.title,
+                            "skill": skill, "args": dict(meta.get("args") or {}),
+                            "permission": perm})
+        except Exception:  # noqa: BLE001
+            log.debug("list_paused failed", exc_info=True)
+        return out
+
+    def approve_paused(self, goal_id: str) -> Optional[dict]:
+        """The owner approved a paused goal (two-step voice confirm upstream).
+        Grant its step ONE execution and resume the goal (BLOCKED→PENDING→,
+        via tick, ACTIVE — the next cycle runs it). Returns {skill, title} on
+        success, else None. ONLY USER_APPROVAL-tier is voice-approvable here;
+        admin/system are refused (and clearance would reject them anyway)."""
+        goal = self.goals.get_goal(goal_id)
+        if goal is None or self.gate is None:
+            return None
+        meta = getattr(goal, "metadata", None) or {}
+        skill = meta.get("skill")
+        if not skill or self._skill_permission(skill) != "USER_APPROVAL":
+            return None
+        self.gate.grant_once(skill, meta.get("args") or {})
+        self.goals.resume_goal(goal_id)             # BLOCKED → PENDING
+        try:
+            self.goals.tick()                       # → ACTIVE now; runs next cycle
+        except Exception:  # noqa: BLE001 — the scheduler tick is best-effort
+            log.debug("tick after approval failed", exc_info=True)
+        with self._lock:
+            self.approved_resumes += 1
+        log.info("paused goal approved by owner: %s (%s)", goal.title, skill)
+        return {"skill": skill, "title": goal.title}
+
+    def reject_paused(self, goal_id: str) -> bool:
+        """The owner declined a paused goal — fail it (with reflection) so it
+        stops waiting. Returns whether a goal was dropped."""
+        goal = self.goals.get_goal(goal_id)
+        if goal is None:
+            return False
+        self._fail(goal_id, "approval declined by owner")
+        with self._lock:
+            self.rejected += 1
+        return True
+
     # ── observability ────────────────────────────────────────────────────────────
     def status(self) -> dict:
         with self._lock:
             return {"cycles": self.cycles, "goals_executed": self.executed,
                     "completed": self.completed, "paused": self.paused,
-                    "failed": self.failed, "last": dict(self._last),
+                    "failed": self.failed, "approved_resumes": self.approved_resumes,
+                    "rejected": self.rejected, "last": dict(self._last),
                     "policy": "safe_only",
                     "gated": self.gate is not None}
 

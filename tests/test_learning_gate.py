@@ -112,7 +112,10 @@ def test_bridge_drops_chitchat_but_keeps_personal(tmp_path):
     mem = _memory(tmp_path)
     bridge = ConversationBridge(_IOS(), decision_log=_Log(), memory=mem,
                                 speech=_SpeechOutput(synthesizer=lambda t: None))
-    bridge.think("thanks!")
+    # "cool" is chitchat the learning gate drops, but not one of the
+    # greeting/thanks phrases the small-talk fast-path short-circuits — so it
+    # still reaches the gate and exercises the drop path
+    bridge.think("cool")
     bridge.think("my favourite language is python these days")
     learning = bridge.status()["learning"]
     assert learning["dropped"] >= 1 and learning["stored"] == 1

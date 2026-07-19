@@ -541,7 +541,8 @@ class StartupSequence:
                 distiller=distiller,                    # the notebook trick (M55)
                 neural=neural,                          # her own weights (M58)
                 brains=self.components.get("brains"),   # addressable society (M46)
-                skills=self.components.get("skills"))   # governed action layer (M47)
+                skills=self.components.get("skills"),   # governed action layer (M47)
+                agentic=self.components.get("agentic"))  # autonomous goals (M59.2)
             self.components["conversation"] = bridge
             kernel = self.components.get("kernel")
             if kernel is not None:       # the M46 voice/reasoning brains observe this

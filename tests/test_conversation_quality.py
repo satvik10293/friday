@@ -77,8 +77,10 @@ def test_low_audio_confidence_asks_for_clarification_instead_of_guessing():
 def test_clear_audio_is_not_clarified():
     ios = _IOS()
     bridge = _bridge(ios=ios)
-    bridge.think("hello", context={"audio_confidence": 0.9})
-    assert ios.calls and ios.calls[0]["prompt"] == "hello"
+    # a substantive turn — clear audio must reach reasoning, not the clarify
+    # path (a greeting would short-circuit to small talk and never hit the IOS)
+    bridge.think("what is the capital of france", context={"audio_confidence": 0.9})
+    assert ios.calls and ios.calls[0]["prompt"] == "what is the capital of france"
 
 
 # ── thought badly → think harder, still locally ───────────────────────────────

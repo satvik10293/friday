@@ -70,7 +70,9 @@ def _bridge():
 
 def test_voice_turn_produces_one_decision_log_row():
     bridge, _ = _bridge()
-    bridge.think("hello", context={"source": "voice"})
+    # substantive turn — exercises the reasoning path (greetings now short-
+    # circuit to the small-talk fast-path and never reach the IOS mock)
+    bridge.think("tell me about the roman empire", context={"source": "voice"})
     rows = bridge._decision_log.rows
     assert len(rows) == 1
     row = rows[0]
@@ -83,7 +85,9 @@ def test_voice_turn_produces_one_decision_log_row():
 
 def test_voice_turn_speaks_the_answer():
     bridge, spoken = _bridge()
-    bridge.think("hello")
+    # a substantive turn (not a greeting — greetings are now answered directly
+    # by the small-talk fast-path, which never reaches the reasoning/speak mock)
+    bridge.think("tell me about the roman empire")
     import time
     for _ in range(50):
         if spoken:

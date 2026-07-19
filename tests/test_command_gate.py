@@ -116,22 +116,47 @@ def test_clipboard_and_brightness_commands_act():
     assert ("display.set_brightness", {"level": 70}) in skills.executed
 
 
-# ── above-SAFE commands refuse for approval, in one sentence ──────────────────
+# ── USER_APPROVAL commands ACT via a two-step voice confirm ───────────────────
 
-def test_close_app_refuses_for_approval_never_reaching_the_cloud():
+def test_close_app_is_a_two_step_confirm_that_then_runs():
     skills = _Skills({"app.close": _Skill(Permission.USER_APPROVAL)})
     cloud = _CloudSpy()
     bridge = _bridge(skills, cloud)
-    resp = bridge.think("close chrome")
-    assert skills.executed == []                   # never executed
-    assert cloud.called == 0                       # never explained
-    assert "approval" in resp.answer.lower()
+    r1 = bridge.think("close chrome")
+    assert skills.executed == []                   # not yet — waits for confirm
+    assert cloud.called == 0                       # never explained/essayed
+    assert "confirm" in r1.answer.lower() and "close chrome" in r1.answer.lower()
+    r2 = bridge.think("confirm")
+    assert skills.executed == [("app.close", {"name": "chrome"})]   # it RAN
+    assert r2.answer == "Done."
 
 
-def test_type_and_restart_commands_refuse_for_approval():
-    bridge = _bridge(_Skills({}), _CloudSpy())
-    assert "approval" in bridge.think("type hello world").answer.lower()
-    assert "approval" in bridge.think("restart the computer").answer.lower()
+def test_a_stray_phrase_cancels_a_pending_command_confirm():
+    skills = _Skills({"app.close": _Skill(Permission.USER_APPROVAL)})
+    bridge = _bridge(skills, _CloudSpy())
+    bridge.think("close chrome")                    # arms the confirm
+    bridge.think("what's the time")                 # NOT a confirm
+    bridge.think("confirm")                         # too late — nothing pending
+    assert skills.executed == []                    # never ran
+
+
+def test_type_command_confirms_then_runs():
+    skills = _Skills({"input.type_text": _Skill(Permission.USER_APPROVAL)})
+    bridge = _bridge(skills, _CloudSpy())
+    assert "confirm" in bridge.think("type hello world").answer.lower()
+    bridge.think("confirm")
+    assert skills.executed == [("input.type_text", {"text": "hello world"})]
+
+
+def test_admin_commands_are_refused_never_confirmable():
+    skills = _Skills({})
+    cloud = _CloudSpy()
+    bridge = _bridge(skills, cloud)
+    for cmd in ("restart the computer", "shut down", "run shell rm -rf /"):
+        r = bridge.think(cmd)
+        assert "administrator" in r.answer.lower()
+        assert cloud.called == 0
+    assert skills.executed == []                    # nothing ran
 
 
 # ── unknown device commands decline honestly (no essay) ───────────────────────

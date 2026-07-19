@@ -163,7 +163,7 @@ class ConversationBridge:
                  memory=None, self_model=None, goals=None, teacher=None,
                  knowledge=None, reasoner=None, local_reasoner=None,
                  distiller=None, neural=None, core_memory=None, brains=None,
-                 conversation_state=None, skills=None, overlay=None,
+                 conversation_state=None, skills=None, overlay=None, agentic=None,
                  speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
@@ -180,6 +180,8 @@ class ConversationBridge:
         self.brains = dict(brains or {})    # addressable brain society (M46)
         self.skills = skills                # governed action executor (M47)
         self.overlay = overlay              # private on-screen overlay (M51)
+        self.agentic = agentic              # autonomous goal workflow (M59)
+        self._owner_name = self._get_owner_name()   # for natural small talk
         from core.memory.learning_gate import LearningGate
         self.gate = LearningGate()          # selective learning (M27)
         if core_memory is not None:
@@ -219,6 +221,8 @@ class ConversationBridge:
         # aside) to the teacher for pronoun resolution
         self._window: deque = deque(maxlen=6)
         self._pending_approval: Optional[tuple] = None   # (goal_id, title, expires_at)
+        self._pending_paused: Optional[tuple] = None     # (goal_id, title, skill, expires_at)
+        self._pending_command: Optional[tuple] = None    # (skill, args, describe, expires_at)
         self._lock = threading.Lock()
 
     def _log(self):
@@ -251,6 +255,61 @@ class ConversationBridge:
             )
         except Exception:  # noqa: BLE001 — observability must not break a turn
             log.debug("decision log write failed", exc_info=True)
+
+    # ── small talk: greetings answered as herself, never parroted ────────────────
+    @staticmethod
+    def _get_owner_name() -> str:
+        try:
+            import json
+            from pathlib import Path
+            root = Path(__file__).resolve().parents[2]
+            cfg = json.loads((root / "friday_config.json").read_text(encoding="utf-8"))
+            return (cfg.get("owner_name") or "").strip()
+        except Exception:  # noqa: BLE001 — a nameless greeting still works
+            return ""
+
+    _GREETING_RE = re.compile(
+        r"^(?:hey|hi|hello|yo|hiya|howdy|sup|wassup|what'?s up|greetings|"
+        r"good (?:morning|afternoon|evening))(?:\s+friday)?[\s!.,]*$", re.I)
+    _HOWAREYOU_RE = re.compile(
+        r"^(?:hey |hi |hello )?(?:friday[,\s]+)?how (?:are|r|'?re) (?:you|u|ya)"
+        r"(?:\s+doing|\s+going)?[\s?!.]*$|^how'?s it going[\s?!.]*$|"
+        r"^how do you feel[\s?!.]*$|^you (?:ok|okay|good|alright)[\s?!.]*$", re.I)
+    _THANKS_RE = re.compile(
+        r"^(?:thanks|thank you|thx|ty|cheers|appreciate it|nice one|"
+        r"good job|well done)(?:\s+friday)?[\s!.,]*$", re.I)
+    _BYE_RE = re.compile(
+        r"^(?:bye|goodbye|good night|goodnight|see you|see ya|later|cya|"
+        r"talk later|i'?m off)(?:\s+friday)?[\s!.,]*$", re.I)
+
+    def _smalltalk(self, command: str) -> Optional[str]:
+        """Greetings, thanks, farewells, and 'how are you' answered directly as
+        herself — run FIRST so they never fall through to retrieval, which
+        would parrot a stored conversation turn back at the owner. Returns the
+        reply or None. Never raises."""
+        q = (command or "").strip()
+        if not q or len(q) > 40:                 # small talk is short
+            return None
+        name = self._owner_name
+        who = f" {name}" if name else ""
+        try:
+            if self._GREETING_RE.match(q):
+                hour = time.localtime().tm_hour
+                part = ("Good morning" if 5 <= hour < 12 else
+                        "Good afternoon" if 12 <= hour < 18 else "Good evening")
+                low = q.lower()
+                if low.startswith("good "):       # mirror their time-of-day
+                    return f"{part}{who}. How can I help?"
+                return f"Hey{who} — how can I help?"
+            if self._THANKS_RE.match(q):
+                return "Anytime."
+            if self._BYE_RE.match(q):
+                return f"Talk soon{who}."
+            if self._HOWAREYOU_RE.match(q):
+                return "I'm running well, thanks. What can I do for you?"
+        except Exception:  # noqa: BLE001 — small talk must never break a turn
+            log.debug("smalltalk failed", exc_info=True)
+        return None
 
     def _introspect(self, command: str) -> Optional[str]:
         """Truthful first-person answers straight from the Self Model."""
@@ -359,6 +418,7 @@ class ConversationBridge:
                     return "I have no open proposals right now."
                 goal = open_props[0]
                 if wants_approve:
+                    self._pending_paused = None       # one confirm flow at a time
                     self._pending_approval = (goal.goal_id, goal.title,
                                               time.time() + self._APPROVAL_TTL_S)
                     return (f"Just to be sure — approve '{goal.title}'? "
@@ -375,48 +435,211 @@ class ConversationBridge:
             log.debug("proposal handling failed", exc_info=True)
             return None
 
+    # ── human-in-the-loop: approve a paused autonomous goal (M59.2) ──────────────
+    _PAUSED_LIST_RE = re.compile(
+        r"\b(any|what|which|list|show|are there)\b.{0,30}\b(paused|waiting|"
+        r"pending|blocked)\b.{0,20}\b(goals?|actions?|approvals?|tasks?)\b|"
+        r"\bwhat('?s| is) (waiting|pending) (for )?(my )?approval\b|"
+        r"\bwhat (needs|is awaiting) (my )?approval\b", re.I)
+    _PAUSED_APPROVE_RE = re.compile(
+        r"\b(approve|resume|allow|go ahead with|authori[sz]e)\b.{0,24}\b"
+        r"(paused|blocked|waiting|pending)?\s*(goal|task|action)\b|"
+        r"\b(approve|resume) (it|that|the goal)\b", re.I)
+    _PAUSED_REJECT_RE = re.compile(
+        r"\b(reject|deny|decline|drop|cancel|forget)\b.{0,24}\b"
+        r"(paused|blocked|waiting|pending)?\s*(goal|task|action)\b", re.I)
+
+    def _paused_goals(self, command: str) -> Optional[str]:
+        """Voice control for goals the autonomous workflow paused awaiting the
+        owner's approval (M59.2). List, approve (two-step confirm, M29 style —
+        she names the exact skill and waits for 'confirm' within 60 s so a
+        stray phrase can't authorize an action), or reject. Only USER_APPROVAL
+        -tier steps are voice-approvable; admin/system stay unreachable."""
+        if self.agentic is None:
+            return None
+        q = (command or "").lower()
+
+        # a pending paused-goal approval waits for exactly one thing: 'confirm'
+        pending = self._pending_paused
+        if pending is not None:
+            self._pending_paused = None              # single-shot, always cleared
+            goal_id, title, skill, expires_at = pending
+            if time.time() <= expires_at:
+                if re.search(r"\b(confirm|confirmed|go ahead|do it|yes)\b", q):
+                    try:
+                        ok = self.agentic.approve_paused(goal_id)
+                    except Exception:  # noqa: BLE001
+                        log.debug("paused approval failed", exc_info=True)
+                        ok = None
+                    if ok is not None:
+                        return (f"Approved — I'll run {ok['skill']} for "
+                                f"'{ok['title']}' now.")
+                    return ("I couldn't approve that — it's no longer waiting, "
+                            "or it needs rights I can't grant by voice.")
+                if re.search(r"\b(cancel|no|don'?t|never ?mind|stop)\b", q):
+                    return f"Okay, I'll leave '{title}' paused."
+            # anything else: the confirmation is dropped, fall through
+
+        wants_list = bool(self._PAUSED_LIST_RE.search(q))
+        wants_approve = bool(self._PAUSED_APPROVE_RE.search(q))
+        wants_reject = bool(self._PAUSED_REJECT_RE.search(q))
+        if not (wants_list or wants_approve or wants_reject):
+            return None
+        try:
+            paused = self.agentic.list_paused()
+        except Exception:  # noqa: BLE001
+            log.debug("list_paused failed", exc_info=True)
+            return None
+        if not paused:
+            return "Nothing is waiting for your approval right now."
+        if wants_approve:
+            g = paused[0]                            # oldest first
+            self._pending_approval = None            # only one confirm flow at a time
+            self._pending_paused = (g["goal_id"], g["title"], g["skill"],
+                                    time.time() + self._APPROVAL_TTL_S)
+            return (f"'{g['title']}' needs to run {g['skill']} "
+                    f"({g['permission'].replace('_', ' ').lower()}). "
+                    f"Say 'confirm' and I'll run it.")
+        if wants_reject:
+            g = paused[0]
+            self.agentic.reject_paused(g["goal_id"])
+            return f"Dropped the paused goal: {g['title']}."
+        titles = "; ".join(f"{g['title']} (needs {g['skill']})"
+                           for g in paused[:3])
+        return (f"{len(paused)} goal{'s' if len(paused) != 1 else ''} waiting "
+                f"for your approval: {titles}. Say 'approve the goal' to review.")
+
     # ── understanding vs ACTION (M59.1): the command gate ────────────────────────
     # A clear device command must ACT, request approval, or honestly decline —
     # never fall through to a reasoner that writes an essay about how one
     # might do it. Speech-act verbs (tell/explain/summarize/write...) are
     # deliberately absent: those are understanding, and understanding keeps
     # its existing path untouched.
-    _ABOVE_SAFE_VERBS = {
-        "close": "app.close", "quit": "app.close", "kill": "app.close",
-        "type": "input.type_text", "press": "input.press_key",
-        "click": "input.click", "restart": "power.restart",
-        "reboot": "power.restart", "shutdown": "power.restart",
-        "sleep": "power.sleep", "execute": "shell.run",
-    }
-    _DEVICE_VERBS = ("open", "launch", "close", "quit", "kill", "minimize",
-                     "maximize", "focus", "mute", "unmute", "pause", "resume",
-                     "click", "type", "press", "restart", "reboot", "shutdown",
-                     "sleep", "lock", "eject", "uninstall", "install")
+    _DEVICE_VERBS = ("open", "launch", "close", "quit", "exit", "kill",
+                     "minimize", "maximize", "focus", "mute", "unmute", "pause",
+                     "resume", "click", "type", "press", "restart", "reboot",
+                     "shutdown", "sleep", "lock", "eject", "uninstall", "install")
     _IMPERATIVE_RE = re.compile(
         r"^(?:please\s+|friday[,\s]+)*(" + "|".join(_DEVICE_VERBS) + r")\b(.*)$",
         re.I)
+    # admin/system-tier commands: never runnable by voice (clearance blocks
+    # them too — this is the honest one-liner, not an essay)
+    _ADMIN_REFUSE_RE = re.compile(
+        r"^(?:please\s+|friday[,\s]*)*(restart|reboot|shut\s*down|shutdown|"
+        r"sleep|hibernate|log\s*off|sign\s*out|run\s+(?:the\s+)?shell|execute)\b",
+        re.I)
+    # USER_APPROVAL-tier device commands a two-step voice confirm may RUN
+    # (built lazily). Each: (pattern, skill, args-from-match, describe).
+    _CONFIRM_ROUTES = None
+
+    @classmethod
+    def _confirm_routes(cls):
+        if cls._CONFIRM_ROUTES is not None:
+            return cls._CONFIRM_ROUTES
+        def _app(m):
+            return {"name": cls._clean_app_name(m.group("name"))}
+        routes = [
+            (r"^(?:please\s+|friday[,\s]*)*(?:close|quit|exit)\s+(?:the\s+)?"
+             r"(?P<name>.+)$", "app.close", _app,
+             lambda a: f"close {a['name']}"),
+            (r"^(?:please\s+|friday[,\s]*)*type\s+(?P<text>.+)$",
+             "input.type_text", lambda m: {"text": m.group("text").strip()},
+             lambda a: f"type that"),
+            (r"^(?:please\s+|friday[,\s]*)*press\s+(?:the\s+)?"
+             r"(?P<key>[\w ]+?)(?:\s+key)?$", "input.press_key",
+             lambda m: {"key": m.group("key").strip()},
+             lambda a: f"press {a['key']}"),
+        ]
+        cls._CONFIRM_ROUTES = [(re.compile(p, re.I), s, a, d)
+                               for p, s, a, d in routes]
+        return cls._CONFIRM_ROUTES
+
+    @staticmethod
+    def _clean_app_name(raw: str) -> str:
+        name = (raw or "").strip().strip("'\"").strip()
+        name = re.sub(r"\s+(window|app|application|browser|program)$", "",
+                      name, flags=re.I)
+        return name.strip()
 
     def _command_gate(self, command: str) -> Optional[tuple]:
-        """Runs AFTER the skill routes: an imperative that no route matched is
-        still a command. Above-SAFE verbs get the M47 approval refusal; the
-        rest get an honest 'no such action yet' — one sentence, no essay, no
-        cloud. Questions never enter here. Returns (route_key, answer) or
-        None. Never raises."""
+        """Runs AFTER the skill routes: a device imperative that no SAFE route
+        matched. A USER_APPROVAL command (close app, type, press a key) is RUN
+        via a two-step voice confirm — she names it, waits for 'confirm', then
+        acts. Admin/system commands are refused (clearance blocks them too).
+        Anything else gets an honest one-liner — never an essay, never the
+        cloud. Questions never enter here. Never raises."""
         q = (command or "").strip()
         if not q or q.endswith("?"):
             return None
-        m = self._IMPERATIVE_RE.match(q)
-        if not m:
+
+        # (1) a pending direct-command confirm waits for exactly 'confirm'
+        pending = self._pending_command
+        if pending is not None:
+            self._pending_command = None             # single-shot, always cleared
+            skill_name, args, describe, expires_at = pending
+            low = q.lower()
+            if time.time() <= expires_at:
+                if re.search(r"\b(confirm|confirmed|go ahead|do it|yes)\b", low):
+                    return self._run_confirmed_command(skill_name, args, describe)
+                if re.search(r"\b(cancel|no|don'?t|never ?mind|stop)\b", low):
+                    return (f"skill:{skill_name}:cancelled",
+                            f"Okay, I won't {describe(args)}.")
+            # anything else: confirmation dropped, fall through to fresh parse
+
+        # (2) admin/system device commands — never by voice
+        if self._ADMIN_REFUSE_RE.match(q):
+            return ("command:refused_admin",
+                    "That needs administrator rights I can't grant by voice.")
+
+        # (3) a USER_APPROVAL device command → arm a two-step confirm to RUN it
+        if self.skills is not None:
+            for pattern, skill_name, args_fn, describe in self._confirm_routes():
+                m = pattern.match(q)
+                if not m:
+                    continue
+                try:
+                    args = args_fn(m)
+                except Exception:  # noqa: BLE001
+                    continue
+                if not any(str(v).strip() for v in args.values()):
+                    continue                         # empty target → not a command
+                self._pending_approval = None        # one confirm flow at a time
+                self._pending_paused = None
+                self._pending_command = (skill_name, args, describe,
+                                         time.time() + self._APPROVAL_TTL_S)
+                return (f"skill:{skill_name}:await_confirm",
+                        f"Say 'confirm' and I'll {describe(args)}.")
+
+        # (4) any other imperative: honest one-liner
+        if not self._IMPERATIVE_RE.match(q):
             return None
-        verb = m.group(1).lower()
-        skill_name = self._ABOVE_SAFE_VERBS.get(verb)
-        if skill_name is not None:
-            return (f"skill:{skill_name}:refused",
-                    "That action needs your approval, which I can't take by "
-                    "voice yet.")
         return ("command:unavailable",
                 "That sounds like a command, but I don't have an action for "
                 "it yet — ask me 'what can you do' for my action list.")
+
+    def _run_confirmed_command(self, skill_name: str, args: dict,
+                               describe) -> tuple:
+        """Execute a confirmed USER_APPROVAL command through the full M47
+        pipeline, with the human-approval step satisfied by the confirmation.
+        Clearance still applies — an admin skill that slipped through refuses."""
+        if self.skills is None:
+            return (f"skill:{skill_name}:refused", "I can't run actions right now.")
+        try:
+            from core.skills.permissions import Permission
+            skill = self.skills._registry.get(skill_name)
+            if skill.permission > Permission.USER_APPROVAL:
+                return (f"skill:{skill_name}:refused",
+                        "That needs administrator rights I can't grant by voice.")
+            from core.executive.agentic import run_one_shot_approved
+            result = run_one_shot_approved(self.skills, skill_name, args)
+        except Exception:  # noqa: BLE001 — an action fault never breaks the turn
+            log.debug("confirmed command failed: %s", skill_name, exc_info=True)
+            return (f"skill:{skill_name}", "I couldn't do that just now.")
+        if getattr(result, "success", False):
+            return (f"skill:{skill_name}", "Done.")
+        return (f"skill:{skill_name}",
+                f"I couldn't {describe(args)} — "
+                f"{getattr(result, 'error', 'it failed')}.")
 
     # ── her screen sight (M52): read the screen, on-device ───────────────────────
     _SCREEN_RE = re.compile(
@@ -982,6 +1205,13 @@ class ConversationBridge:
         if heard is not None and float(heard) < self.clarify_threshold:
             return self._clarify(turn, float(heard), t0)
 
+        # small talk (greetings / thanks / how-are-you) is answered directly,
+        # BEFORE any retrieval — otherwise "hello" recalls a past stored turn
+        # and she parrots your own words back ("hello friday, i am fine friday")
+        chit = self._smalltalk(command)
+        if chit is not None:
+            return self._respond_directly(turn, "smalltalk", chit, t0)
+
         # self-questions are answered from the Self Model, not a language model
         introspective = self._introspect(command)
         if introspective is not None:
@@ -1005,6 +1235,12 @@ class ConversationBridge:
         if proposal_answer is not None:
             return self._respond_directly(turn, "goal_proposals", proposal_answer,
                                           t0, command=command)
+
+        # paused autonomous goals (M59.2): list / approve (two-step) / reject.
+        # No `command=`: an approval control turn is not conversational context.
+        paused_answer = self._paused_goals(command)
+        if paused_answer is not None:
+            return self._respond_directly(turn, "goal_approval", paused_answer, t0)
 
         # addressable brains (M46): a named brain answers for itself, directly.
         # No `command=` on purpose (security review): brain answers carry
