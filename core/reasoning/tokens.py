@@ -166,9 +166,13 @@ class FridayTokenizer:
     def save(self, path: Optional[Path] = None) -> Path:
         path = path or _CACHE_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({
+        # atomic: her vocabulary must never be half-written (M59 sweep)
+        import os
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({
             "version": 1, "merges": self.merges, "vocab": self.vocab,
         }), encoding="utf-8")
+        os.replace(tmp, path)
         return path
 
     @classmethod

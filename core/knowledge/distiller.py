@@ -113,10 +113,16 @@ class KnowledgeDistiller:
     def _save(self) -> None:
         try:
             self._queue_path.parent.mkdir(parents=True, exist_ok=True)
-            self._queue_path.write_text(json.dumps({
+            payload = json.dumps({
                 "queue": self._queue[-_MAX_QUEUE:],
                 "done": sorted(self._done_keys)[-1000:],
-            }, indent=1), encoding="utf-8")
+            }, indent=1)
+            # atomic: a crash mid-write must never corrupt the study queue
+            # (M59 sweep, module 4)
+            tmp = self._queue_path.with_suffix(".tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            import os
+            os.replace(tmp, self._queue_path)
         except OSError:
             log.debug("distiller queue save failed", exc_info=True)
 
