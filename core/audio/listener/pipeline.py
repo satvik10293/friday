@@ -90,6 +90,7 @@ class ListeningPipeline:
         self._noise_run = False
         self._stored: deque = deque(maxlen=64)  # opt-in raw audio, bounded
         self._stop = threading.Event()
+        self._mic_failures = 0            # device-loss recovery (M59 sweep)
         self._thread: Optional[threading.Thread] = None
         # async segments (production): transcription + cognition can take
         # seconds (whisper on CPU, the cloud reasoner) — handled inline they
@@ -323,10 +324,36 @@ class ListeningPipeline:
             except Exception:  # noqa: BLE001 — one bad segment never kills hearing
                 log.debug("segment processing error", exc_info=True)
 
+    def _read_frame_safe(self):
+        """Read one frame, surviving device loss. A mic exception (USB unplug,
+        default-device switch) used to escape the loop and kill the listener
+        thread — she went permanently, silently deaf (M59 sweep, module 3).
+        Now: log once per outage, back off, periodically try to reopen, and
+        report recovery. Returns the frame or None."""
+        try:
+            frame = self.mic.read()
+        except Exception:  # noqa: BLE001 — hearing must survive the device
+            self._mic_failures += 1
+            if self._mic_failures == 1:
+                log.warning("microphone read failed — device lost? retrying",
+                            exc_info=True)
+            time.sleep(min(2.0, 0.2 * self._mic_failures))
+            if self._mic_failures % 10 == 0:
+                try:                      # a reopen attempt every ~10 failures
+                    self.mic.open()
+                except Exception:  # noqa: BLE001
+                    log.debug("microphone reopen failed", exc_info=True)
+            return None
+        if self._mic_failures:
+            log.info("microphone recovered after %d failed reads",
+                     self._mic_failures)
+            self._mic_failures = 0
+        return frame
+
     def _loop(self) -> None:  # pragma: no cover - timing/thread loop
         idle_sleep = FRAME_SIZE / SAMPLE_RATE
         while not self._stop.is_set():
-            frame = self.mic.read()
+            frame = self._read_frame_safe()
             if frame is None:
                 time.sleep(idle_sleep)
                 continue
