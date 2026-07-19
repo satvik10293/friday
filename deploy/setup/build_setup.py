@@ -101,6 +101,17 @@ def build_binary(payload: Path) -> Path:
            "--specpath", str(_WORK),
            "--paths", str(_ROOT),
            "--add-data", f"{payload}{os.pathsep}payload",
+           # deploy/__init__ lazy-exports via importlib (PEP 562) so eager
+           # imports can't drag core/torch into the freeze — but that same
+           # laziness hides these modules from PyInstaller's static analysis.
+           # Declare every deploy module the installer touches at runtime
+           # explicitly (all stdlib-only; the size tripwire below still
+           # guards against anything heavy leaking in).
+           "--hidden-import", "deploy.build",
+           "--hidden-import", "deploy.version",
+           "--hidden-import", "deploy.setup.detect",
+           "--hidden-import", "deploy.setup.recommend",
+           "--hidden-import", "deploy.setup.installer",
            str(entry)]
     print(f"[build-setup] freezing {name} ...")
     proc = subprocess.run(cmd, cwd=str(_ROOT))

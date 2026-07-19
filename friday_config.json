@@ -62,6 +62,11 @@
     "steps_per_cycle": 150,
     "max_seconds": 45.0
   },
+  "agentic": {
+    "enabled": true,
+    "cycle_s": 60.0,
+    "goals_per_cycle": 2
+  },
   "stt": {
     "model": "base",
     "device": "cpu",
@@ -134,11 +139,11 @@
       "vision": "cpu"
     },
     "measured": {
-      "cpu": 106.28,
+      "cpu": 87.48,
       "speedup": 0.0
     },
     "detected": [],
-    "measured_at": 1784383990.91841,
+    "measured_at": 1784428471.3074071,
     "version": 1
   }
 }

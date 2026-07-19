@@ -82,14 +82,16 @@ def _read_rapidocr(image) -> Optional[str]:
 
 
 def _backends() -> list:
-    """OCR backends to try, best-for-this-OS first, universal fallback last."""
+    """OCR backends to try. RapidOCR is PRIMARY on every OS (owner-directed,
+    M59): one engine across dev, packaged builds, and platforms — models ship
+    in the wheel, fully offline, no WinRT/Vision dependency. The OS-native
+    engines remain as fallbacks when rapidocr is missing or fails."""
     os_name = platform.system()
-    order = []
+    order = [("rapidocr", _read_rapidocr)]           # primary everywhere
     if os_name == "Windows":
         order.append(("winocr", _read_winocr))
     elif os_name == "Darwin":
         order.append(("ocrmac", _read_ocrmac))
-    order.append(("rapidocr", _read_rapidocr))       # cross-platform fallback
     return order
 
 

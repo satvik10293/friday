@@ -125,8 +125,17 @@ try {
     $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\FRIDAY"
     New-Item -Path $key -Force | Out-Null
     $uninst = "powershell -ExecutionPolicy Bypass -File `"$([IO.Path]::Combine($InstallDir,'deploy','windows','uninstall.ps1'))`" -InstallDir `"$InstallDir`""
-    Set-ItemProperty $key DisplayName    "FRIDAY (Release Candidate)"
-    Set-ItemProperty $key DisplayVersion "0.20.0-rc1"
+    # version comes from deploy/version.py (single source of truth) — a
+    # hardcoded string here went stale across releases (M59 audit P4)
+    $ver = "unknown"
+    try {
+        $py = Join-Path $InstallDir ".venv\Scripts\python.exe"
+        if (-not (Test-Path $py)) { $py = "python" }
+        $out = & $py -c "from deploy.version import release_tag; print(release_tag())" 2>$null
+        if ($out) { $ver = "$out".Trim() }
+    } catch { }
+    Set-ItemProperty $key DisplayName    "FRIDAY"
+    Set-ItemProperty $key DisplayVersion $ver
     Set-ItemProperty $key Publisher      "Satvik"
     Set-ItemProperty $key InstallLocation $InstallDir
     Set-ItemProperty $key UninstallString $uninst

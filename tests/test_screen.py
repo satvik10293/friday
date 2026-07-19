@@ -1,10 +1,12 @@
 """
 M52 — screen sight: she reads the screen on-device, image stays local.
 
-Capture + OCR use the OS's own engine (winocr on Windows, Apple Vision on
-macOS) with a cross-platform RapidOCR fallback. The screenshot is never
-returned or stored — only the extracted text. "read my screen" / "what's this
-error" route to it; "take a screenshot" still goes to the action skill.
+Capture + OCR: RapidOCR is primary on every OS (M59, owner-directed — one
+engine across dev, packaged builds, and platforms), with the OS-native
+engines (winocr on Windows, Apple Vision on macOS) as fallbacks. The
+screenshot is never returned or stored — only the extracted text. "read my
+screen" / "what's this error" route to it; "take a screenshot" still goes to
+the action skill.
 """
 
 from __future__ import annotations
@@ -12,13 +14,15 @@ from __future__ import annotations
 from core.io import screen
 
 
-def test_backend_order_is_os_native_first_then_fallback(monkeypatch):
+def test_backend_order_is_rapidocr_first_everywhere(monkeypatch):
+    # owner-directed (M59): ONE engine across dev, packaged builds, and OSes;
+    # the OS-native engines are the fallback, not the primary
     monkeypatch.setattr(screen.platform, "system", lambda: "Windows")
-    assert [n for n, _ in screen._backends()] == ["winocr", "rapidocr"]
+    assert [n for n, _ in screen._backends()] == ["rapidocr", "winocr"]
     monkeypatch.setattr(screen.platform, "system", lambda: "Darwin")
-    assert [n for n, _ in screen._backends()] == ["ocrmac", "rapidocr"]
+    assert [n for n, _ in screen._backends()] == ["rapidocr", "ocrmac"]
     monkeypatch.setattr(screen.platform, "system", lambda: "Linux")
-    assert [n for n, _ in screen._backends()] == ["rapidocr"]   # universal fallback
+    assert [n for n, _ in screen._backends()] == ["rapidocr"]
 
 
 def test_read_screen_returns_text_never_the_image(monkeypatch):

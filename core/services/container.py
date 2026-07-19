@@ -66,6 +66,17 @@ class ServiceContainer:
         with self._lock:
             return name in self._instances or name in self._factories
 
+    def replace(self, name: str, instance: Any) -> bool:
+        """Swap a LIVE service instance (M59 self-heal reload): after a failed
+        module is safely rebuilt, consumers that resolve through the container
+        get the fresh instance — no app restart. Only replaces a name the
+        container already knows; a reload must never *introduce* services."""
+        with self._lock:
+            if name not in self._instances and name not in self._factories:
+                return False
+            self._instances[name] = instance
+        return True
+
     def names(self) -> list[str]:
         with self._lock:
             return sorted(set(self._instances) | set(self._factories))

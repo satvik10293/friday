@@ -365,6 +365,38 @@ class StartupSequence:
         runtime = self.components.get("runtime")
         if runtime is not None and self.start_runtime:
             background.attach(runtime)
+
+        # the agentic workflow (M59): the audited missing wire — ACTIVE goals
+        # are consumed and driven through the existing executive pipeline
+        # (decide → plan → orchestrated skills), SAFE-only autonomy, results
+        # fed back into goal state. Config block `agentic`.
+        acfg = self.config.get("agentic") or {}
+        goals = self.components.get("goals")
+        if goals is not None and acfg.get("enabled", True):
+            try:
+                from core.executive.agentic import build_agentic_workflow
+                kernel = self.components.get("kernel")
+                v3_exec = self.components.get("executive")
+                workflow = build_agentic_workflow(
+                    goals=goals, skills=self.components.get("skills"),
+                    memory=self.components.get("memory_service"),
+                    decision_log=get_decision_log(),
+                    deliberator=getattr(v3_exec, "deliberate", None),
+                    world_model=(kernel.try_get("world_model")
+                                 if kernel is not None else None),
+                    goals_per_cycle=int(acfg.get("goals_per_cycle", 2)))
+                if workflow is not None:
+                    self.components["agentic"] = workflow
+                    if kernel is not None:
+                        kernel.register("agentic", workflow)
+                    if runtime is not None and self.start_runtime \
+                            and hasattr(runtime, "schedule"):
+                        goals.attach(runtime)      # health + goals.tick (M28)
+                        runtime.schedule("agentic.cycle", workflow.cycle,
+                                         float(acfg.get("cycle_s", 60.0)))
+            except Exception:  # noqa: BLE001 — the workflow must never break boot
+                log.debug("agentic workflow wiring failed", exc_info=True)
+
         thoughts.think("observation", "I'm awake. Systems are coming online.",
                        source="startup")
         return "ok", "thought stream + self model + background cognition online"
@@ -377,7 +409,8 @@ class StartupSequence:
         from core.nervous import NervousSystem
 
         executive = self.components.get("executive")
-        nervous = NervousSystem(report_sink=self._relay_health_to_brain)
+        nervous = NervousSystem(report_sink=self._relay_health_to_brain,
+                                container=self.components.get("kernel"))
 
         # every cognitive brain is a module with a nerve
         for name, brain in (self.components.get("brains") or {}).items():
