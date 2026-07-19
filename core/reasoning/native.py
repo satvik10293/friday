@@ -104,6 +104,11 @@ class NativeMind:
         kws = set(_keywords(query))
         if not kws:
             return "", 0.0
+        try:
+            from core.intelligence.mini_brains import is_answer_sentence
+        except Exception:  # noqa: BLE001
+            def is_answer_sentence(_s):  # pragma: no cover
+                return True
         scored: list[tuple[float, str]] = []
         seen: set[str] = set()
         for text in self._material(query):
@@ -112,8 +117,16 @@ class NativeMind:
                 if len(s) < 15 or s.lower() in seen:
                     continue
                 seen.add(s.lower())
+                # never recite a stored QUESTION or reminder as an answer —
+                # that is the parroting bug (capital-of-France -> a stored
+                # "what is the capital of Japan?")
+                if not is_answer_sentence(s):
+                    continue
                 hit = kws & set(_keywords(s, k=14))
-                if hit:
+                # require a DISTINCTIVE overlap (a word of real length) — a
+                # match on only a short common word ("all", "one") recites
+                # off-topic notes; that is the parroting bug's second face
+                if hit and any(len(w) >= 4 for w in hit):
                     # relevance, with a mild brevity preference
                     scored.append((len(hit) - 0.001 * len(s), s))
         if not scored:

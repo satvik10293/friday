@@ -59,9 +59,11 @@ class ReasonerModel(BaseModel):
     @staticmethod
     def _best_snippets(request: InferenceRequest, k: int = 2) -> list[str]:
         """The most relevant content the context builder retrieved (memories +
-        knowledge), ranked by keyword overlap with the effective retrieval
-        query (which, for follow-up prompts, includes the previous turn)."""
-        from core.intelligence.mini_brains import clean_snippet
+        knowledge), reduced to DECLARATIVE, on-topic sentences and ranked by
+        keyword overlap. Stored questions and reminders are dropped so she
+        never parrots a stored 'what is the capital of Japan?' back as an
+        answer (the retrieval-recite bug)."""
+        from core.intelligence.mini_brains import clean_snippet, is_answer_sentence
         kws = set(_keywords(request.context.get("query") or request.prompt, k=8))
         candidates: list[str] = []
         for m in request.context.get("memories", []) or []:
@@ -72,13 +74,25 @@ class ReasonerModel(BaseModel):
             text = e.get("content") if isinstance(e, dict) else str(e)
             if text:
                 candidates.append(text)
-        # stored notes carry frontmatter/metadata in their body — strip it so
-        # she speaks prose, never `url:`/`fact_id:`/`relevance:` lines
-        cleaned = [c for c in (clean_snippet(t) for t in candidates) if c]
-        scored = sorted(cleaned,
-                        key=lambda t: -len(kws & set(_keywords(t, k=12))))
-        return [t.strip()[:300] for t in scored[:k]
-                if kws & set(_keywords(t, k=12))]
+        scored: list[tuple[int, str]] = []
+        seen: set[str] = set()
+        for raw in candidates:
+            cleaned = clean_snippet(raw)   # strip frontmatter/metadata lines
+            if not cleaned:
+                continue
+            for s in re.split(r"(?<=[.!?])\s+", cleaned):
+                s = s.strip()
+                low = s.lower()
+                if low in seen or not is_answer_sentence(s):
+                    continue               # skip questions / reminders / dupes
+                hit = kws & set(_keywords(s, k=12))
+                # a DISTINCTIVE overlap only — a shared short common word
+                # ("all") is not topical relevance, and reciting on it parrots
+                if hit and any(len(w) >= 4 for w in hit):
+                    seen.add(low)
+                    scored.append((len(hit), s))
+        scored.sort(key=lambda t: -t[0])
+        return [s[:300] for _, s in scored[:k]]
 
     def _run(self, request: InferenceRequest):
         kws = _keywords(request.prompt)

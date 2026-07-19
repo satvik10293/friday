@@ -461,11 +461,21 @@ _S_ALL = re.compile(r"\b(?:all|every)\s+([a-z]+?)s?\s+(?:are|is)\s+"
 _S_NO = re.compile(r"\bno\s+([a-z]+?)s?\s+(?:are|is)\s+(?:a\s+|an\s+)?"
                    r"([a-z]+?)s?\b", re.I)
 _S_ISA = re.compile(r"\b([a-z]+)\s+is\s+(?:a|an)\s+([a-z]+?)s?\b", re.I)
-_S_ASK = re.compile(r"\bis\s+([a-z]+)\s+(?:a|an)\s+([a-z]+?)s?\s*\?", re.I)
+# the ask allows a bare adjective predicate ("is Socrates mortal?") — the
+# article is optional here, but member facts (_S_ISA) still require one, so a
+# conditional's "is the ground wet?" is never mistaken for a syllogism ask
+_S_ASK = re.compile(r"\bis\s+([a-z]+)\s+(?:a\s+|an\s+)?([a-z]+?)s?\s*\?", re.I)
+
+_IRREGULAR_PLURALS = {
+    "men": "man", "women": "woman", "people": "person", "children": "child",
+    "feet": "foot", "teeth": "tooth", "mice": "mouse", "geese": "goose",
+}
 
 
 def _sing(word: str) -> str:
     w = word.lower()
+    if w in _IRREGULAR_PLURALS:
+        return _IRREGULAR_PLURALS[w]
     return w[:-1] if w.endswith("s") and len(w) > 3 else w
 
 
@@ -518,6 +528,114 @@ def syllogism(question: str) -> Optional[str]:
             return (f"No — {_chain(c)}, and no {c} is {_an(target)}, so "
                     f"{entity.capitalize()} is not {_an(target)}.")
     return None                                     # premises don't entail it
+
+
+# ── conditional logic: modus ponens / modus tollens, deduced ─────────────────
+# "If it is raining then the ground is wet. It is raining. Is the ground wet?"
+# Parse one conditional (if P then Q), the stated fact, and the yes/no ask;
+# apply modus ponens (P → Q) or modus tollens (¬Q → ¬P). Answers only what the
+# premises entail; anything else returns None.
+
+_COND_RE = re.compile(
+    r"\bif\s+(?P<p>.+?)\s+then\s+(?P<q>.+?)[.;]", re.I)
+_FACT_RE = re.compile(r"(?:^|[.;]\s*)(?P<neg>not\s+)?(?P<f>[^.;?]+?)[.;]", re.I)
+_COND_ASK = re.compile(r"\bis\s+(?P<neg>not\s+)?(?P<x>[^.?]+?)\s*\?", re.I)
+
+
+def _norm_clause(text: str) -> str:
+    t = (text or "").strip().lower()
+    t = re.sub(r"^(it|that|this|there)\s+(is|are|was|were|will be)\s+", "", t)
+    t = re.sub(r"^(is|are|was|were|it'?s)\s+", "", t)
+    return re.sub(r"\s+", " ", t).strip(" .")
+
+
+def _neg_and_clean(clause: str) -> tuple[str, bool]:
+    """Return (negation-stripped clause, was_negated). Detects 'not', 'n't',
+    'never', 'no' anywhere in the clause."""
+    low = (clause or "").lower()
+    neg = bool(re.search(r"\bnot\b|n't\b|\bnever\b|\bno\b", low))
+    low = re.sub(r"\bnot\b|n't|\bnever\b", " ", low)
+    return _norm_clause(low), neg
+
+
+_LOGIC_STOP = {"is", "are", "was", "were", "be", "will", "the", "a", "an", "it",
+               "that", "this", "there", "to", "of", "and"}
+
+
+def _content_words(t: str) -> set:
+    return {w for w in re.findall(r"[a-z]+", (t or "").lower())
+            if w not in _LOGIC_STOP}
+
+
+def _clauses_match(a: str, b: str) -> bool:
+    """Two clauses refer to the same proposition (by content words)."""
+    wa, wb = _content_words(a), _content_words(b)
+    return bool(wa) and (wa == wb or wa <= wb or wb <= wa)
+
+
+def conditional(question: str) -> Optional[str]:
+    m = _COND_RE.search(question or "")
+    ask = _COND_ASK.search(question or "")
+    if not m or not ask:
+        return None
+    p, q = _norm_clause(m.group("p")), _norm_clause(m.group("q"))
+    # the asserted fact: the clause after the conditional, before the question
+    mid = (question or "")[m.end():ask.start()]
+    facts = []
+    for fm in _FACT_RE.finditer(mid):
+        clause, neg = _neg_and_clean(fm.group("f"))
+        if clause:
+            facts.append((clause, neg))
+    if not facts:
+        return None
+    fact, fact_neg = facts[-1]
+    asked, asked_neg = _neg_and_clean(ask.group("x"))
+    asked_neg = asked_neg or bool(ask.group("neg"))
+
+    # modus ponens: P asserted true → Q true
+    if _clauses_match(fact, p) and not fact_neg and _clauses_match(asked, q):
+        return (f"Yes — {p} is true, and if {p} then {q}, so {q}."
+                if not asked_neg else f"No — {p} is true, so {q}.")
+    # modus tollens: Q asserted false → P false
+    if _clauses_match(fact, q) and fact_neg and _clauses_match(asked, p):
+        return (f"No — {q} is false, and if {p} then {q}, so {p} must be false."
+                if not asked_neg else f"Yes — since {q} is false, {p} is false.")
+    return None
+
+
+# ── disjunctive syllogism: 'Either A or B. Not A. Is B? → Yes.' ──────────────
+_DISJ_RE = re.compile(r"\beither\s+(?P<a>.+?)\s+or\s+(?P<b>.+?)\s*[.;?]", re.I)
+
+
+def disjunctive(question: str) -> Optional[str]:
+    m = _DISJ_RE.search(question or "")
+    ask = _COND_ASK.search(question or "")
+    if not m or not ask:
+        return None
+    a, _ = _neg_and_clean(m.group("a"))
+    b, _ = _neg_and_clean(m.group("b"))
+    if not a or not b:
+        return None
+    mid = (question or "")[m.end():ask.start()]
+    facts = []
+    for fm in _FACT_RE.finditer(mid):
+        clause, neg = _neg_and_clean(fm.group("f"))
+        if clause:
+            facts.append((clause, neg))
+    if not facts:
+        return None
+    fact, fact_neg = facts[-1]
+    if not fact_neg:                     # the rule needs a NEGATED premise
+        return None
+    asked, asked_neg = _neg_and_clean(ask.group("x"))
+    asked_neg = asked_neg or bool(ask.group("neg"))
+    # not A → B  (and the symmetric not B → A)
+    for ruled_out, remains in ((a, b), (b, a)):
+        if _clauses_match(fact, ruled_out) and _clauses_match(asked, remains):
+            return (f"Yes — it isn't {ruled_out}, and it's either {a} or {b}, "
+                    f"so it's {remains}." if not asked_neg else
+                    f"No — since it isn't {ruled_out}, it must be {remains}.")
+    return None
 
 
 # ── transitive relations: order chains, deduced not guessed ──────────────────
@@ -693,8 +811,9 @@ def list_ops(question: str) -> Optional[str]:
 # ── the front door ────────────────────────────────────────────────────────────
 
 _SOLVERS: list[Callable[[str], Optional[str]]] = [
-    syllogism, relations, text_ops, comparison, percent_change, percent, power,
-    units, dates, word_problem, algebra, list_ops, aggregate, arithmetic]
+    syllogism, relations, conditional, disjunctive, text_ops, comparison,
+    percent_change, percent, power, units, dates, word_problem, algebra,
+    list_ops, aggregate, arithmetic]
 
 
 def solve(question: str) -> Optional[str]:

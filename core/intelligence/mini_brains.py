@@ -393,6 +393,26 @@ def clean_snippet(text: str) -> str:
     return " ".join(lines).strip()
 
 
+# a stored sentence that is a QUESTION or an instruction/reminder is never a
+# usable ANSWER — reciting it back is the "parroting" bug (e.g. "what's the
+# capital of France?" -> reciting a stored "what is the capital of Japan?").
+# STT text often has no '?', so an interrogative LEAD word is the reliable
+# tell — wh-words only (not auxiliaries like "will", which begin names/prose).
+_NON_ANSWER_RE = re.compile(
+    r"\?|^\s*(?:what|whats|why|how|who|whom|whose|which|where|when|"
+    r"remember|reminder|note that|don'?t forget|keep in mind|"
+    r"to-?do|todo|study|learn about|read up on)\b", re.I)
+
+
+def is_answer_sentence(sentence: str) -> bool:
+    """Whether a stored sentence can stand as an answer to recite. Rejects
+    questions and instruction/reminder-shaped lines; keeps declarative prose.
+    Used by the extractive faculties so they never parrot a stored question or
+    memo back as if it answered the user."""
+    s = (sentence or "").strip()
+    return len(s) >= 12 and not _NON_ANSWER_RE.search(s)
+
+
 class RecallBrain(MiniBrain):
     name = "recall"
 
