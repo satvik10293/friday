@@ -56,6 +56,13 @@
     "cycle_s": 600.0,
     "seed_topics": []
   },
+  "learning": {
+    "continuous": true,
+    "min_queue": 3,
+    "per_refill": 4,
+    "max_per_day": 48,
+    "curriculum": []
+  },
   "neural": {
     "enabled": true,
     "train_s": 900.0,

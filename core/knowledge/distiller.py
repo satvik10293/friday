@@ -92,6 +92,7 @@ class KnowledgeDistiller:
         self.per_cycle = max(1, int(per_cycle))
         self.min_gap_words = max(1, int(min_gap_words))
         self._queue_path = queue_path if queue_path is not None else _QUEUE_PATH
+        self.curiosity = None              # optional M62 drive: keeps her learning
         self._lock = threading.Lock()
         self._queue: list[dict] = []       # {"topic","question","ts"}
         self._done_keys: set[str] = set()  # distilled this process + loaded
@@ -212,8 +213,14 @@ class KnowledgeDistiller:
         return queued
 
     def run_cycle(self) -> int:
-        """One scheduled pass: close up to `per_cycle` gaps. Bounded, quiet,
-        never raises — the runtime can call this on a timer forever."""
+        """One scheduled pass: keep her LEARNING. First let the curiosity drive
+        (M62) top the queue up when it's low, so she studies even when no one is
+        asking; then close up to `per_cycle` gaps. Bounded, quiet, never raises."""
+        if self.curiosity is not None:
+            try:
+                self.curiosity.refill()
+            except Exception:  # noqa: BLE001 — curiosity never breaks distillation
+                log.debug("curiosity refill failed", exc_info=True)
         done = 0
         try:
             for _ in range(self.per_cycle):
@@ -227,18 +234,26 @@ class KnowledgeDistiller:
     def status(self) -> dict:
         with self._lock:
             pending = len(self._queue)
-        return {"pending": pending, "queued": self.queued,
-                "distilled": self.distilled, "failed": self.failed,
-                "skipped_personal": self.skipped_personal,
-                "enabled": self.knowledge is not None and self.teacher is not None}
+        s = {"pending": pending, "queued": self.queued,
+             "distilled": self.distilled, "failed": self.failed,
+             "skipped_personal": self.skipped_personal,
+             "enabled": self.knowledge is not None and self.teacher is not None}
+        if self.curiosity is not None:
+            try:
+                s["curiosity"] = self.curiosity.status()
+            except Exception:  # noqa: BLE001
+                pass
+        return s
 
 
 def get_distiller() -> Optional[KnowledgeDistiller]:
     """Build the distiller from config + live services; None (inert) when
-    disabled or when either side is missing. Never raises."""
+    disabled or when either side is missing. Attaches the curiosity drive (M62)
+    so she keeps learning even when no one is asking. Never raises."""
     try:
         cfg_path = _ROOT / "friday_config.json"
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8")).get("distiller") or {}
+        full = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg = full.get("distiller") or {}
         if not cfg.get("enabled", True):
             return None
         from core.intelligence.teacher import get_teacher
@@ -246,9 +261,23 @@ def get_distiller() -> Optional[KnowledgeDistiller]:
         teacher = get_teacher()
         if teacher is None:
             return None
-        distiller = KnowledgeDistiller(get_knowledge_service(), teacher,
+        knowledge = get_knowledge_service()
+        distiller = KnowledgeDistiller(knowledge, teacher,
                                        per_cycle=int(cfg.get("per_cycle", 2)))
-        distiller.seed(cfg.get("seed_topics") or [])   # owner's curriculum
+        distiller.seed(cfg.get("seed_topics") or [])   # owner's fixed seeds
+        # constant learning (M62): the curiosity drive keeps her queue fed
+        learn = full.get("learning") or {}
+        if learn.get("continuous", True):
+            try:
+                from core.knowledge.curiosity import CuriosityEngine
+                distiller.curiosity = CuriosityEngine(
+                    distiller, knowledge=knowledge,
+                    curriculum=learn.get("curriculum") or None,
+                    min_queue=int(learn.get("min_queue", 3)),
+                    per_refill=int(learn.get("per_refill", 4)),
+                    max_per_day=int(learn.get("max_per_day", 48)))
+            except Exception:  # noqa: BLE001 — curiosity is optional
+                log.debug("curiosity engine unavailable", exc_info=True)
         return distiller
     except Exception as e:  # noqa: BLE001 — the notebook is always optional
         log.debug("distiller unavailable: %s", e)

@@ -32,6 +32,10 @@ data/core_backup_*/
 data/first_run.json
 data/uninstall.json
 data/core_memory/
+data/distiller_queue.json
+data/curiosity_state.json
+data/neural_brain.json
+data/tokenizer.json
 core/world_data/
 # Migration framework backups (M10) — regenerable snapshots
 **/migration_backups/
