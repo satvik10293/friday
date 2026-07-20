@@ -19,12 +19,12 @@
     "voice_id": "en-US-AriaNeural"
   },
   "teacher": {
-    "enabled": true,
+    "enabled": false,
     "provider": "groq",
     "model": "llama-3.3-70b-versatile"
   },
   "reasoner": {
-    "primary": "cloud",
+    "primary": "local",
     "model": "openai/gpt-oss-120b",
     "fallback_models": [
       "llama-3.3-70b-versatile",
@@ -139,11 +139,11 @@
       "vision": "cpu"
     },
     "measured": {
-      "cpu": 87.48,
+      "cpu": 77.63,
       "speedup": 0.0
     },
     "detected": [],
-    "measured_at": 1784428471.3074071,
+    "measured_at": 1784479174.484298,
     "version": 1
   }
 }

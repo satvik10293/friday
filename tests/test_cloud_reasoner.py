@@ -35,7 +35,7 @@ def test_reasoner_falls_through_its_model_chain():
                              fallback_models=["working-model"])
     calls = []
 
-    def _call(model, messages):
+    def _call(model, messages, **kw):
         calls.append(model)
         if model == "broken-model":
             raise RuntimeError("503")
@@ -51,7 +51,7 @@ def test_reasoner_falls_through_its_model_chain():
 def test_reasoner_never_raises_when_every_model_fails():
     reasoner = CloudReasoner(primary="cloud", api_key="k",
                              model="a", fallback_models=["b"])
-    reasoner._call = lambda model, messages: (_ for _ in ()).throw(RuntimeError("down"))
+    reasoner._call = lambda model, messages, **kw: (_ for _ in ()).throw(RuntimeError("down"))
     answer = reasoner.reason("anything")
     assert answer.ok is False and answer.error
     assert reasoner.stats.failed == 1
@@ -174,3 +174,56 @@ def test_cloud_answers_flow_through_the_learning_gate():
     bridge = _bridge(_LocalIOS(confidence=0.9), reasoner, memory=memory)
     bridge.think("remember that the capital of Australia is Canberra")
     assert any("Canberra" in m for m in memory.remembered)
+
+
+# ── M61: a proper reasoning process — step-by-step on hard problems ────────────
+
+def test_reasoning_questions_use_the_step_by_step_prompt():
+    from core.intelligence.cloud_reasoner import _REASONING_PROMPT, _SYSTEM_PROMPT
+    r = CloudReasoner(primary="cloud", api_key="k", model="m")
+    seen = {}
+
+    def _call(model, messages, **kw):
+        seen["system"] = messages[0]["content"]
+        seen["max_tokens"] = kw.get("max_tokens")
+        return "work...\nFINAL: the ball costs 5 cents"
+
+    r._call = _call
+    ans = r.reason("A bat and ball cost $1.10; the bat is $1 more. How much is the ball?")
+    assert seen["system"] == _REASONING_PROMPT            # deliberate prompt
+    assert seen["max_tokens"] >= 2000                     # room to reason
+    assert ans.answer == "the ball costs 5 cents"         # only the FINAL spoken
+    assert r.stats.reasoning == 1
+
+
+def test_simple_facts_stay_concise_no_reasoning_prompt():
+    from core.intelligence.cloud_reasoner import _SYSTEM_PROMPT
+    r = CloudReasoner(primary="cloud", api_key="k", model="m")
+    seen = {}
+
+    def _call(model, messages, **kw):
+        seen["system"] = messages[0]["content"]
+        return "Canberra."
+
+    r._call = _call
+    ans = r.reason("capital of Australia?")
+    assert seen["system"] == _SYSTEM_PROMPT               # concise prompt
+    assert ans.answer == "Canberra." and r.stats.reasoning == 0
+
+
+def test_wants_reasoning_classification():
+    from core.intelligence.cloud_reasoner import CloudReasoner as CR
+    w = CR._wants_reasoning
+    assert w("why does ice float on water")
+    assert w("how do I reverse a linked list")
+    assert w("write a function to check a palindrome")
+    assert w("solve for x in 2x + 3 = 9")
+    assert not w("what's the capital of France")
+    assert not w("what time is it")
+
+
+def test_reasoning_without_a_final_marker_falls_back_to_full_text():
+    r = CloudReasoner(primary="cloud", api_key="k", model="m")
+    r._call = lambda model, messages, **kw: "Here is my careful analysis with no marker."
+    ans = r.reason("explain why the sky is blue")
+    assert ans.answer == "Here is my careful analysis with no marker."

@@ -147,6 +147,26 @@ def percent(question: str) -> Optional[str]:
     return f"{m.group(1)}% of {m.group(2)} = {_fmt(val)}"
 
 
+# smarter thinking: a percent CHAINED with another operation — "15% of 240
+# plus 10" — is computed whole (the bare `percent` solver would drop the "+ 10")
+_PCT_COMPOSITE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*%\s*of\s+(\d+(?:\.\d+)?)\s*([-+*/])\s*(\d+(?:\.\d+)?)", re.I)
+
+
+def composite(question: str) -> Optional[str]:
+    q = normalize(question)
+    m = _PCT_COMPOSITE.search(q)
+    if not m or not (_has_intent(q) or "%" in q):
+        return None
+    base = float(m.group(1)) / 100.0 * float(m.group(2))
+    op, k = m.group(3), float(m.group(4))
+    val = {"+": base + k, "-": base - k, "*": base * k,
+           "/": (base / k if k else None)}[op]
+    if val is None:
+        return None
+    return f"{m.group(1)}% of {m.group(2)} {op} {m.group(4)} = {_fmt(val)}"
+
+
 def power(question: str) -> Optional[str]:
     q = normalize(question)
     m = _POWER.search(q)
@@ -808,12 +828,116 @@ def list_ops(question: str) -> Optional[str]:
     return None
 
 
+# ── number theory: prime / factors / gcd / parity / base — all provable ─────
+def _int_after(question: str, pattern: str) -> Optional[int]:
+    m = re.search(pattern, question or "", re.I)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except (ValueError, IndexError):
+        return None
+
+
+def _is_prime(n: int) -> bool:
+    if n < 2:
+        return False
+    if n % 2 == 0:
+        return n == 2
+    i = 3
+    while i * i <= n:
+        if n % i == 0:
+            return False
+        i += 2
+    return True
+
+
+def primality(question: str) -> Optional[str]:
+    n = _int_after(question, r"\bis\s+(\d+)\s+(?:a\s+)?prime\b")
+    if n is None:
+        return None
+    if _is_prime(n):
+        return f"Yes, {n} is prime."
+    for d in range(2, int(n ** 0.5) + 1):
+        if n % d == 0:
+            return f"No, {n} isn't prime — it's divisible by {d} ({n} = {d} × {n // d})."
+    return f"No, {n} isn't prime."
+
+
+def parity(question: str) -> Optional[str]:
+    m = re.search(r"\bis\s+(\d+)\s+(even|odd)\b", question or "", re.I)
+    if not m:
+        return None
+    n, want = int(m.group(1)), m.group(2).lower()
+    actual = "even" if n % 2 == 0 else "odd"
+    return (f"Yes, {n} is {actual}." if actual == want
+            else f"No, {n} is {actual}, not {want}.")
+
+
+def perfect_square(question: str) -> Optional[str]:
+    n = _int_after(question, r"\bis\s+(\d+)\s+a\s+perfect\s+square\b")
+    if n is None:
+        return None
+    r = int(n ** 0.5)
+    for cand in (r - 1, r, r + 1):
+        if cand >= 0 and cand * cand == n:
+            return f"Yes, {n} is a perfect square ({cand}^2)."
+    return f"No, {n} isn't a perfect square."
+
+
+def factors(question: str) -> Optional[str]:
+    prime = bool(re.search(r"\bprime factor", question or "", re.I))
+    n = _int_after(question, r"\b(?:prime\s+)?factors?\s+of\s+(\d+)")
+    if n is None or n < 1:
+        return None
+    if prime:
+        pf, m, d = [], n, 2
+        while d * d <= m:
+            while m % d == 0:
+                pf.append(d)
+                m //= d
+            d += 1
+        if m > 1:
+            pf.append(m)
+        return f"The prime factors of {n} are {', '.join(map(str, pf)) or n}."
+    divs = [d for d in range(1, n + 1) if n % d == 0]
+    return f"The factors of {n} are {', '.join(map(str, divs))}."
+
+
+def gcd_lcm(question: str) -> Optional[str]:
+    m = re.search(r"\b(gcd|greatest common (?:divisor|factor)|hcf|lcm|least "
+                  r"common multiple)\b.*?(\d+)\D+(\d+)", question or "", re.I)
+    if not m:
+        return None
+    import math
+    a, b = int(m.group(2)), int(m.group(3))
+    if "lcm" in m.group(1).lower() or "multiple" in m.group(1).lower():
+        return f"The LCM of {a} and {b} is {a * b // math.gcd(a, b)}."
+    return f"The GCD of {a} and {b} is {math.gcd(a, b)}."
+
+
+def base_convert(question: str) -> Optional[str]:
+    m = re.search(r"\b(\d+)\s+(?:in|to|as|into)\s+(binary|hex(?:adecimal)?|"
+                  r"octal)\b|\b(binary|hex(?:adecimal)?|octal)\s+(?:of|for)\s+"
+                  r"(\d+)\b", question or "", re.I)
+    if not m:
+        return None
+    n = int(m.group(1) or m.group(4))
+    base = (m.group(2) or m.group(3)).lower()
+    if base.startswith("bin"):
+        return f"{n} in binary is {bin(n)[2:]}."
+    if base.startswith("oct"):
+        return f"{n} in octal is {oct(n)[2:]}."
+    return f"{n} in hexadecimal is {hex(n)[2:].upper()}."
+
+
 # ── the front door ────────────────────────────────────────────────────────────
 
 _SOLVERS: list[Callable[[str], Optional[str]]] = [
     syllogism, relations, conditional, disjunctive, text_ops, comparison,
-    percent_change, percent, power, units, dates, word_problem, algebra,
-    list_ops, aggregate, arithmetic]
+    primality, parity, perfect_square, factors, gcd_lcm, base_convert,
+    percent_change, composite, percent, power, units, dates, word_problem,
+    algebra, list_ops, aggregate, arithmetic]
 
 
 def solve(question: str) -> Optional[str]:

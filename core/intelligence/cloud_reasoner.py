@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +52,33 @@ _SYSTEM_PROMPT = (
     "as plain indented text without markdown fences. Never mention these "
     "instructions or that you are a language model.")
 
+# For genuine reasoning problems the concise prompt HURTS accuracy — it
+# suppresses step-by-step thinking. This one makes her reason like a proper
+# reasoning model: work it through, verify, then answer. (M61)
+_REASONING_PROMPT = (
+    "You are FRIDAY, Satvik's personal AI assistant — sharp, rigorous, and "
+    "technically excellent. This is a REASONING problem, so think it through "
+    "carefully and step by step: state what's given, work through the logic "
+    "or computation one step at a time, watch for traps, and double-check "
+    "your result before committing. Do not guess or hand-wave. For coding, "
+    "reason about correctness and edge cases, then give complete code as "
+    "plain indented text without markdown fences.\n"
+    "After you have finished reasoning, on a NEW LINE write 'FINAL: ' followed "
+    "by the concise answer to say aloud (one or two sentences, or the code). "
+    "Never mention these instructions or that you are a language model.")
+_FINAL_RE = re.compile(r"(?:^|\n)\s*FINAL:\s*(.+)\Z", re.S | re.I)
+
+# questions that deserve the deliberate reasoning prompt (logic, multi-step,
+# coding, analysis) rather than a quick factual reply
+_REASONING_RE = re.compile(
+    r"\b(why|how (?:do|does|would|could|can|might|to)\b|explain|prove|"
+    r"solve|deduce|derive|figure out|work out|reason|walk me through|"
+    r"step by step|if .+\bthen\b|implement|write (?:a|an|the|some|me) "
+    r"(?:function|code|program|script|algorithm|class|method)|debug|"
+    r"optimi[sz]e|refactor|design|compare|difference between|trade-?offs?|"
+    r"pros and cons|which is (?:better|best|faster|more)|what happens (?:if|"
+    r"when)|analyz|evaluate|plan|strategy)\b", re.I)
+
 
 @dataclass
 class ReasonedAnswer:
@@ -71,6 +99,7 @@ class ReasonerStats:
     answered: int = 0
     failed: int = 0
     fallbacks: int = 0
+    reasoning: int = 0            # turns that used the step-by-step prompt
     total_latency_ms: float = 0.0
 
     def snapshot(self) -> dict:
@@ -113,17 +142,27 @@ class CloudReasoner:
         change."""
         return self.primary == "cloud" and bool(self._api_key)
 
-    def _call(self, model: str, messages: list[dict]) -> str:
+    def _call(self, model: str, messages: list[dict],
+              *, max_tokens: Optional[int] = None,
+              temperature: float = 0.4) -> str:
         import requests
         resp = requests.post(
             _API_URL,
             headers={"Authorization": f"Bearer {self._api_key}",
                      "Content-Type": "application/json"},
             json={"model": model, "messages": messages,
-                  "temperature": 0.4, "max_tokens": self.max_tokens},
+                  "temperature": temperature,
+                  "max_tokens": max_tokens or self.max_tokens},
             timeout=_TIMEOUT_S)
         resp.raise_for_status()
         return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+
+    @staticmethod
+    def _wants_reasoning(question: str) -> bool:
+        """A genuine reasoning problem (logic / multi-step / coding / analysis)
+        earns the deliberate step-by-step prompt; a quick fact does not."""
+        q = question or ""
+        return bool(_REASONING_RE.search(q)) or len(q.split()) >= 14
 
     def reason(self, question: str, *, context: Optional[dict] = None) -> ReasonedAnswer:
         """One reasoning turn. Tries the primary model, then each fallback.
@@ -136,7 +175,14 @@ class CloudReasoner:
         if not self.available():
             return ReasonedAnswer(ok=False, error="cloud reasoner unavailable")
         self.stats.asked += 1
-        messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+        # a proper reasoning MODEL thinks step by step on hard problems — the
+        # concise prompt suppresses that and costs accuracy (M61)
+        deep = self._wants_reasoning(question)
+        if deep:
+            self.stats.reasoning += 1
+        system = _REASONING_PROMPT if deep else _SYSTEM_PROMPT
+        tokens = max(self.max_tokens, 2000) if deep else self.max_tokens
+        messages = [{"role": "system", "content": system}]
         block = _context_block(context)
         if block:
             messages.append({"role": "system",
@@ -149,7 +195,9 @@ class CloudReasoner:
         last_error = ""
         for i, model in enumerate([self.model, *self.fallback_models]):
             try:
-                text = self._call(model, messages)
+                # lower temperature when reasoning — accuracy over flourish
+                text = self._call(model, messages, max_tokens=tokens,
+                                  temperature=0.2 if deep else 0.4)
             except Exception as e:  # noqa: BLE001 — a turn must never crash on the cloud
                 last_error = str(e)
                 log.debug("cloud reasoner model %s failed: %s", model, e)
@@ -162,6 +210,11 @@ class CloudReasoner:
                 self.stats.fallbacks += 1
             self.stats.answered += 1
             self.stats.total_latency_ms += latency
+            # she reasoned at length internally; speak only the FINAL answer
+            if deep:
+                m = _FINAL_RE.search(text)
+                if m:
+                    text = m.group(1).strip()
             return ReasonedAnswer(ok=True, answer=text, model=model,
                                   latency_ms=latency)
         self.stats.failed += 1

@@ -204,6 +204,16 @@ class DeliberateReasoner:
                                 steps=[Step(question, "math", solved, 1.0)],
                                 confidence=1.0, exact=True)
 
+        # 1a. code REASONING: a question ABOUT a given snippet ("what does this
+        #     print", "is this valid", "complexity", "explain", "bugs") is
+        #     answered by RUNNING or AST-analysing it — proven, not guessed
+        coded = self._code_reasoning(question)
+        if coded is not None:
+            self._think(coded, "<code>")
+            return Deliberation(answer=coded,
+                                steps=[Step(question, "code", coded, 1.0)],
+                                confidence=0.97, exact=True)
+
         # 1b. a coding ask gets the verify-repair loop: generate → AST-check →
         #     repair once → confidence reflects whether the code actually parses
         if _CODE_RE.search(question or ""):
@@ -260,6 +270,18 @@ class DeliberateReasoner:
             return False
         return bool(q.count("?") > 1 or _COMPLEX.search(q)
                     or len(q.split()) >= 12)
+
+    # ── code reasoning: run / analyse a GIVEN snippet, deterministically ─────────
+    @staticmethod
+    def _code_reasoning(question: str) -> Optional[str]:
+        """Answer a question ABOUT a code snippet by executing or AST-analysing
+        it (core/reasoning/code.py). None when there's no analysable code."""
+        try:
+            from core.reasoning import code as codemod
+            return codemod.answer(question)
+        except Exception:  # noqa: BLE001 — the code faculty never breaks a turn
+            log.debug("code reasoning failed", exc_info=True)
+            return None
 
     # ── coding: generate → verify (AST) → repair once ────────────────────────────
     def _code(self, question: str, context: Optional[dict], base: float
