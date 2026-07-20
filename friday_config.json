@@ -19,12 +19,12 @@
     "voice_id": "en-US-AriaNeural"
   },
   "teacher": {
-    "enabled": false,
+    "enabled": true,
     "provider": "groq",
     "model": "llama-3.3-70b-versatile"
   },
   "reasoner": {
-    "primary": "local",
+    "primary": "cloud",
     "model": "openai/gpt-oss-120b",
     "fallback_models": [
       "llama-3.3-70b-versatile",
