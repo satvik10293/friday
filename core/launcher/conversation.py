@@ -164,6 +164,7 @@ class ConversationBridge:
                  knowledge=None, reasoner=None, local_reasoner=None,
                  distiller=None, neural=None, core_memory=None, brains=None,
                  conversation_state=None, skills=None, overlay=None, agentic=None,
+                 harness=None,
                  speak_answers: bool = True,
                  clarify_threshold: float = 0.35,
                  escalate_threshold: float = 0.55) -> None:
@@ -174,6 +175,7 @@ class ConversationBridge:
         self.teacher = teacher              # temporary cloud teacher (M30)
         self.knowledge = knowledge          # M7 KnowledgeService → librarian (M40)
         self.reasoner = reasoner            # cloud-primary basic reasoner (M42)
+        self.harness = harness              # council over the user's AI subscriptions
         self.local_reasoner = local_reasoner  # her OWN local reasoning brain (M54)
         self.distiller = distiller          # the notebook trick (M55)
         self.neural = neural                # her own trained weights (M58)
@@ -812,6 +814,8 @@ class ConversationBridge:
         "voice": "voice_brain", "conversation": "voice_brain",
         "reasoning": "reasoning_brain", "reasoner": "reasoning_brain",
         "simulation": "simulation_brain", "executive": "executive_brain",
+        "trading": "trading_brain", "athena": "trading_brain",
+        "market": "trading_brain", "stocks": "trading_brain",
     }
     _ROSTER_RE = re.compile(r"\b(which|what|list)\b.{0,24}\bbrains\b", re.I)
     _ASK_BRAIN_RE = re.compile(
@@ -860,6 +864,32 @@ class ConversationBridge:
             log.debug("brain address failed: %s", key, exc_info=True)
             return (key, f"The {label} brain is degraded and couldn't answer "
                          "just now.")
+
+    # ── Athena, the trading subagent (M63) ───────────────────────────────────────
+    # Trading questions delegate to the Trading Brain, which wraps Athena (the
+    # vendored analyst). Unlike the read-only _ask_brain route, this makes a LIVE
+    # call so "Athena, should I buy AAPL?" gets a real, current answer. Advisory
+    # only — the subagent reads and analyses, it never places orders by voice.
+    _ATHENA_RE = re.compile(
+        r"\b(athena|trading brain)\b|\b(should i (buy|sell)|trade idea|"
+        r"stock (tip|idea|advice)|my (portfolio|holdings)|buy or sell)\b", re.I)
+
+    def _ask_athena(self, command: str) -> Optional[tuple]:
+        """Delegate a trading question to Athena. Returns (route_key, answer) or
+        None (→ the normal path runs). Never raises."""
+        if not self.brains:
+            return None
+        q = (command or "").strip()
+        if not q or not self._ATHENA_RE.search(q):
+            return None
+        brain = self.brains.get("trading_brain")
+        if brain is None or not hasattr(brain, "ask"):
+            return None
+        try:
+            return ("trading", brain.ask(q))
+        except Exception:  # noqa: BLE001 — a trading fault never breaks the turn
+            log.debug("athena route failed", exc_info=True)
+            return None
 
     # ── keeping her own voice and room noise out of the conversation ─────────────
     _ECHO_WINDOW_S = 45.0
@@ -939,11 +969,10 @@ class ConversationBridge:
             return False
         return bool(_PERSONAL_RE.search(command or ""))
 
-    def _cloud_pass(self, command: str):
-        """(M42) The basic reasoner: one cloud turn grounded in the
-        conversation window plus privacy-filtered local memories. Returns
-        (RouterResponse, memory_used_ids) on success, (None, []) otherwise —
-        the local chain then runs exactly as before."""
+    def _nonprivate_facts(self, command: str):
+        """Recall grounding facts, keeping ONLY non-private memories — this is
+        the cloud boundary: nothing marked private may leave the box. Returns
+        (facts, memory_used_ids)."""
         facts: list[str] = []
         memory_used: list = []
         if self.memory is not None:
@@ -956,12 +985,60 @@ class ConversationBridge:
                             memory_used.append(m["id"])
             except Exception:  # noqa: BLE001 — grounding is best-effort
                 log.debug("memory recall for cloud pass failed", exc_info=True)
-        reasoned = self.reasoner.reason(command, context={
-            "recent_turns": list(self._window), "facts": facts[:5],
-            "standing": self._standing(command)})
+        return facts, memory_used
+
+    def _cloud_available(self) -> bool:
+        """A cloud turn is possible if the multi-provider council OR the single
+        cloud reasoner has a reachable model."""
+        if self.harness is not None:
+            try:
+                if self.harness.has_available_provider():
+                    return True
+            except Exception:  # noqa: BLE001
+                pass
+        return self.reasoner is not None and self.reasoner.available()
+
+    def _cloud_pass(self, command: str):
+        """The cloud turn, grounded in the conversation window plus privacy-
+        filtered local memories. Prefers the multi-provider COUNCIL (several of
+        the user's AI subscriptions answer in parallel; a hard question is
+        cross-checked and synthesized), and falls back to the single cloud
+        reasoner (M42). Returns (RouterResponse, memory_used_ids) on success,
+        (None, []) otherwise — the local chain then runs exactly as before."""
+        facts, memory_used = self._nonprivate_facts(command)
+        context = {"recent_turns": list(self._window), "facts": facts[:5],
+                   "standing": self._standing(command)}
+        from core.intelligence.router import RouterResponse
+
+        # 1) the council over the user's subscriptions (never breaks a turn)
+        if self.harness is not None:
+            try:
+                if self.harness.has_available_provider():
+                    task = self.harness.run_auto_sync(command, context=context)
+                    answer = getattr(getattr(task, "result", None), "text", "") or ""
+                    if getattr(task, "succeeded", False) and answer.strip():
+                        meta = task.result.meta or {}
+                        used = meta.get("council") or [task.result.provider]
+                        synth = bool(meta.get("synthesized"))
+                        response = RouterResponse(
+                            task="general",
+                            complexity="council" if synth else "cloud",
+                            strategy="harness_council" if synth
+                            else f"harness:{task.result.provider}",
+                            ok=True, answer=answer.strip(),
+                            confidence=task.result.confidence or 0.9,
+                            models_used=[f"harness:{m}" for m in used],
+                            latency_ms=task.result.latency_ms)
+                        return response, memory_used
+            except Exception:  # noqa: BLE001 — the council must never break a turn
+                log.debug("harness cloud pass failed", exc_info=True)
+
+        # 2) fallback: the original single cloud reasoner
+        if self.reasoner is None or not self.reasoner.available():
+            return None, []
+        reasoned = self.reasoner.reason(command, context=context)
         if not getattr(reasoned, "ok", False):
             return None, []
-        from core.intelligence.router import RouterResponse
         response = RouterResponse(
             task="general", complexity="cloud", strategy="cloud_reasoner",
             ok=True, answer=reasoned.answer, confidence=0.9,
@@ -1242,6 +1319,14 @@ class ConversationBridge:
         if paused_answer is not None:
             return self._respond_directly(turn, "goal_approval", paused_answer, t0)
 
+        # Athena (M63): trading questions delegate to the trading subagent, LIVE.
+        # No `command=` — a portfolio/analysis answer may carry account data and
+        # must not ride the conversation window to the cloud.
+        traded = self._ask_athena(command)
+        if traded is not None:
+            key, answer = traded
+            return self._respond_directly(turn, f"brain:{key}", answer, t0)
+
         # addressable brains (M46): a named brain answers for itself, directly.
         # No `command=` on purpose (security review): brain answers carry
         # sensor-derived state with no privacy marking — they must not enter
@@ -1310,8 +1395,8 @@ class ConversationBridge:
                 route.append("local_reasoner")
                 self._local_turns += 1
 
-        if response is None and self.reasoner is not None \
-                and self.reasoner.available() and not self._is_personal(command):
+        if response is None and self._cloud_available() \
+                and not self._is_personal(command):
             cloud_tried = True
             response, memory_used = self._cloud_pass(command)
             if response is not None:

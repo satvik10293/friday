@@ -483,6 +483,15 @@ class StartupSequence:
                 reasoner = get_cloud_reasoner()  # None unless cloud-primary + key
             except Exception:  # noqa: BLE001 — cloud-off must never break boot
                 pass
+            harness = None
+            try:                             # council over the user's AI subscriptions
+                from core.harness import build_orchestrator
+                # cloud-only: the local mind already has its own turn (_local_pass).
+                # Lights up exactly the vendors whose API key is present in .env.
+                hz = build_orchestrator(include_local=False, only_available=True)
+                harness = hz if hz.has_available_provider() else None
+            except Exception:  # noqa: BLE001 — the council is always optional
+                harness = None
             knowledge = None
             try:                             # librarian: M7 bridge + world fetcher (M40)
                 from core.knowledge.knowledge_service import get_knowledge_service
@@ -542,7 +551,8 @@ class StartupSequence:
                 neural=neural,                          # her own weights (M58)
                 brains=self.components.get("brains"),   # addressable society (M46)
                 skills=self.components.get("skills"),   # governed action layer (M47)
-                agentic=self.components.get("agentic"))  # autonomous goals (M59.2)
+                agentic=self.components.get("agentic"),  # autonomous goals (M59.2)
+                harness=harness)                        # multi-provider council
             self.components["conversation"] = bridge
             kernel = self.components.get("kernel")
             if kernel is not None:       # the M46 voice/reasoning brains observe this
