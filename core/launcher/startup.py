@@ -485,10 +485,15 @@ class StartupSequence:
                 pass
             harness = None
             try:                             # council over the user's AI subscriptions
-                from core.harness import build_orchestrator
+                from core.harness import (browser_drivers_from_config,
+                                          build_orchestrator)
                 # cloud-only: the local mind already has its own turn (_local_pass).
-                # Lights up exactly the vendors whose API key is present in .env.
-                hz = build_orchestrator(include_local=False, only_available=True)
+                # Lights up exactly the vendors whose API key is present in .env,
+                # using the models the owner set in friday_config.json, plus any
+                # opt-in browser seats (harness.browser_seats) for plan-only vendors.
+                seats = browser_drivers_from_config(self.config)
+                hz = build_orchestrator(include_local=False, only_available=True,
+                                        config=self.config, browser_drivers=seats)
                 harness = hz if hz.has_available_provider() else None
             except Exception:  # noqa: BLE001 — the council is always optional
                 harness = None
