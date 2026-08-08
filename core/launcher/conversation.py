@@ -818,6 +818,86 @@ class ConversationBridge:
                 "(like *.tmp in Downloads) and I'll show you what matches before "
                 "removing anything.")
 
+    # -- driving Chrome: owner-confirmed click on the OPEN page --------------------
+    # Guardrails (2026-08-08 security review): the confirm names the EXACT text
+    # AND the site; sensitive hosts (banking/checkout/admin) are refused by voice;
+    # browser.click matches exactly (refuses ambiguity); the confirmed click runs
+    # through the governed executor so clearance still applies. Typing by voice is
+    # deliberately NOT wired (blind insert / password-field risk) -- next, after
+    # a selector/password-field guard.
+    _BROWSER_CLICK_RE = re.compile(
+        r"^\s*click(?:\s+on)?\s+(?P<text>.{1,80}?)\s*[.?!]?\s*$", re.I)
+    # substring match on purpose: a safety denylist should over-refuse (better to
+    # decline a voice click on "mybank.com" than to miss it)
+    _SENSITIVE_HOST_RE = re.compile(
+        r"(bank|chase|wellsfargo|citi|hsbc|barclays|paypal|venmo|coinbase|"
+        r"binance|robinhood|fidelity|schwab|vanguard|checkout|payment|billing)"
+        r"|accounts\.google|/(?:admin|gp/(?:buy|checkout))", re.I)
+
+    def _browser_action(self, command: str) -> Optional[tuple]:
+        """Owner-confirmed click on the page open in FRIDAY's Chrome. Returns
+        (route_key, answer) or None. Never raises."""
+        try:
+            pending = getattr(self, "_pending_browser", None)
+            if pending is not None:
+                if self._CONFIRM_RUN_RE.match(command or ""):
+                    self._pending_browser = None
+                    return ("browser.click", self._do_browser_click(pending))
+                if self._CANCEL_RUN_RE.match(command or ""):
+                    self._pending_browser = None
+                    return ("browser.click", "Okay -- I won't click it.")
+                self._pending_browser = None          # stale; fall through
+            if self.skills is None:
+                return None
+            m = self._BROWSER_CLICK_RE.match((command or "").strip())
+            if not m:
+                return None
+            from core.web.browser import get_browser
+            cur = get_browser().current()
+            if not (isinstance(cur, dict) and cur.get("ok")):
+                return None                            # no page open -> not a web click
+            url = cur.get("url", "") or ""
+            host = ""
+            try:
+                from urllib.parse import urlparse
+                host = urlparse(url).hostname or ""
+            except Exception:  # noqa: BLE001
+                host = ""
+            if url and self._SENSITIVE_HOST_RE.search(url):
+                return ("browser.click:refused",
+                        "That's a sensitive site (" + (host or url) + ") -- I won't "
+                        "click there by voice. Please do that one yourself.")
+            text = m.group("text").strip(" .?!'\"")
+            if not text:
+                return None
+            self._pending_browser = text
+            self._pending_command = None
+            self._pending_approval = None
+            self._pending_paused = None
+            self._pending_code = None
+            where = (" on " + host) if host else " on the open page"
+            return ("browser.click:await_confirm",
+                    "Say 'confirm' and I'll click '" + text + "'" + where + ".")
+        except Exception:  # noqa: BLE001
+            log.debug("browser_action route failed", exc_info=True)
+            self._pending_browser = None
+            return None
+
+    def _do_browser_click(self, text: str) -> str:
+        """Execute a confirmed click through the governed executor -- clearance
+        still applies, so an owner-confirmed voice click never bypasses M47."""
+        try:
+            from core.executive.agentic import run_one_shot_approved
+            result = run_one_shot_approved(self.skills, "browser.click", {"text": text})
+        except Exception:  # noqa: BLE001
+            log.debug("confirmed browser click failed", exc_info=True)
+            return "I couldn't click that just now."
+        data = getattr(result, "data", None) or {}
+        if getattr(result, "success", False) and data.get("ok"):
+            return "Done -- clicked '" + text + "'."
+        reason = data.get("error") or getattr(result, "error", "it didn't work")
+        return "I couldn't click '" + text + "' -- " + str(reason) + "."
+
     # ── her body: the governed action layer (M47) ───────────────────────────────
     # action-shaped voice commands run through the SkillExecutor, which enforces
     # the M3 security pipeline (policy → clearance → approval → sandbox → audit).
@@ -1570,6 +1650,12 @@ class ConversationBridge:
         clarified = self._clarify_destructive(command)
         if clarified is not None:
             key, answer = clarified
+            return self._respond_directly(turn, key, answer, t0)
+
+        # driving Chrome: owner-confirmed click on the open page (guardrailed)
+        web_acted = self._browser_action(command)
+        if web_acted is not None:
+            key, answer = web_acted
             return self._respond_directly(turn, key, answer, t0)
 
         # her screen sight (M52): "read my screen" / "what's this error" — OCR

@@ -23,10 +23,12 @@ Chrome isn't set up, the client reports not-ready instead of raising.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 log = logging.getLogger("friday.web.browser")
 
@@ -34,6 +36,20 @@ _ROOT = Path(__file__).resolve().parents[2]
 _PROFILE_DIR = _ROOT / "data" / "browser_profile"
 
 _URL_RE = re.compile(r"^https?://", re.I)
+
+
+def _is_public_host(host: str) -> bool:
+    """Reject internal/local targets so an untrusted transcript can't steer the
+    driven browser at localhost, the LAN, or a cloud-metadata endpoint (SSRF)."""
+    h = (host or "").lower().split(":")[0]
+    if not h or h == "localhost" or h.endswith((".local", ".internal", ".localhost")):
+        return False
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        return True                         # an ordinary hostname, not an IP literal
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
 
 
 def _normalize_url(url: str) -> Optional[str]:
@@ -46,6 +62,10 @@ def _normalize_url(url: str) -> Optional[str]:
             u = "https://" + u
         else:
             return None
+    # belt-and-suspenders: only http(s), and never a local/internal/IP-literal target
+    parsed = urlparse(u)
+    if parsed.scheme not in ("http", "https") or not _is_public_host(parsed.hostname or ""):
+        return None
     return u
 
 
@@ -144,9 +164,22 @@ class BrowserController:
             return self._not_ready()
         try:
             page = self._ensure_page()
-            page.get_by_text(text, exact=False).first.click(timeout=8000)
-            page.wait_for_timeout(500)
-            return {"ok": True, "clicked": text, "url": page.url}
+            # EXACT match only: a fuzzy `.first` click on a live, logged-in page is
+            # how you accidentally hit "Delete"/"Buy"/"Send". Try exact text, then
+            # an exact button/link by name; refuse ambiguity rather than guess.
+            for loc in (page.get_by_text(text, exact=True),
+                        page.get_by_role("button", name=text, exact=True),
+                        page.get_by_role("link", name=text, exact=True)):
+                n = loc.count()
+                if n == 1:
+                    loc.first.click(timeout=8000)
+                    page.wait_for_timeout(500)
+                    return {"ok": True, "clicked": text, "url": page.url}
+                if n > 1:
+                    return {"ok": False, "reason": "ambiguous",
+                            "error": f"{n} things match {text!r} -- be more specific"}
+            return {"ok": False, "reason": "not_found",
+                    "error": f"nothing exactly matching {text!r} on the page"}
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "reason": "click_failed", "error": str(e)}
 
