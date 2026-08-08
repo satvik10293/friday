@@ -99,6 +99,7 @@ class Task:
     error: str = ""
     attempts: int = 0
     provider: str = ""
+    tags: dict = field(default_factory=dict)         # caller labels (purpose, source…)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     history: list = field(default_factory=list)
@@ -125,6 +126,11 @@ class Task:
     def succeeded(self) -> bool:
         return self.state is TaskState.COMPLETED
 
+    @property
+    def duration_ms(self) -> float:
+        """Wall-clock from creation to the last transition."""
+        return (self.updated_at - self.created_at) * 1000.0
+
     # ── terminal helpers ─────────────────────────────────────────────────────────
     def complete(self, result: Any = None, *, note: str = "") -> "Task":
         if result is not None:
@@ -143,6 +149,7 @@ class Task:
         return {"task_id": self.task_id, "objective": self.objective,
                 "capability": self.capability, "state": self.state.value,
                 "attempts": self.attempts, "provider": self.provider,
-                "error": self.error, "created_at": self.created_at,
-                "updated_at": self.updated_at,
+                "error": self.error, "tags": dict(self.tags),
+                "created_at": self.created_at, "updated_at": self.updated_at,
+                "duration_ms": round(self.duration_ms, 2),
                 "history": [e.__dict__ for e in self.history]}

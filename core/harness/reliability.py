@@ -104,6 +104,12 @@ def _default_is_success(result) -> bool:
     return bool(getattr(result, "ok", True))
 
 
+def _default_is_retryable(result) -> bool:
+    # A returned result is retried unless it explicitly says otherwise
+    # (exceptions/timeouts are always retryable — handled as result=None).
+    return bool(getattr(result, "retryable", True))
+
+
 async def reliable_call(
     fn: Callable[[], Awaitable],
     *,
@@ -111,13 +117,16 @@ async def reliable_call(
     breaker: Optional[CircuitBreaker] = None,
     timeout_s: Optional[float] = None,
     is_success: Callable[[object], bool] = _default_is_success,
+    is_retryable: Callable[[object], bool] = _default_is_retryable,
     on_event: Optional[Callable[[str, dict], None]] = None,
 ) -> object:
     """Run `fn()` (a zero-arg async callable) with timeout + retry + breaker.
 
     Returns the successful result, or the last failed result if every attempt
-    failed. Raises `CircuitOpenError` only when the breaker rejects the very
-    first attempt (fail-fast) and there is no prior result to return.
+    failed. A failed result that `is_retryable` reports False (e.g. a 401 auth
+    error) stops the loop immediately — no wasted attempts on a hopeless call.
+    Raises `CircuitOpenError` only when the breaker rejects the very first
+    attempt (fail-fast) and there is no prior result to return.
     """
     retry = retry or RetryPolicy()
 
@@ -159,6 +168,11 @@ async def reliable_call(
             last = result
         emit("attempt_failed", attempt=attempt, reason=failed_reason,
              state=breaker.state if breaker else None)
+
+        # a permanent failure (e.g. bad key) is pointless to retry
+        if result is not None and not is_retryable(result):
+            emit("not_retryable", attempt=attempt)
+            return last
 
         if attempt < retry.max_attempts:
             await asyncio.sleep(retry.delay(attempt))

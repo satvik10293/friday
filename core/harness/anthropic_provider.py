@@ -19,7 +19,8 @@ import os
 import time
 from typing import Callable, Optional
 
-from .openai_compatible import render_chat_context
+from .openai_compatible import (_retryable_status, _short_http_error,
+                                _status_of, render_chat_context)
 from .providers import (BaseProvider, Capability, GenRequest, GenResult,
                         make_info)
 
@@ -74,19 +75,37 @@ class AnthropicProvider(BaseProvider):
                    "messages": [{"role": "user", "content": request.prompt}]}
         if system_parts:
             payload["system"] = "\n\n".join(system_parts)
+        if request.top_p is not None:
+            payload["top_p"] = request.top_p
+        if request.stop:
+            payload["stop_sequences"] = request.stop
         headers = {"x-api-key": self._api_key, "anthropic-version": _API_VERSION,
                    "content-type": "application/json"}
+
         t0 = time.perf_counter()
-        data = self._transport(self._api_url, headers, payload, self._timeout_s)
+        try:
+            data = self._transport(self._api_url, headers, payload, self._timeout_s)
+        except Exception as e:  # noqa: BLE001 — classify so retries aren't wasted
+            status = _status_of(e)
+            return GenResult(provider=self.info.name, ok=False, model=self.info.model,
+                             error=_short_http_error(e),
+                             latency_ms=(time.perf_counter() - t0) * 1000.0,
+                             retryable=_retryable_status(status),
+                             meta={"status": status} if status else {})
         latency = (time.perf_counter() - t0) * 1000.0
+
         text = _extract_text(data)
+        stop_reason = data.get("stop_reason") or ""
         if not text:
             return GenResult(provider=self.info.name, ok=False, model=self.info.model,
-                             error="empty answer", latency_ms=latency)
+                             error=f"empty answer ({stop_reason or 'empty'})",
+                             finish_reason=stop_reason, latency_ms=latency, retryable=False)
         usage = data.get("usage") or {}
         return GenResult(provider=self.info.name, ok=True, text=text,
                          model=self.info.model, confidence=0.9, latency_ms=latency,
                          tokens=int(usage.get("output_tokens", 0)),
+                         prompt_tokens=int(usage.get("input_tokens", 0)),
+                         finish_reason=stop_reason,
                          meta={"kind": "cloud", "vendor": self.info.name})
 
 

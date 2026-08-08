@@ -83,6 +83,7 @@ class HarnessOrchestrator:
                  max_providers: int = 3,
                  council_size: Optional[int] = None,
                  synthesizer: Optional[Union[str, ModelProvider]] = None,
+                 default_max_tokens: int = 1024,
                  verifier: Optional[VerifierLike] = None,
                  escalate: Optional[EscalateLike] = None,
                  on_event: Optional[EventSink] = None) -> None:
@@ -92,9 +93,17 @@ class HarnessOrchestrator:
         self._max_providers = max_providers
         self._council_size = council_size
         self._synthesizer = synthesizer
+        # headroom so a "thinking" model that reasons before answering isn't
+        # truncated to an empty content field (GenRequest defaults to only 512).
+        self._default_max_tokens = default_max_tokens
         self._verifier = verifier
         self._escalate = escalate
         self._on_event = on_event
+
+    def _default_request(self, objective: str, cap: str, context: dict,
+                         system: str) -> GenRequest:
+        return GenRequest(prompt=objective, task=cap, context=context,
+                          system=system, max_tokens=self._default_max_tokens)
 
     # ── public ───────────────────────────────────────────────────────────────────
     async def run(self, objective: str, *, capability=Capability.TEXT,
@@ -104,8 +113,7 @@ class HarnessOrchestrator:
         cap = as_capability(capability)
         task = Task(objective=objective, capability=cap, context=dict(context or {}))
         verifier = verifier if verifier is not None else self._verifier
-        req = request or GenRequest(prompt=objective, task=cap,
-                                    context=task.context, system=system)
+        req = request or self._default_request(objective, cap, task.context, system)
 
         providers = self._registry.by_capability(cap)[: self._max_providers]
         self._emit("task_started", task, capability=cap,
@@ -172,8 +180,7 @@ class HarnessOrchestrator:
         subscriptions into a single, cross-checked best answer for hard asks."""
         cap = as_capability(capability)
         task = Task(objective=objective, capability=cap, context=dict(context or {}))
-        req = request or GenRequest(prompt=objective, task=cap,
-                                    context=task.context, system=system)
+        req = request or self._default_request(objective, cap, task.context, system)
         chosen = (providers if providers is not None
                   else self._registry.by_capability(cap))
         chosen = [p for p in chosen if p.available()]

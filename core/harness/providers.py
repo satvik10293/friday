@@ -80,13 +80,18 @@ class ProviderInfo:
 @dataclass
 class GenRequest:
     """A single generation request. `context` is read-only primitives only — a
-    provider never receives live FRIDAY objects."""
+    provider never receives live FRIDAY objects. Decoding params beyond
+    temperature are optional; a provider passes through the ones it supports and
+    ignores the rest, so the same request works across every backend."""
     prompt: str = ""
     task: str = Capability.TEXT.value
     context: dict = field(default_factory=dict)
     system: str = ""
     max_tokens: int = 512
     temperature: float = 0.3
+    top_p: Optional[float] = None
+    stop: Optional[list] = None
+    metadata: dict = field(default_factory=dict)     # caller tags (trace, purpose…)
     trace_id: str = field(default_factory=new_trace_id)
 
     def to_dict(self) -> dict:
@@ -96,19 +101,32 @@ class GenRequest:
 @dataclass
 class GenResult:
     """The uniform result every provider returns — success or failure. `ok=False`
-    with a populated `error` is the honest failure the harness routes around."""
+    with a populated `error` is the honest failure the harness routes around;
+    `retryable` (meaningful when ok=False) tells the reliability layer whether
+    trying again could help: a 429/timeout/5xx is retryable, a 401/400/404 is
+    not. It defaults True — every failure retries unless an adapter marks it
+    permanent — so the layer never wastes attempts on a hopeless call."""
     provider: str
     ok: bool = True
     text: str = ""
     model: str = ""
     confidence: float = 0.0
     latency_ms: float = 0.0
-    tokens: int = 0
+    tokens: int = 0                                  # completion tokens
+    prompt_tokens: int = 0
+    finish_reason: str = ""
     error: str = ""
+    retryable: bool = True
     meta: dict = field(default_factory=dict)
 
+    @property
+    def total_tokens(self) -> int:
+        return self.tokens + self.prompt_tokens
+
     def to_dict(self) -> dict:
-        return dict(self.__dict__)
+        d = dict(self.__dict__)
+        d["total_tokens"] = self.total_tokens
+        return d
 
 
 class ModelProvider(ABC):

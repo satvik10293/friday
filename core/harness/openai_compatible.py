@@ -45,6 +45,27 @@ def requests_transport(url: str, headers: dict, payload: dict, timeout: float) -
     return resp.json()
 
 
+# HTTP failures worth retrying: rate limits, request timeouts, and any 5xx.
+_RETRYABLE_STATUS = {408, 409, 425, 429}
+
+
+def _status_of(exc) -> Optional[int]:
+    """Best-effort HTTP status from a transport exception (e.g. requests' HTTPError)."""
+    code = getattr(getattr(exc, "response", None), "status_code", None)
+    return int(code) if isinstance(code, int) else None
+
+
+def _retryable_status(status: Optional[int]) -> bool:
+    if status is None:
+        return True                         # network/DNS/timeout — worth a retry
+    return status in _RETRYABLE_STATUS or status >= 500
+
+
+def _short_http_error(exc) -> str:
+    status = _status_of(exc)
+    return f"HTTP {status}: {exc}" if status else str(exc)
+
+
 def render_chat_context(context: Optional[dict]) -> str:
     """Compact rendering of caller-supplied, already-privacy-filtered context
     (standing / recent_turns / facts) into a system-message block. Shared by
@@ -102,25 +123,43 @@ class OpenAICompatibleProvider(BaseProvider):
         payload = {"model": self.info.model, "messages": messages,
                    "temperature": request.temperature,
                    "max_tokens": request.max_tokens}
+        if request.top_p is not None:
+            payload["top_p"] = request.top_p
+        if request.stop:
+            payload["stop"] = request.stop
         headers = {"Authorization": f"Bearer {self._api_key}",
                    "Content-Type": "application/json"}
+
         t0 = time.perf_counter()
-        data = self._transport(self._endpoint, headers, payload, self._timeout_s)
+        try:
+            data = self._transport(self._endpoint, headers, payload, self._timeout_s)
+        except Exception as e:  # noqa: BLE001 — classify so retries aren't wasted
+            status = _status_of(e)
+            return GenResult(provider=self.info.name, ok=False, model=self.info.model,
+                             error=_short_http_error(e),
+                             latency_ms=(time.perf_counter() - t0) * 1000.0,
+                             retryable=_retryable_status(status),
+                             meta={"status": status} if status else {})
         latency = (time.perf_counter() - t0) * 1000.0
+
         # Defensive: a "thinking" model can burn the token budget on internal
         # reasoning and return a message with no `content` — never let a missing
         # field raise; report it as an honest empty answer with the reason.
         choices = data.get("choices") or []
         message = (choices[0].get("message") if choices else None) or {}
         text = (message.get("content") or "").strip()
-        if not text:
-            reason = (choices[0].get("finish_reason") if choices else "") or "empty"
-            return GenResult(provider=self.info.name, ok=False, model=self.info.model,
-                             error=f"empty answer ({reason})", latency_ms=latency)
+        finish = (choices[0].get("finish_reason") if choices else "") or ""
         usage = data.get("usage") or {}
+        if not text:
+            # a deterministic truncation ("length") won't fix itself on retry
+            return GenResult(provider=self.info.name, ok=False, model=self.info.model,
+                             error=f"empty answer ({finish or 'empty'})",
+                             finish_reason=finish, latency_ms=latency, retryable=False)
         return GenResult(provider=self.info.name, ok=True, text=text,
                          model=self.info.model, confidence=0.9, latency_ms=latency,
                          tokens=int(usage.get("completion_tokens", 0)),
+                         prompt_tokens=int(usage.get("prompt_tokens", 0)),
+                         finish_reason=finish,
                          meta={"kind": "cloud", "vendor": self.info.name})
 
 

@@ -90,6 +90,19 @@ class ProviderRegistry:
         cands = self.by_capability(capability)
         return cands[0] if cands else None
 
+    def by_kind(self, kind: str) -> list[ModelProvider]:
+        """All providers of a given kind ('local' | 'cloud' | 'browser')."""
+        return [p for p in self.all() if p.info.kind == kind]
+
+    def reset(self, name: str) -> bool:
+        """Force-close a provider's circuit breaker (manual recovery / ops).
+        Returns whether the provider exists."""
+        entry = self._entries.get(name)
+        if entry is None:
+            return False
+        entry.breaker.record_success()
+        return True
+
     # ── observability ────────────────────────────────────────────────────────────
     def status(self) -> dict:
         with self._lock:
