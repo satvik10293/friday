@@ -183,15 +183,30 @@ class BrowserController:
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "reason": "click_failed", "error": str(e)}
 
-    def type_text(self, text: str, *, selector: Optional[str] = None) -> dict:
+    def type_text(self, text: str, *, selector: Optional[str] = None,
+                  field: Optional[str] = None) -> dict:
         if not self.available():
             return self._not_ready()
         try:
             page = self._ensure_page()
+            # require an EXPLICIT target -- never a blind keyboard.insert_text into
+            # whatever has focus (could be a compose box or a transaction field)
             if selector:
-                page.fill(selector, text, timeout=8000)
+                loc = page.locator(selector).first
+            elif field:
+                loc = page.get_by_label(field, exact=False).first
             else:
-                page.keyboard.insert_text(text)
+                return {"ok": False, "reason": "no_target",
+                        "error": "tell me which field to type into"}
+            # never type into a password field
+            try:
+                itype = (loc.get_attribute("type") or "").lower()
+            except Exception:  # noqa: BLE001
+                itype = ""
+            if itype == "password":
+                return {"ok": False, "reason": "password_field",
+                        "error": "I won't type into a password field"}
+            loc.fill(text, timeout=8000)
             return {"ok": True, "typed": text[:60]}
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "reason": "type_failed", "error": str(e)}

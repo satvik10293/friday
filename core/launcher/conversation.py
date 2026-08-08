@@ -898,6 +898,41 @@ class ConversationBridge:
         reason = data.get("error") or getattr(result, "error", "it didn't work")
         return "I couldn't click '" + text + "' -- " + str(reason) + "."
 
+    # -- searching the web: drive her Chrome to a search engine, read the results -
+    _WEBSEARCH_RE = re.compile(
+        r"\b(?:search (?:the web|online|the internet|google)?\s*(?:for\s+)?|"
+        r"google\s+|look up\s+|what does the internet say about\s+)"
+        r"(?P<q>.{2,120}?)\s*(?:online|on the web|on the internet)?\s*[.?!]?$", re.I)
+
+    def _web_search(self, command: str) -> Optional[tuple]:
+        """Search the web by driving her Chrome to DuckDuckGo and reading the
+        results page. Read-only. Returns (route_key, answer) or None."""
+        m = self._WEBSEARCH_RE.search((command or "").strip())
+        if not m:
+            return None
+        query = m.group("q").strip(" .?!'\"")
+        if len(query) < 2:
+            return None
+        try:
+            from urllib.parse import quote_plus
+            from core.web.browser import get_browser
+            b = get_browser()
+            if not b.available():
+                return ("web.search", "I can't search the web yet -- install "
+                        "Playwright first (pip install playwright).")
+            opened = b.open("https://duckduckgo.com/html/?q=" + quote_plus(query))
+            if not (isinstance(opened, dict) and opened.get("ok")):
+                return ("web.search", "I couldn't run that search just now.")
+            read = b.read(max_chars=1500)
+            text = (read.get("text") or "").strip() if isinstance(read, dict) else ""
+            if not text:
+                return ("web.search", "I searched but couldn't read the results.")
+            return ("web.search", "Here's what I found for '" + query + "':\n"
+                    + text[:700])
+        except Exception:  # noqa: BLE001
+            log.debug("web_search failed", exc_info=True)
+            return None
+
     # ── her body: the governed action layer (M47) ───────────────────────────────
     # action-shaped voice commands run through the SkillExecutor, which enforces
     # the M3 security pipeline (policy → clearance → approval → sandbox → audit).
@@ -1656,6 +1691,12 @@ class ConversationBridge:
         web_acted = self._browser_action(command)
         if web_acted is not None:
             key, answer = web_acted
+            return self._respond_directly(turn, key, answer, t0)
+
+        # searching the web (drives her Chrome, reads the results page)
+        searched = self._web_search(command)
+        if searched is not None:
+            key, answer = searched
             return self._respond_directly(turn, key, answer, t0)
 
         # her screen sight (M52): "read my screen" / "what's this error" — OCR

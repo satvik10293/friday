@@ -144,3 +144,81 @@ def test_sensitive_host_regex_flags_risky_sites_only():
         assert CB._SENSITIVE_HOST_RE.search(u), u
     for u in ("https://en.wikipedia.org", "https://youtube.com", "https://example.com"):
         assert not CB._SENSITIVE_HOST_RE.search(u), u
+
+
+class _FakeInput:
+    def __init__(self, itype="text"):
+        self.itype = itype
+        self.filled = None
+
+    @property
+    def first(self):
+        return self
+
+    def get_attribute(self, name):
+        return self.itype if name == "type" else None
+
+    def fill(self, text, timeout=None):
+        self.filled = text
+
+
+class _FakeTypePage:
+    def __init__(self, itype="text"):
+        self._input = _FakeInput(itype)
+
+    def locator(self, selector):
+        return self._input
+
+    def get_by_label(self, label, exact=False):
+        return self._input
+
+
+def test_type_refuses_without_an_explicit_target():
+    ctrl = BrowserController()
+    ctrl._page = _FakeTypePage()
+    assert ctrl.type_text("hi")["reason"] == "no_target"
+
+
+def test_type_refuses_password_fields():
+    ctrl = BrowserController()
+    ctrl._page = _FakeTypePage(itype="password")
+    r = ctrl.type_text("hunter2", selector="#pw")
+    assert r["ok"] is False and r["reason"] == "password_field"
+
+
+def test_type_fills_a_normal_field():
+    ctrl = BrowserController()
+    ctrl._page = _FakeTypePage(itype="text")
+    r = ctrl.type_text("hello", field="Search")
+    assert r["ok"] is True and r["typed"] == "hello"
+
+
+def test_web_search_route_builds_query_and_reads(monkeypatch):
+    import types
+    from core.launcher.conversation import ConversationBridge as CB
+    from core.web import browser as B
+    seen = {}
+
+    class _FakeSearchBrowser:
+        def available(self):
+            return True
+
+        def open(self, url):
+            seen["url"] = url
+            return {"ok": True}
+
+        def read(self, max_chars=1500):
+            return {"ok": True, "text": "cats are great pets"}
+
+    monkeypatch.setattr(B, "get_browser", lambda: _FakeSearchBrowser())
+    stub = types.SimpleNamespace(_WEBSEARCH_RE=CB._WEBSEARCH_RE)
+    r = CB._web_search(stub, "search the web for cats")
+    assert r is not None and r[0] == "web.search"
+    assert "cats" in seen["url"] and "cats are great" in r[1]
+
+
+def test_web_search_ignores_non_search_phrases():
+    import types
+    from core.launcher.conversation import ConversationBridge as CB
+    stub = types.SimpleNamespace(_WEBSEARCH_RE=CB._WEBSEARCH_RE)
+    assert CB._web_search(stub, "what time is it") is None
