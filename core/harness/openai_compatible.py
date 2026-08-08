@@ -107,10 +107,16 @@ class OpenAICompatibleProvider(BaseProvider):
         t0 = time.perf_counter()
         data = self._transport(self._endpoint, headers, payload, self._timeout_s)
         latency = (time.perf_counter() - t0) * 1000.0
-        text = (data["choices"][0]["message"]["content"] or "").strip()
+        # Defensive: a "thinking" model can burn the token budget on internal
+        # reasoning and return a message with no `content` — never let a missing
+        # field raise; report it as an honest empty answer with the reason.
+        choices = data.get("choices") or []
+        message = (choices[0].get("message") if choices else None) or {}
+        text = (message.get("content") or "").strip()
         if not text:
+            reason = (choices[0].get("finish_reason") if choices else "") or "empty"
             return GenResult(provider=self.info.name, ok=False, model=self.info.model,
-                             error="empty answer", latency_ms=latency)
+                             error=f"empty answer ({reason})", latency_ms=latency)
         usage = data.get("usage") or {}
         return GenResult(provider=self.info.name, ok=True, text=text,
                          model=self.info.model, confidence=0.9, latency_ms=latency,
@@ -135,9 +141,11 @@ def xai_grok(*, model: str = "grok-2-latest", api_key: Optional[str] = None,
         context_length=131072, transport=transport, **kw)
 
 
-def gemini(*, model: str = "gemini-1.5-pro", api_key: Optional[str] = None,
+def gemini(*, model: str = "gemini-3.6-flash", api_key: Optional[str] = None,
            transport: Optional[Transport] = None, **kw) -> OpenAICompatibleProvider:
     # Google's OpenAI-compatible surface; free tier available via AI Studio.
+    # Default is a current flash model — verified against the live models list;
+    # older ids like gemini-1.5-pro now 404. Override with model= as needed.
     caps = kw.pop("capabilities", (*_DEFAULT_CAPS, Capability.VISION))
     return OpenAICompatibleProvider(
         name="gemini", model=model, capabilities=caps,

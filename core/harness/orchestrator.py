@@ -249,7 +249,7 @@ class HarnessOrchestrator:
     # ── internals ────────────────────────────────────────────────────────────────
     async def _synthesize(self, objective: str, good: list, cap: str, task: Task,
                           synthesizer) -> GenResult:
-        provider = self._resolve_synthesizer(synthesizer, cap)
+        provider = self._resolve_synthesizer(synthesizer, cap, good)
         candidates = [(n, r.text) for n, r in good]
         if provider is None:                       # nothing to synthesize with
             return _best_candidate(good, synthesized=False, error="no synthesizer")
@@ -269,21 +269,25 @@ class HarnessOrchestrator:
                    from_providers=[n for n, _ in good])
         return res
 
-    def _resolve_synthesizer(self, synthesizer, cap: str) -> Optional[ModelProvider]:
+    def _resolve_synthesizer(self, synthesizer, cap: str,
+                             good: Optional[list] = None) -> Optional[ModelProvider]:
         if isinstance(synthesizer, ModelProvider):
             return synthesizer
         if isinstance(synthesizer, str):
             p = self._registry.get(synthesizer)
             if p is not None and p.available():
                 return p
-        usable = [p for p in self._registry.by_capability(cap) if p.available()]
-        # A strong CLOUD model reconciles the candidates — synthesis is where
-        # quality is decided, so never hand it to the weak local mind while a
-        # frontier model is available. `cost_hint` is our strength proxy.
-        cloud = [p for p in usable if p.info.kind == "cloud"]
-        if cloud:
-            return max(cloud, key=lambda p: p.info.cost_hint)
-        return usable[0] if usable else None
+        # Prefer the strongest provider that JUST answered this round — it is
+        # proven alive, so synthesis never lands on a dead/ratelimited backend.
+        # A strong CLOUD model reconciles (never the weak local mind while a
+        # frontier one is up); `cost_hint` is our strength proxy.
+        answered = [self._registry.get(n) for n, _ in (good or [])]
+        pool = [p for p in answered if p is not None and p.available()]
+        if not pool:
+            pool = [p for p in self._registry.by_capability(cap) if p.available()]
+        cloud = [p for p in pool if p.info.kind == "cloud"]
+        pool = cloud or pool
+        return max(pool, key=lambda p: p.info.cost_hint) if pool else None
 
     def _emit_plain(self, event: str, **data) -> None:
         log.debug("harness %s %s", event, data)
