@@ -116,6 +116,25 @@ class TrayApp:
             except Exception:  # noqa: BLE001
                 log.debug("open logs failed", exc_info=True)
 
+    def _accounts(self, icon=None, item=None) -> None:
+        """Reopen the AI-account setup window. Runs in its own process so the Tk
+        window gets a clean main thread (pystray owns this one)."""
+        try:
+            import subprocess
+            import sys
+            from pathlib import Path
+            root = Path(__file__).resolve().parents[2]
+            exe = sys.executable
+            # prefer the windowed interpreter on Windows so no console flashes
+            if sys.platform.startswith("win"):
+                pyw = Path(exe).with_name("pythonw.exe")
+                if pyw.exists():
+                    exe = str(pyw)
+            subprocess.Popen([exe, "-m", "core.launcher.account_setup", "--force"],
+                             cwd=str(root))
+        except Exception:  # noqa: BLE001
+            log.debug("open accounts window failed", exc_info=True)
+
     def _quit(self, icon=None, item=None) -> None:
         try:
             if self._icon is not None:
@@ -138,6 +157,7 @@ class TrayApp:
                              self._toggle_mute),
             pystray.MenuItem("Open logs", self._logs,
                              visible=self._open_logs is not None),
+            pystray.MenuItem("AI Accounts…", self._accounts),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit FRIDAY", self._quit),
         )

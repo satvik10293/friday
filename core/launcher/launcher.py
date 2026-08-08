@@ -34,10 +34,12 @@ _OPTIONAL_DEPS = {
 
 class Launcher:
     def __init__(self, *, config: Optional[dict] = None, profile: str = "production",
-                 headless: bool = True, start_runtime: bool = False) -> None:
+                 headless: bool = True, start_runtime: bool = False,
+                 account_ui: bool = False) -> None:
         self.profile = profile
         self.headless = headless
         self.start_runtime = start_runtime
+        self.account_ui = account_ui
         self.platform = PlatformAdapter()
         self.config = self._load_config(config)
         self.report: Optional[dict] = None
@@ -73,6 +75,20 @@ class Launcher:
         wizard = FirstRunWizard(platform=self.platform)
         return wizard.run(force=force, groq_key=groq_key).to_dict()
 
+    # ── AI-account onboarding (first GUI launch only; never blocks headless) ─────
+    def account_onboarding(self) -> dict:
+        """Prompt once for the user's AI accounts (API key or linked browser seat)
+        so the harness council has real subscriptions to reach. Gated to a real
+        GUI launch; a marker makes it a no-op after the first time. Never raises."""
+        if not self.account_ui or self.headless:
+            return {"shown": False, "reason": "disabled"}
+        try:
+            from .account_setup import maybe_prompt
+            return maybe_prompt(headless=self.headless)
+        except Exception:  # noqa: BLE001 — onboarding must never take the boot down
+            log.debug("account onboarding failed", exc_info=True)
+            return {"shown": False, "reason": "error"}
+
     # ── boot ─────────────────────────────────────────────────────────────────────
     def run(self) -> dict:
         import sys
@@ -84,6 +100,7 @@ class Launcher:
                                        console=has_console,
                                        debug=(self.profile == "development"))
         first_run = self.first_run()               # idempotent: no-op after the first boot
+        accounts = self.account_onboarding()       # first GUI launch only; keys go live now
         deps = self.validate_dependencies()
         sequence = StartupSequence(config=self.config, headless=self.headless,
                                    start_runtime=self.start_runtime)
@@ -97,7 +114,8 @@ class Launcher:
             "friday": "ready" if startup.ready else "degraded",
             "profile": self.profile, "headless": self.headless,
             "platform": self.platform.info(), "logging": log_report,
-            "first_run": first_run, "dependencies": deps, "startup": startup.to_dict(),
+            "first_run": first_run, "accounts": accounts,
+            "dependencies": deps, "startup": startup.to_dict(),
             "health": health.diagnostics(),
         }
         return self.report
@@ -224,8 +242,12 @@ def main(argv: Optional[list] = None) -> int:
         from .first_run import main as first_run_main
         return first_run_main([])            # interactive wizard, then exit
 
+    # the account-setup window belongs only to a real resident launch — never in
+    # --json/--diagnostics (machine-readable) or --headless boots
+    account_ui = not (args.headless or args.json or args.diagnostics)
     launcher = Launcher(profile=args.profile, headless=args.headless,
-                        start_runtime=args.start_runtime or not args.headless)
+                        start_runtime=args.start_runtime or not args.headless,
+                        account_ui=account_ui)
     report = launcher.run()
     if args.diagnostics:
         print(launcher.diagnostics() if args.json else "")
