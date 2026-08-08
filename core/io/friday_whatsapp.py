@@ -44,7 +44,7 @@ class FridayWhatsApp:
                 self._cap_adb   = True
                 log.info("ADB phone connected for WhatsApp")
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
     # ── Send ─────────────────────────────────────────────────────────────────
 

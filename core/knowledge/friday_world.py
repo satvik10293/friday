@@ -716,7 +716,7 @@ def stop(*args, **kwargs):
     try:
         get_world()._index.save()
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
 
 
 def query_world(text: str, k: int = 6) -> list[dict]:

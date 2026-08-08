@@ -25,11 +25,14 @@ related concepts already exist as knowledge.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Optional
 
 from .knowledge_models import KnowledgeCategory, KnowledgeRelation
+
+log = logging.getLogger("friday.knowledge.writer")
 
 _WORD = re.compile(r"[a-z0-9]+")
 _SENT = re.compile(r"(?<=[.!?])\s+")
@@ -133,7 +136,7 @@ class KnowledgeWriter:
                 try:
                     self._k.relate(entry.id, peer.id, KnowledgeRelation.RELATED.value)
                 except Exception:
-                    pass
+                    log.debug("suppressed exception", exc_info=True)
 
     def render(self, knowledge_id: str) -> str:
         """Render an existing entry as a structured Markdown note."""

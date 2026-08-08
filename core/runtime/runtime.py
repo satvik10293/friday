@@ -90,7 +90,7 @@ class Runtime:
             try:
                 self._loop.run_until_complete(self._loop.shutdown_asyncgens())
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
             self._loop.close()
 
     async def _startup(self) -> None:

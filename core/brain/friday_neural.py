@@ -30,7 +30,7 @@ try:
     from core.infra.friday_secrets import load_env
     load_env()
 except Exception:
-    pass
+    log.debug("suppressed exception", exc_info=True)
 
 # API keys are read from these environment variables first; the config file is a
 # fallback for non-secret settings (models, owner_name, voice, ...).
@@ -613,7 +613,7 @@ def _emit_notice(msg: str):
         from core.infra.friday_signal import get_bus, Signal
         get_bus().emit_sync(Signal.UI_UPDATE, data={"notice": msg}, source="neural")
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
 
 
 def _emit_signal(event: str, data):
@@ -621,7 +621,7 @@ def _emit_signal(event: str, data):
         from core.infra.friday_signal import get_bus, Signal
         get_bus().emit_sync(getattr(Signal, event, event), data=data, source="neural")
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
 
 
 def clear_history() -> None:

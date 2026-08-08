@@ -232,4 +232,4 @@ class SkillExecutor:
             if sig is not None:
                 rt.emit(sig, data=data, source="skills")
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)

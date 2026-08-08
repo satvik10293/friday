@@ -73,7 +73,11 @@ def test_start_schedules_on_runtime(memory_service, goal_service, runtime):
     cl = CognitiveLoop(brain, runtime=runtime, goal_service=goal_service,
                        memory_service=memory_service, interval_s=0.1)
     cl.start()
-    time.sleep(0.35)                    # let the scheduler fire a couple of cycles
+    # poll rather than a fixed sleep — a 0.1s interval can miss its first tick
+    # under CPU contention, which made this test flaky in the full suite
+    deadline = time.time() + 3.0
+    while cl.metrics()["cognition_cycles"] < 1 and time.time() < deadline:
+        time.sleep(0.05)
     cl.stop()
     assert cl.metrics()["cognition_cycles"] >= 1
     assert "cognition" in runtime.health()

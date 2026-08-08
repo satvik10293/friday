@@ -178,7 +178,7 @@ class FridayPhone:
                 try:
                     level = int(line.split(":")[-1].strip())
                 except Exception:
-                    pass
+                    log.debug("suppressed exception", exc_info=True)
             if "status:" in line:
                 charging = "2" in line   # 2 = charging
         return {"ok": True, "level": level, "charging": charging}

@@ -256,7 +256,7 @@ def get_preferences() -> dict[str, str]:
         for p in chron_prefs(category="learning"):
             prefs[p["key"]] = p["value"]
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
 
     # Session overrides (most recent wins)
     prefs.update(_session_prefs)

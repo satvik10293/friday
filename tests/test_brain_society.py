@@ -134,6 +134,6 @@ def test_build_brains_includes_one_brain_per_module():
     for name in ("vision_brain", "audio_brain", "spatial_brain", "learning_brain",
                  "emotion_brain", "automation_brain", "runtime_brain",
                  "knowledge_brain", "goal_brain", "voice_brain",
-                 "reasoning_brain", "memory_brain"):
+                 "reasoning_brain", "trading_brain", "memory_brain"):
         assert name in brains, f"{name} missing from the society"
-    assert len(brains) == 12
+    assert len(brains) == 13

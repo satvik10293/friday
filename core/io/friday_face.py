@@ -203,7 +203,7 @@ def status_snapshot() -> dict:
         indep = int(ss.get("independence_pct", 0) or 0)
         facts = int(ss.get("facts_extracted", 0) or 0)
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
 
     confidence = max(trust, indep / 100.0)
 
@@ -416,7 +416,7 @@ def _scout_screen() -> None:
         from core.io.friday_proactive import active_window_title
         title = (active_window_title() or "").strip()
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
     if title:
         q = (f"I'm looking at \"{title}\" on my screen right now. "
              f"In one or two sentences, what should I do next?")
@@ -571,7 +571,7 @@ def create_app(brain=None):
             from core.io import friday_gesture
             friday_gesture.stop()
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
         return jsonify({"ok": True})
 
     @app.route("/gesture/status")
@@ -642,7 +642,7 @@ def create_app(brain=None):
             if b is not None and hasattr(b, "clear_history"):
                 b.clear_history()
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
         return jsonify({"ok": True})
 
     @app.route("/status")

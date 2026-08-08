@@ -125,6 +125,12 @@ class MemoryStore:
         if c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] is None:
             c.execute("INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                       (_SCHEMA_VERSION, time.time()))
+        # Persisted embedding vector: lets the index reload on boot instead of
+        # re-encoding every live memory (28s cold-start otherwise). Added via
+        # guarded ALTER so existing stores upgrade in place.
+        cols = {r[1] for r in c.execute("PRAGMA table_info(memories)")}
+        if "vec" not in cols:
+            c.execute("ALTER TABLE memories ADD COLUMN vec BLOB")
         c.commit()
         log.debug("memory store ready at %s (fts=%s)", self._path, self._fts)
 
@@ -145,6 +151,12 @@ class MemoryStore:
     def mark_embedded(self, mem_id: int, embed_id: int) -> None:
         c = self._conn()
         c.execute("UPDATE memories SET embed_id=? WHERE id=?", (embed_id, mem_id))
+        c.commit()
+
+    def store_vector(self, mem_id: int, vec_bytes: bytes) -> None:
+        """Persist the raw embedding bytes so the index reloads without re-encoding."""
+        c = self._conn()
+        c.execute("UPDATE memories SET vec=? WHERE id=?", (sqlite3.Binary(vec_bytes), mem_id))
         c.commit()
 
     def touch(self, mem_id: int) -> None:
@@ -233,6 +245,13 @@ class MemoryStore:
     def iter_live(self) -> Iterator[tuple[int, str]]:
         for r in self._conn().execute("SELECT id, content FROM memories WHERE deleted=0"):
             yield int(r["id"]), r["content"]
+
+    def iter_live_vectors(self) -> Iterator[tuple[int, str, Optional[bytes]]]:
+        """(id, content, persisted vector bytes or None) for each live memory."""
+        for r in self._conn().execute(
+            "SELECT id, content, vec FROM memories WHERE deleted=0"
+        ):
+            yield int(r["id"]), r["content"], r["vec"]
 
     def counts(self) -> dict:
         c = self._conn()

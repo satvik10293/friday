@@ -307,7 +307,7 @@ class FridayBrain:
             if sig:
                 self._bus.emit_sync(sig, data=data, source="brain", priority=priority)
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
     # ── Fallback ───────────────────────────────────────────────────────────────
 
@@ -359,7 +359,7 @@ class FridayBrain:
             from core.knowledge.friday_chronicle import end_session
             end_session(summary)
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
         log.info("Brain session ended")
 
 
@@ -394,7 +394,7 @@ if __name__ == "__main__":
         cfg = json.load(open(config_path))
         has_keys = bool(cfg.get("groq_api_key", "").strip())
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
 
     if not has_keys:
         print("\n  No API keys found in friday_config.json")

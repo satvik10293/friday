@@ -158,7 +158,7 @@ class ProactiveWatcher:
             if sig:
                 get_bus().emit_sync(sig, data=msg, source="proactive")
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
 
 # ── background daemon ───────────────────────────────────────────────────────────

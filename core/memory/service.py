@@ -34,6 +34,12 @@ from .working import WorkingMemory
 log = logging.getLogger("friday.memory.service")
 
 
+def _to_f32(vec):
+    """Contiguous float32 view of an embedding, for stable on-disk bytes."""
+    import numpy as np
+    return np.ascontiguousarray(vec, dtype="float32")
+
+
 class MemoryService:
     def __init__(self, store: Optional[MemoryStore] = None,
                  index: Optional[VectorIndex] = None,
@@ -69,6 +75,7 @@ class MemoryService:
             )
             self._index.add(mem_id, vec)               # keyed by mem_id == embed_id
             self._store.mark_embedded(mem_id, mem_id)
+            self._store.store_vector(mem_id, _to_f32(vec).tobytes())
         self._working.add({"id": mem_id, "role": role, "content": content,
                            "topic": topic, "ts": time.time()})
         return mem_id
@@ -176,9 +183,11 @@ class MemoryService:
             ids: list[int] = []
             vecs = []
             for mem_id, content in self._store.iter_live():
+                vec = _to_f32(self._embedder.encode(content))
                 ids.append(mem_id)
-                vecs.append(self._embedder.encode(content))
+                vecs.append(vec)
                 self._store.mark_embedded(mem_id, mem_id)
+                self._store.store_vector(mem_id, vec.tobytes())
             if ids:
                 import numpy as np
                 self._index.add_many(ids, np.asarray(vecs, dtype="float32"))
@@ -226,14 +235,29 @@ class MemoryService:
     def _build_index_from_store(self) -> None:
         if self._index.size() > 0:
             return
+        import numpy as np
+        dim = self._embedder.dim
+        nbytes = dim * 4  # float32
         ids, vecs = [], []
-        for mem_id, content in self._store.iter_live():
+        reencoded = 0
+        for mem_id, content, blob in self._store.iter_live_vectors():
+            # Reuse the persisted vector when it matches the current embedder's
+            # dimensionality; otherwise re-encode (self-heals model/dim changes)
+            # and backfill so the next boot is fast.
+            if blob is not None and len(blob) == nbytes:
+                vec = np.frombuffer(blob, dtype="float32")
+            else:
+                vec = _to_f32(self._embedder.encode(content))
+                try:
+                    self._store.store_vector(mem_id, vec.tobytes())
+                except Exception:
+                    log.debug("vector backfill failed for %d", mem_id, exc_info=True)
+                reencoded += 1
             ids.append(mem_id)
-            vecs.append(self._embedder.encode(content))
+            vecs.append(vec)
         if ids:
-            import numpy as np
             self._index.add_many(ids, np.asarray(vecs, dtype="float32"))
-            log.info("loaded %d vectors from store", len(ids))
+            log.info("loaded %d vectors from store (%d re-encoded)", len(ids), reencoded)
 
     @staticmethod
     def _default_summarizer(topic: str, items: list[dict]) -> str:

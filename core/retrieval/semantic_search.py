@@ -12,6 +12,7 @@ Additive: composes the injected M7/M8 KnowledgeService and M2 MemoryService.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -20,6 +21,8 @@ import numpy as np
 
 from core.embeddings.registry import get_embedding_backend
 from .metrics import RetrievalMetrics
+
+log = logging.getLogger("friday.retrieval.semantic")
 
 
 @dataclass
@@ -171,7 +174,7 @@ class SemanticSearch:
                 if e is not None:
                     out.append({"id": e.id, "title": e.title, "category": e.category})
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
         return out
 
     # ── evaluation ──────────────────────────────────────────────────────────────

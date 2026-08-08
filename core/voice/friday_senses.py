@@ -80,7 +80,7 @@ class FridaySenses:
                 self._stream.stop()
                 self._stream.close()
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
             self._stream = None
 
     def _drain(self):

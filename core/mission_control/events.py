@@ -7,10 +7,13 @@ events here (and can subscribe to the M1 runtime bus to capture them automatical
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import deque
 from typing import Optional
+
+log = logging.getLogger("friday.mission_control.events")
 
 
 class EventStream:
@@ -51,7 +54,7 @@ class EventStream:
                               source="runtime")
                 runtime.on(ev, _handler)
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
 
     def __len__(self) -> int:
         return len(self._buf)

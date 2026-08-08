@@ -315,7 +315,7 @@ def _minimize_all():
                     if not is_full:
                         w.minimize()
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
         _status("Fist → minimized windowed apps")
     except Exception as e:
         _status(f"Minimize error: {e}")
@@ -329,7 +329,7 @@ def _restore_all():
                 if w.title.strip() and w.isMinimized:
                     w.restore()
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
         _status("Open palm → restored all windows")
     except Exception as e:
         _status(f"Restore error: {e}")
@@ -348,7 +348,7 @@ def _focus_friday():
                 w.restore()
             w.activate()
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
         _status("Point → brought Friday to the front")
     except Exception as e:
         _status(f"Focus error: {e}")
@@ -370,9 +370,9 @@ def _launch_friday():
                     _status("Friday voice mode already running")
                     return
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
     try:
         _spine_process = subprocess.Popen(
             [sys.executable, str(SPINE_PATH)],
@@ -496,7 +496,7 @@ class _VolumeControl:
         try:
             self._iface.SetMasterVolumeLevelScalar(max(0.0, min(1.0, frac)), None)
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
 
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
@@ -623,7 +623,7 @@ def _loop(show_preview: bool = False):
     try:
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))  # higher cam FPS
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
     cap.set(cv2.CAP_PROP_FPS,          CAM_FPS)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -743,7 +743,7 @@ def _loop(show_preview: bool = False):
     try:
         grab_thread.join(timeout=1.0)
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
     landmarker.close()
     cap.release()
     if show_preview:

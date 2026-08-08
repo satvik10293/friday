@@ -565,7 +565,7 @@ class FridayAction:
                 if len(results) >= 20:
                     break
         except Exception:
-            pass
+            log.debug("suppressed exception", exc_info=True)
         return results
 
     def get_recent_files(self, count: int = 10) -> list:
@@ -577,7 +577,7 @@ class FridayAction:
                     if f.is_file():
                         files.append((f.stat().st_mtime, str(f)))
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
         files.sort(reverse=True)
         return [f[1] for f in files[:count]]
 
@@ -639,7 +639,7 @@ class FridayAction:
                         from core.io.friday_notify import get_notify
                         get_notify().alert(f"Battery low: {bat.percent:.0f}%")
                     except Exception:
-                        pass
+                        log.debug("suppressed exception", exc_info=True)
                 time.sleep(60)
         threading.Thread(target=_monitor, daemon=True, name="battery-alert").start()
 

@@ -68,7 +68,7 @@ class ResourceMonitor:
                 n = pynvml.nvmlDeviceGetCount()
                 return {"present": n > 0, "count": n}
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
         return {"present": False, "note": "CPU-only"}
 
     # ── databases ───────────────────────────────────────────────────────────────

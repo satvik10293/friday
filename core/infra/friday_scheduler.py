@@ -42,7 +42,7 @@ def _wrap(name, task):
                     data={"module": "scheduler", "task": name, "error": str(e)},
                     source="scheduler")
             except Exception:
-                pass
+                log.debug("suppressed exception", exc_info=True)
     return wrapped
 
 
@@ -125,7 +125,7 @@ def task_heartbeat():
         from core.infra.friday_signal import get_bus, Signal
         get_bus().emit_sync(Signal.HEARTBEAT, source="scheduler")
     except Exception:
-        pass
+        log.debug("suppressed exception", exc_info=True)
 
 def task_remind(message):
     try:
