@@ -16,6 +16,8 @@ from .system_actions import (
     build_action_skills,
     register_action_skills,
 )
+from .home_actions import HOME_SKILLS, register_home_skills
+from .browser_actions import BROWSER_SKILLS, register_browser_skills
 
 ALL_BUILTIN = [
     MemorySearchSkill,
@@ -32,6 +34,10 @@ def register_builtins(registry) -> object:
             registry.register(cls())
     # M34: the full FridayAction catalog as governed, tiered skills.
     register_action_skills(registry)
+    # home control through Home Assistant (lights / fans / TV / plugs / phone)
+    register_home_skills(registry)
+    # driving a real Chrome (open / read / screenshot; click & type are governed)
+    register_browser_skills(registry)
     return registry
 
 

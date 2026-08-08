@@ -680,6 +680,144 @@ class ConversationBridge:
             log.debug("screen read failed", exc_info=True)
             return None
 
+    # -- her hands: owner-confirmed code execution in the isolated sandbox --------
+    # Running code is consequential, so it is OWNER-CONFIRMED (Build & Behavior
+    # Directive s4 / the M59.2 two-step pattern): she shows exactly what will run
+    # and only runs it after an explicit "confirm". Execution uses the hardened
+    # WorkspaceSandbox (curated stdlib, workdir-only files, no OS/network) --
+    # never the real shell. Generated code is shown for review before it runs.
+    _CONFIRM_RUN_RE = re.compile(
+        r"^\s*(confirm|yes,? run it|go ahead(?:,? run it)?|run it|do it)\s*$", re.I)
+    _CANCEL_RUN_RE = re.compile(
+        r"^\s*(cancel|no|don'?t|stop|never ?mind)\b", re.I)
+    _SHOWME_RE = re.compile(
+        r"\bshow me\b|\bshow your work\b|\bwhat did you run\b|\bopen the code\b|"
+        r"\bshow the (?:code|work|output)\b", re.I)
+
+    def _run_code(self, command: str) -> Optional[tuple]:
+        """Owner-confirmed code execution in the isolated sandbox. Returns
+        (route_key, answer) or None. Never raises."""
+        try:
+            pending = getattr(self, "_pending_code", None)
+            if pending is not None:
+                if self._CONFIRM_RUN_RE.match(command or ""):
+                    self._pending_code = None
+                    from core.security.workspace import run_task
+                    return ("code.run",
+                            self._describe_run(run_task(pending, task="owner-confirmed")))
+                if self._CANCEL_RUN_RE.match(command or ""):
+                    self._pending_code = None
+                    return ("code.run", "Okay -- I won't run it.")
+                self._pending_code = None      # stale; fall through to normal routing
+            code = self._extract_runnable(command)
+            if not code:
+                return None
+            self._pending_code = code
+            self._pending_command = None      # one confirm flow at a time, like
+            self._pending_approval = None      # _command_gate does when it arms
+            self._pending_paused = None
+            preview = code if len(code) <= 300 else code[:300] + " ..."
+            return ("code.run",
+                    "That runs in an isolated sandbox (no internet, no system "
+                    "access). Here's exactly what I'll run:\n" + preview
+                    + "\nSay 'confirm' to run it.")
+        except Exception:  # noqa: BLE001 -- running code must never break a turn
+            log.debug("run_code route failed", exc_info=True)
+            self._pending_code = None
+            return None
+
+    def _show_work(self, command: str) -> Optional[tuple]:
+        """Reveal the last sandbox run (code + output + artifacts) on request --
+        the transparency half of the contract. None if nothing to show."""
+        if not self._SHOWME_RE.search(command or ""):
+            return None
+        try:
+            from core.security.workspace import get_execution_ledger
+            rec = get_execution_ledger().last()
+        except Exception:  # noqa: BLE001
+            return None
+        if rec is None:
+            return None
+        lines = ["Here's what I ran:", rec.code, ""]
+        if (rec.output or "").strip():
+            lines += ["Output:", rec.output.rstrip()]
+        elif rec.value is not None:
+            lines.append("Result: " + str(rec.value))
+        if not rec.ok:
+            lines.append("(error: " + rec.error + ")")
+        if rec.artifacts:
+            lines.append("Files: " + ", ".join(a["name"] for a in rec.artifacts))
+        return ("show_work", "\n".join(lines))
+
+    @staticmethod
+    def _describe_run(rec) -> str:
+        """A concise, honest result line from an ExecutionRecord."""
+        if not rec.ok:
+            return "It didn't run cleanly -- " + rec.error
+        out = (rec.output or "").strip()
+        if out:
+            base = "Done. It printed:\n" + (out if len(out) <= 500 else out[:500] + " ...")
+        elif rec.value is not None:
+            base = "Done. It evaluated to " + str(rec.value) + "."
+        else:
+            base = "Done -- it ran with no output."
+        if rec.artifacts:
+            base += " It created " + ", ".join(a["name"] for a in rec.artifacts) + "."
+        return base + " Say 'show me' to see the code and full output."
+
+    @staticmethod
+    def _extract_runnable(command: str) -> str:
+        """Pull a runnable snippet from an EXPLICIT run request -- a fenced block
+        or text after 'run this code:'/'execute:'. Empty if no clear code or no
+        run intent (so 'what does this print' still goes to code-reasoning)."""
+        q = command or ""
+        if not re.search(r"\b(run|execute)\b", q, re.I):
+            return ""
+        try:
+            from core.reasoning import code as codemod
+            m = codemod._FENCE_RE.search(q)
+            if m:
+                return m.group(1).strip()
+            for lead in ("run this code:", "run the code:", "execute this code:",
+                         "execute this:", "execute:", "run this:", "run the script:",
+                         "run:"):
+                i = q.lower().find(lead)
+                if i != -1:
+                    cand = q[i + len(lead):].strip()
+                    if cand and codemod._looks_like_code(cand):
+                        return cand
+        except Exception:  # noqa: BLE001
+            log.debug("extract_runnable failed", exc_info=True)
+        return ""
+
+    # -- safety: a destructive request with vague scope is CLARIFIED, not run ----
+    # Build & Behavior Directive s4: ask when an action is destructive AND the
+    # scope is ambiguous. "delete the old files" names no concrete target, so she
+    # asks which files rather than guessing -- deleting is irreversible.
+    _DESTRUCTIVE_RE = re.compile(
+        r"\b(delete|remove|wipe|erase|get rid of|trash|purge|format)\b", re.I)
+    _VAGUE_SCOPE_RE = re.compile(
+        r"\b(?:old|all|every|these|those|some|my|the|junk|unnecessary|useless|"
+        r"temp(?:orary)?)\b.{0,20}?\b(files?|folders?|stuff|documents?|photos?|"
+        r"pictures?|data|things?|everything)\b|\beverything\b|\bthem all\b", re.I)
+    _SPECIFIC_PATH_RE = re.compile(r"[A-Za-z]:\\|/[\w.-]+/|\b[\w-]+\.\w{2,4}\b")
+
+    def _clarify_destructive(self, command: str) -> Optional[tuple]:
+        """A destructive request with vague scope is CLARIFIED, never executed.
+        Returns (route_key, question) or None. Never raises."""
+        q = command or ""
+        if not self._DESTRUCTIVE_RE.search(q):
+            return None
+        if not self._VAGUE_SCOPE_RE.search(q):
+            return None                 # no vague bulk target -> not this route
+        if self._SPECIFIC_PATH_RE.search(q):
+            return None                 # a concrete file/path -> unambiguous
+        return ("clarify:destructive",
+                "Deleting is permanent, so I want to be sure first: which files "
+                "exactly, and from where? Point me at a folder or a pattern "
+                "(like *.tmp in Downloads) and I'll show you what matches before "
+                "removing anything.")
+
     # ── her body: the governed action layer (M47) ───────────────────────────────
     # action-shaped voice commands run through the SkillExecutor, which enforces
     # the M3 security pipeline (policy → clearance → approval → sandbox → audit).
@@ -698,6 +836,30 @@ class ConversationBridge:
             return cls._SKILL_ROUTES
         def _num(m):
             return {"level": max(0, min(100, int(m.group("n"))))}   # clamp 0–100
+        def _home_msg(d):
+            if not isinstance(d, dict):
+                return "I couldn't reach your home hub just now."
+            reason = d.get("reason")
+            if reason == "not_configured":
+                return ("I'm not connected to your home hub yet. Add your Home "
+                        "Assistant address to friday_config.json and your token "
+                        "to .env as HASS_TOKEN, then I can control your devices.")
+            if reason == "not_found":
+                return ("I couldn't find a device called \"" + d.get("device", "")
+                        + "\" -- ask me to 'list my devices' to hear the names.")
+            return "I couldn't do that on your home hub just now."
+        def _browser_msg(d):
+            if not isinstance(d, dict):
+                return "I couldn't drive the browser just now."
+            reason = d.get("reason")
+            if reason == "not_available":
+                return ("I can't drive Chrome yet -- install Playwright (pip "
+                        "install playwright), then log into the sites you want "
+                        "me to use in the Chrome window I open.")
+            if reason == "bad_url":
+                return "That doesn't look like a web address I can open."
+            return ("I couldn't do that in the browser -- "
+                    + str(d.get("error", "it failed")))
         routes = [
             (r"\b(take|grab|capture)\b.*\bscreenshot\b|\bscreenshot\b", "system.screenshot",
              None, lambda d: "I've taken a screenshot."),
@@ -760,6 +922,52 @@ class ConversationBridge:
              "clipboard.get", None,
              lambda d: (f"Your clipboard says: {str(d)[:180]}" if d
                         else "Your clipboard is empty.")),
+            # ── the home: lights / fans / TV / plugs / phone via Home Assistant ──
+            (r"\bturn\s+on\s+(?:the\s+|my\s+)?(?P<device>[\w .'-]{2,40}?)\s*$"
+             r"|\bswitch\s+on\s+(?:the\s+|my\s+)?(?P<device2>[\w .'-]{2,40}?)\s*$"
+             r"|\bturn\s+(?:the\s+|my\s+)?(?P<device3>[\w .'-]{2,40}?)\s+on\b",
+             "home.turn_on",
+             lambda m: {"device": (m.group("device") or m.group("device2")
+                                   or m.group("device3") or "").strip()},
+             lambda d: ("Done -- " + d.get("device", "it") + " is on."
+                        if isinstance(d, dict) and d.get("ok") else _home_msg(d))),
+            (r"\bturn\s+off\s+(?:the\s+|my\s+)?(?P<device>[\w .'-]{2,40}?)\s*$"
+             r"|\bswitch\s+off\s+(?:the\s+|my\s+)?(?P<device2>[\w .'-]{2,40}?)\s*$"
+             r"|\bturn\s+(?:the\s+|my\s+)?(?P<device3>[\w .'-]{2,40}?)\s+off\b",
+             "home.turn_off",
+             lambda m: {"device": (m.group("device") or m.group("device2")
+                                   or m.group("device3") or "").strip()},
+             lambda d: ("Done -- " + d.get("device", "it") + " is off."
+                        if isinstance(d, dict) and d.get("ok") else _home_msg(d))),
+            (r"\b(?:ring|find|ping)\s+my\s+phone\b|\bwhere'?s\s+my\s+phone\b",
+             "phone.notify",
+             lambda m: {"message": "FRIDAY: here's your phone.", "target": "notify"},
+             lambda d: ("I've pinged your phone."
+                        if isinstance(d, dict) and d.get("ok") else _home_msg(d))),
+            (r"\blist (?:my )?(?:smart )?devices\b|\bwhat can you control\b|"
+             r"\bwhat (?:smart )?devices\b.{0,20}\bcontrol\b",
+             "home.list", None,
+             lambda d: (("You can control: " + ", ".join(d.get("devices", [])[:12])
+                         + ".") if isinstance(d, dict) and d.get("ok")
+                        and d.get("devices")
+                        else (_home_msg(d) if isinstance(d, dict) and not d.get("ok")
+                              else "I don't see any controllable devices yet."))),
+            # ── driving Chrome: open / read a page (click & type are governed) ──
+            (r"\bbrowse to\s+(?P<url>\S+)"
+             r"|\bopen (?:the )?(?:website|web ?page|page|site)\s+(?P<url2>\S+)",
+             "browser.open",
+             lambda m: {"url": (m.group("url") or m.group("url2") or "").strip(" .?")},
+             lambda d: (("Opened " + (d.get("title") or d.get("url") or "the page")
+                         + ".") if isinstance(d, dict) and d.get("ok")
+                        else _browser_msg(d))),
+            (r"\bread (?:the|this) (?:page|website|site|article)\b"
+             r"|\bwhat(?:'s| is) on (?:this|the) (?:web ?)?page\b",
+             "browser.read", None,
+             lambda d: (((d.get("title") or "This page") + ": "
+                         + (d.get("text") or "")[:400]
+                         + ("..." if len(str(d.get("text") or "")) > 400 else ""))
+                        if isinstance(d, dict) and d.get("ok") and d.get("text")
+                        else _browser_msg(d))),
         ]
         cls._SKILL_ROUTES = [(re.compile(p, re.I), name, args, render)
                              for p, name, args, render in routes]
@@ -1345,6 +1553,25 @@ class ConversationBridge:
             self._skill_turns += 1
             return self._respond_directly(turn, key, answer, t0)
 
+        # her hands: owner-confirmed code execution + the "show me" that reveals
+        # the last run. Both funnel to the ONE hardened WorkspaceSandbox; no
+        # `command=` — a run confirmation is not conversational context.
+        ran = self._run_code(command)
+        if ran is not None:
+            key, answer = ran
+            return self._respond_directly(turn, key, answer, t0)
+
+        shown = self._show_work(command)
+        if shown is not None:
+            key, answer = shown
+            return self._respond_directly(turn, key, answer, t0)
+
+        # safety: a destructive request with vague scope is clarified, not acted on
+        clarified = self._clarify_destructive(command)
+        if clarified is not None:
+            key, answer = clarified
+            return self._respond_directly(turn, key, answer, t0)
+
         # her screen sight (M52): "read my screen" / "what's this error" — OCR
         # on-device, answer grounded in the text; the image stays local
         seen = self._read_screen(command)
@@ -1549,7 +1776,19 @@ class ConversationBridge:
                 if self.neural else {"enabled": False},
                 "teacher": self.teacher.status() if self.teacher else {"enabled": False},
                 "core_memory": self.core.status(),
-                "learning": self.gate.status()}
+                "learning": self.gate.status(),
+                "degradation": self._degradation_report()}
+
+    @staticmethod
+    def _degradation_report() -> dict:
+        """What isn't fully working right now — so a running FRIDAY is honest
+        about her own state instead of looking fine while subtly degraded."""
+        try:
+            from core.observability import get_degradation_ledger
+            return get_degradation_ledger().report()
+        except Exception:  # noqa: BLE001 — never let self-reporting break status()
+            return {"healthy": True, "failed": 0, "degraded": 0, "skipped": 0,
+                    "subsystems": {}, "recent": []}
 
     def close(self) -> None:
         self.speech.stop()
