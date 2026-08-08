@@ -106,11 +106,24 @@ class StartupSequence:
 
     def _run_stage(self, stage: str) -> StageResult:
         t0 = time.perf_counter()
+        exc: Optional[BaseException] = None
         try:
             status, detail = getattr(self, f"_stage_{stage}")()
         except Exception as e:  # noqa: BLE001 — a stage failure never aborts the boot
             log.debug("startup stage %s failed", stage, exc_info=True)
-            status, detail = "failed", f"{type(e).__name__}: {e}"
+            status, detail, exc = "failed", f"{type(e).__name__}: {e}", e
+        # a stage that failed or was skipped is a subsystem that isn't fully up —
+        # record it so the boot's own verdict survives into status()/diagnostics
+        # instead of being a one-shot log line lost after boot.
+        if status in ("failed", "skipped"):
+            try:
+                from core.observability import (get_degradation_ledger,
+                                                FAILED, SKIPPED)
+                sev = FAILED if status == "failed" else SKIPPED
+                get_degradation_ledger().record(f"boot.{stage}", detail,
+                                                 exc=exc, severity=sev)
+            except Exception:  # noqa: BLE001 — observability is never load-bearing
+                pass
         return StageResult(stage, status, detail, (time.perf_counter() - t0) * 1000.0)
 
     # ── stages ───────────────────────────────────────────────────────────────────
@@ -195,6 +208,15 @@ class StartupSequence:
             except Exception as e:  # noqa: BLE001 — vision must never break the boot
                 log.debug("live vision unavailable", exc_info=True)
                 detail += f" (live vision failed: {type(e).__name__})"
+                # the stage still returns "ok" (perception brains are up), so
+                # this failure would otherwise be invisible — record it directly.
+                try:
+                    from core.observability import get_degradation_ledger, DEGRADED
+                    get_degradation_ledger().record(
+                        "vision.live", f"live camera requested but failed to "
+                        f"start: {type(e).__name__}", exc=e, severity=DEGRADED)
+                except Exception:  # noqa: BLE001
+                    pass
         return "ok", detail
 
     def _stage_simulation(self):

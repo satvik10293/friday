@@ -26,6 +26,17 @@ from core.voice.friday_audio import get_temp_audio_file
 
 log = logging.getLogger("friday.voice")
 
+
+def _degraded(subsystem: str, detail: str, *, failed: bool = False) -> None:
+    """Record a voice degradation on the process-wide ledger so a fallback (or
+    total silence) is visible in status()/diagnostics, not just a log line."""
+    try:
+        from core.observability import note_degraded, FAILED, DEGRADED
+        note_degraded(subsystem, detail, severity=FAILED if failed else DEGRADED)
+    except Exception:  # noqa: BLE001 — self-reporting is never load-bearing
+        pass
+
+
 DEFAULT_VOICE = "en-US-AriaNeural"
 _CONFIG_PATH = Path(__file__).resolve().parents[2] / "friday_config.json"
 
@@ -116,8 +127,15 @@ class FridayVoice:
                 return
             except Exception:  # noqa: BLE001 — audio device trouble → fallback
                 log.warning("playback failed", exc_info=True)
+                _degraded("voice.playback",
+                          "audio playback failed — using offline voice")
+        else:
+            _degraded("voice.tts",
+                      "edge-tts unavailable (offline?) — using offline voice")
         if not self._speak_offline(text):
             log.error("all speech paths failed for %r — staying silent", text[:60])
+            _degraded("voice", "all speech paths failed — staying silent",
+                      failed=True)
 
 
 def audio_nonempty(path: str) -> bool:

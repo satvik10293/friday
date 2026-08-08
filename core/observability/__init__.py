@@ -19,6 +19,14 @@ from .tracing import (
 )
 from .decision_log import DecisionLog, get_decision_log
 from .logging_setup import configure, JsonFormatter
+from .degradation import (
+    DegradationLedger,
+    get_degradation_ledger,
+    note_degraded,
+    FAILED,
+    DEGRADED,
+    SKIPPED,
+)
 
 __all__ = [
     "Trace",
@@ -31,4 +39,10 @@ __all__ = [
     "get_decision_log",
     "configure",
     "JsonFormatter",
+    "DegradationLedger",
+    "get_degradation_ledger",
+    "note_degraded",
+    "FAILED",
+    "DEGRADED",
+    "SKIPPED",
 ]

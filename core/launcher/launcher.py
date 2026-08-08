@@ -272,6 +272,13 @@ def main(argv: Optional[list] = None) -> int:
     if ready and not args.headless:
         surface = launcher.start_ui()
         print(f"  app surface: {surface}")
+        # she comes awake out loud — a truthful wake-up (what's up, what isn't),
+        # derived from the degradation ledger, not a script. Never blocks boot.
+        try:
+            from .wakeup import announce
+            print(f"  wake: {announce(launcher, config=launcher.config)}")
+        except Exception:  # noqa: BLE001 — narration is never load-bearing
+            log.debug("wake narration failed", exc_info=True)
         print("  FRIDAY is running — quit from the tray, or Ctrl+C here.", flush=True)
         try:
             launcher._shutdown.wait()             # tray 'Quit' sets this

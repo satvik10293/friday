@@ -120,6 +120,17 @@ def _stt_config() -> dict:
         return {}
 
 
+def _stt_degraded(detail: str, exc: Optional[BaseException] = None) -> None:
+    """Record that speech-to-text fell back to the deaf fake transcriber, so a
+    silently-deaf FRIDAY shows up in status()/diagnostics instead of looking
+    fine. Never load-bearing."""
+    try:
+        from core.observability import note_degraded, FAILED
+        note_degraded("audio.stt", detail, exc=exc, severity=FAILED)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def get_transcriber() -> Transcriber:
     """Best available local transcriber, else the deterministic fake. Honours
     the `stt` config block (model size + pinned language)."""
@@ -129,6 +140,10 @@ def get_transcriber() -> Transcriber:
             lang = cfg.get("language", "en")
             return WhisperTranscriber(cfg.get("model", "base"),
                                       language=(lang or None))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            _stt_degraded("faster-whisper failed to initialise — hearing "
+                          "disabled (fake transcriber)", exc=e)
+            return FakeTranscriber()
+    _stt_degraded("faster-whisper not installed — hearing disabled "
+                  "(fake transcriber)")
     return FakeTranscriber()

@@ -109,6 +109,17 @@ class Diagnostics:
                 pass
         return info
 
+    @staticmethod
+    def degradation() -> dict:
+        """What booted degraded or skipped — the honest counterpart to the
+        'ready' verdict, read from the process-wide degradation ledger."""
+        try:
+            from core.observability import get_degradation_ledger
+            return get_degradation_ledger().report()
+        except Exception:  # noqa: BLE001 — observability optional
+            return {"healthy": True, "failed": 0, "degraded": 0, "skipped": 0,
+                    "subsystems": {}, "recent": []}
+
     # ── full report ──────────────────────────────────────────────────────────────
     def report(self) -> dict:
         monitor = HealthMonitor(container=self.components.get("kernel"),
@@ -125,6 +136,7 @@ class Diagnostics:
             "provider": self.active_provider(),
             "event_bus": self.event_bus(),
             "services": diag.get("services", {}),
+            "degradation": self.degradation(),
         }
 
     # ── rendering ────────────────────────────────────────────────────────────────
@@ -151,6 +163,16 @@ class Diagnostics:
         pl = r["plugins"]
         lines.append(f"  plugins        : {pl['count']} kind(s)"
                      + (f" [{', '.join(pl['kinds'])}]" if pl["kinds"] else ""))
+        dg = r["degradation"]
+        health = "nominal" if dg["healthy"] else "DEGRADED"
+        lines.append("-" * 52)
+        lines.append(f"  health         : {health}   "
+                     f"(failed {dg['failed']} / degraded {dg['degraded']} / "
+                     f"skipped {dg['skipped']})")
+        for name in sorted(dg["subsystems"]):
+            s = dg["subsystems"][name]
+            lines.append(f"     - {name:<20} {s['last_severity']:<8} "
+                         f"{s['last_detail']}")
         lines.append("=" * 52)
         return "\n".join(lines)
 
