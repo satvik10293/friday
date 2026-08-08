@@ -8,8 +8,11 @@ import os
 
 import pytest
 
+import json
+
 from core.launcher.account_setup import (
-    AccountManager, Provider, _providers, installed_chrome, maybe_prompt)
+    AccountManager, Provider, _providers, chrome_profiles, installed_chrome,
+    maybe_prompt)
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +115,51 @@ def test_installed_chrome_detection_is_a_path_or_none():
     got = installed_chrome()
     assert got is None or (isinstance(got, str) and got.lower().endswith(
         ("chrome.exe", "chrome", "chromium", "chromium-browser", "google chrome")))
+
+
+def test_providers_have_chat_urls_for_browser_vendors():
+    by_id = {p.id: p for p in _providers()}
+    assert by_id["openai"].chat_url.startswith("http")     # chatgpt.com
+    assert by_id["gemini"].chat_url.startswith("http")
+    assert by_id["groq"].chat_url == ""                    # key-only, no chat seat
+
+
+def test_chrome_profiles_read_from_local_state(tmp_path):
+    ud = tmp_path / "User Data"
+    ud.mkdir()
+    (ud / "Local State").write_text(json.dumps({"profile": {"info_cache": {
+        "Default": {"name": "Personal", "user_name": "me@gmail.com"},
+        "Profile 5": {"name": "Work", "user_name": ""},
+    }}}), encoding="utf-8")
+    profs = chrome_profiles(user_data=ud)
+    dirs = [p["dir"] for p in profs]
+    assert "Default" in dirs and "Profile 5" in dirs
+    # the signed-in profile (has an email) sorts first
+    assert profs[0]["email"] == "me@gmail.com"
+
+
+def test_open_in_chrome_args_use_selected_profile():
+    args = AccountManager._chrome_open_args(
+        r"C:\chrome.exe", "https://chatgpt.com/", "Profile 5")
+    assert args[0].endswith("chrome.exe")
+    assert "--profile-directory=Profile 5" in args
+    assert args[-1] == "https://chatgpt.com/"      # url last
+
+
+def test_open_in_chrome_launches(mgr, monkeypatch):
+    monkeypatch.setattr("core.launcher.account_setup.installed_chrome",
+                        lambda: r"C:\chrome.exe")
+    launched = {}
+    monkeypatch.setattr("subprocess.Popen",
+                        lambda args, *a, **k: launched.setdefault("args", args))
+    assert mgr.open_in_chrome("https://claude.ai/new", profile_dir="Default") is True
+    assert "--profile-directory=Default" in launched["args"]
+    assert launched["args"][-1] == "https://claude.ai/new"
+
+
+def test_open_in_chrome_no_chrome_is_false(mgr, monkeypatch):
+    monkeypatch.setattr("core.launcher.account_setup.installed_chrome", lambda: None)
+    assert mgr.open_in_chrome("https://chatgpt.com/") is False
 
 
 def test_link_browser_uses_installed_chrome_channel(mgr, monkeypatch):

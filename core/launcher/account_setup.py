@@ -78,6 +78,45 @@ def installed_chrome() -> Optional[str]:
     return None
 
 
+def chrome_user_data_dir() -> Optional[Path]:
+    """The user's real Chrome 'User Data' root (holds their logged-in profiles)."""
+    import sys
+    if sys.platform.startswith("win"):
+        base = os.environ.get("LOCALAPPDATA")
+        p = Path(base) / "Google" / "Chrome" / "User Data" if base else None
+    elif sys.platform == "darwin":
+        p = Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
+    else:
+        p = Path.home() / ".config" / "google-chrome"
+    return p if p and p.exists() else None
+
+
+def chrome_profiles(user_data: Optional[Path] = None) -> list[dict]:
+    """The user's real Chrome profiles as {dir, name, email}, so they can pick the
+    one signed into Google. Reads 'Local State' (info_cache); best-effort."""
+    ud = user_data or chrome_user_data_dir()
+    if not ud:
+        return []
+    state = ud / "Local State"
+    out: list[dict] = []
+    try:
+        info = json.loads(state.read_text(encoding="utf-8")).get(
+            "profile", {}).get("info_cache", {})
+        for dir_name, meta in info.items():
+            out.append({"dir": dir_name,
+                        "name": meta.get("name") or dir_name,
+                        "email": meta.get("user_name", "")})
+    except Exception:  # noqa: BLE001
+        log.debug("could not read Chrome Local State", exc_info=True)
+        # fall back to on-disk profile dirs (no friendly names)
+        for d in sorted(ud.glob("*")):
+            if d.is_dir() and (d.name == "Default" or d.name.startswith("Profile")):
+                out.append({"dir": d.name, "name": d.name, "email": ""})
+    # signed-in profiles (have an email) first, then Default, then the rest
+    out.sort(key=lambda p: (not p["email"], p["dir"] != "Default", p["dir"]))
+    return out
+
+
 @dataclass(frozen=True)
 class Provider:
     id: str                              # harness vendor name (e.g. "openai")
@@ -85,6 +124,7 @@ class Provider:
     env_var: str                         # the .env / environment key it reads
     browser_site: Optional[str]          # harness SITES key, or None (key-only)
     keys_url: str                        # where to obtain an API key
+    chat_url: str = ""                   # the provider's web chat URL (for open/copy)
 
 
 def _providers() -> list[Provider]:
@@ -97,12 +137,20 @@ def _providers() -> list[Provider]:
     except Exception:  # noqa: BLE001 — harness import must never block onboarding
         log.debug("harness vendor list unavailable; using built-in fallback", exc_info=True)
         vendors = [(k, f"{k.upper().replace('-', '_')}_API_KEY") for k in _AUGMENT]
+    # resolve each browser vendor's web-chat URL from the harness SITES table
+    sites = {}
+    try:
+        from core.harness.browser_provider import SITES
+        sites = {k: v.url for k, v in SITES.items()}
+    except Exception:  # noqa: BLE001
+        log.debug("harness SITES unavailable", exc_info=True)
     out: list[Provider] = []
     for name, env in vendors:
         label, site, url = _AUGMENT.get(
             name, (name.replace("-", " ").title(), None, ""))
         out.append(Provider(id=name, label=label, env_var=env,
-                            browser_site=site, keys_url=url))
+                            browser_site=site, keys_url=url,
+                            chat_url=sites.get(site, "") if site else ""))
     return out
 
 
@@ -219,6 +267,35 @@ class AccountManager:
         it on demand."""
         return not headless and not self.is_done()
 
+    # ── open in the user's real (logged-in) Chrome ───────────────────────────────
+    def chrome_profiles(self) -> list[dict]:
+        return chrome_profiles()
+
+    @staticmethod
+    def _chrome_open_args(chrome: str, url: str, profile_dir: Optional[str]) -> list[str]:
+        """Command line that opens `url` in the user's own Chrome, using their
+        signed-in profile (so Google SSO is already done) — no guest window."""
+        args = [chrome]
+        if profile_dir:
+            args.append(f"--profile-directory={profile_dir}")
+        args.append(url)
+        return args
+
+    def open_in_chrome(self, url: str, *, profile_dir: Optional[str] = None) -> bool:
+        """Open `url` in the user's installed Chrome with their logged-in profile.
+        This is their real browser (Google account already signed in), not a guest
+        profile. Returns whether Chrome was launched. Never raises."""
+        chrome = installed_chrome()
+        if not chrome or not url:
+            return False
+        try:
+            import subprocess
+            subprocess.Popen(self._chrome_open_args(chrome, url, profile_dir))
+            return True
+        except Exception:  # noqa: BLE001
+            log.debug("open_in_chrome failed", exc_info=True)
+            return False
+
     # ── on-demand browser linking ────────────────────────────────────────────────
     def ensure_playwright(self, on_status: Optional[Callable[[str], None]] = None,
                           *, download_chromium: bool = True) -> tuple[bool, str]:
@@ -329,7 +406,6 @@ def show_ui(manager: Optional[AccountManager] = None) -> dict:
         mgr.mark_done({"skipped": "no_gui"})
         return {"shown": False, "summary": mgr.summary()}
 
-    import threading
     import webbrowser
 
     root = tk.Tk()
@@ -344,14 +420,33 @@ def show_ui(manager: Optional[AccountManager] = None) -> dict:
     header = ttk.Frame(root)
     header.grid(row=0, column=0, columnspan=4, sticky="we", **pad)
     ttk.Label(header, text="Connect the AI accounts you have",
-              font=("Segoe UI", 13, "bold")).grid(row=0, column=0, sticky="w")
-    _browser = "Chrome" if installed_chrome() else "a browser"
+              font=("Segoe UI", 13, "bold")).grid(row=0, column=0, columnspan=3, sticky="w")
     ttk.Label(header,
-              text=(f"Paste an API key, or link a paid chat account — 'Link via "
-                    f"browser' opens {_browser} so you sign in once and FRIDAY "
-                    "reuses that seat. Leave the rest blank; add more anytime from "
-                    "the tray menu. Keys are stored only on this machine."),
-              wraplength=560, foreground="#555").grid(row=1, column=0, sticky="w")
+              text=("Paste an API key, or reach a chat seat in your own browser: "
+                    "'Open in Chrome' uses your signed-in Google profile, or "
+                    "'Copy link' gives you the URL to paste anywhere. Keys are "
+                    "stored only on this machine; add more anytime from the tray."),
+              wraplength=620, foreground="#555").grid(row=1, column=0, columnspan=3, sticky="w")
+
+    # which of the user's real Chrome profiles to open (the Google-signed-in one)
+    profiles = mgr.chrome_profiles()
+    profile_var = tk.StringVar()
+    if profiles:
+        def _plabel(pr: dict) -> str:
+            return f"{pr['name']} ({pr['email']})" if pr.get("email") else pr["name"]
+        labels = [_plabel(pr) for pr in profiles]
+        dir_by_label = {_plabel(pr): pr["dir"] for pr in profiles}
+        profile_var.set(labels[0])
+        prow = ttk.Frame(header)
+        prow.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Label(prow, text="Open chat seats in your Chrome profile:").grid(row=0, column=0)
+        ttk.Combobox(prow, textvariable=profile_var, values=labels, width=34,
+                     state="readonly").grid(row=0, column=1, padx=6)
+    else:
+        dir_by_label = {}
+
+    def _selected_profile_dir() -> Optional[str]:
+        return dir_by_label.get(profile_var.get())
 
     entries: dict[str, "tk.StringVar"] = {}
     status_labels: dict[str, "ttk.Label"] = {}
@@ -390,20 +485,32 @@ def show_ui(manager: Optional[AccountManager] = None) -> dict:
         ttk.Button(body, text="Get key ↗", width=9,
                    command=_open_keys).grid(row=i, column=2, padx=2)
 
-        def _link(prov=p) -> None:
-            def worker() -> None:
-                status_labels[prov.id].configure(text="linking…", foreground="#555")
-                mgr.link_browser(prov, on_status=lambda m: status_labels[prov.id]
-                                 .configure(text=m, foreground="#555"))
-                root.after(0, lambda: _refresh_status(prov))
-            threading.Thread(target=worker, daemon=True).start()
-        link_btn = ttk.Button(body, text="Link via browser", width=15, command=_link)
-        link_btn.grid(row=i, column=3, padx=2)
-        if not p.browser_site:
-            link_btn.state(["disabled"])
+        def _open(prov=p) -> None:
+            url = prov.chat_url or prov.keys_url
+            ok = mgr.open_in_chrome(url, profile_dir=_selected_profile_dir())
+            status_labels[prov.id].configure(
+                text="opened in Chrome ↗" if ok else "couldn't open Chrome",
+                foreground="#555")
+
+        def _copy(prov=p) -> None:
+            url = prov.chat_url or prov.keys_url
+            try:
+                root.clipboard_clear()
+                root.clipboard_append(url)
+                status_labels[prov.id].configure(text="link copied ✓", foreground="#2e7d32")
+            except Exception:  # noqa: BLE001
+                status_labels[prov.id].configure(text=url, foreground="#555")
+
+        open_btn = ttk.Button(body, text="Open in Chrome", width=14, command=_open)
+        open_btn.grid(row=i, column=3, padx=2)
+        copy_btn = ttk.Button(body, text="Copy link", width=10, command=_copy)
+        copy_btn.grid(row=i, column=4, padx=2)
+        if not p.browser_site:                 # key-only vendors have no chat seat
+            open_btn.state(["disabled"])
+            copy_btn.state(["disabled"])
 
         lbl = ttk.Label(body, text="")
-        lbl.grid(row=i, column=4, sticky="w", padx=6)
+        lbl.grid(row=i, column=5, sticky="w", padx=6)
         status_labels[p.id] = lbl
         _refresh_status(p)
 
