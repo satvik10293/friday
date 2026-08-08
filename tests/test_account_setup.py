@@ -8,7 +8,8 @@ import os
 
 import pytest
 
-from core.launcher.account_setup import AccountManager, Provider, _providers, maybe_prompt
+from core.launcher.account_setup import (
+    AccountManager, Provider, _providers, installed_chrome, maybe_prompt)
 
 
 @pytest.fixture(autouse=True)
@@ -105,3 +106,34 @@ def test_browser_capability_flags():
     assert by_id["openai"].browser_site == "chatgpt"
     assert by_id["anthropic"].browser_site == "claude"
     assert by_id["groq"].browser_site is None      # key-only vendor
+
+
+def test_installed_chrome_detection_is_a_path_or_none():
+    got = installed_chrome()
+    assert got is None or (isinstance(got, str) and got.lower().endswith(
+        ("chrome.exe", "chrome", "chromium", "chromium-browser", "google chrome")))
+
+
+def test_link_browser_uses_installed_chrome_channel(mgr, monkeypatch):
+    # when Chrome is present we drive it via channel="chrome" and skip the
+    # Chromium download; the driver must receive that channel.
+    monkeypatch.setattr("core.launcher.account_setup.installed_chrome",
+                        lambda: r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+    monkeypatch.setattr(mgr, "ensure_playwright",
+                        lambda on_status=None, download_chromium=True: (True, "ok"))
+    captured = {}
+
+    class _FakeDriver:
+        def __init__(self, site, *, user_data_dir, headless, channel=None):
+            captured["channel"] = channel
+            captured["user_data_dir"] = user_data_dir
+
+        def is_ready(self):
+            return True
+
+    import core.harness.browser_drivers as bd
+    monkeypatch.setattr(bd, "PlaywrightChatDriver", _FakeDriver)
+    p = next(pp for pp in mgr.providers() if pp.id == "openai")
+    assert mgr.link_browser(p) is True
+    assert captured["channel"] == "chrome"
+    assert "chatgpt" in captured["user_data_dir"]

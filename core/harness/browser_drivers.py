@@ -33,11 +33,16 @@ class PlaywrightChatDriver:
     BrowserProvider converts to ok=False) rather than taking a turn down."""
 
     def __init__(self, site: BrowserSite, *, user_data_dir: str,
-                 headless: bool = False, stability_s: float = 1.5) -> None:
+                 headless: bool = False, stability_s: float = 1.5,
+                 channel: Optional[str] = None) -> None:
         self._site = site
         self._user_data_dir = user_data_dir
         self._headless = headless
         self._stability_s = stability_s
+        # `channel` (e.g. "chrome" / "msedge") drives the user's INSTALLED browser
+        # instead of a downloaded Chromium — no 150MB fetch, and it shares the
+        # user's own Chrome binary. None keeps the bundled-Chromium behaviour.
+        self._channel = channel
         self._ctx = None
         self._page = None
 
@@ -51,8 +56,11 @@ class PlaywrightChatDriver:
             raise RuntimeError("playwright not installed "
                                "(pip install playwright && playwright install chromium)") from e
         self._pw = sync_playwright().start()
+        launch_kw = {"headless": self._headless}
+        if self._channel:
+            launch_kw["channel"] = self._channel   # use the installed browser
         self._ctx = self._pw.chromium.launch_persistent_context(
-            self._user_data_dir, headless=self._headless)
+            self._user_data_dir, **launch_kw)
         self._page = self._ctx.new_page()
         self._page.goto(self._site.url, wait_until="domcontentloaded")
         return self._page

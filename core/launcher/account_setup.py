@@ -53,6 +53,31 @@ _AUGMENT = {
 }
 
 
+def installed_chrome() -> Optional[str]:
+    """Path to the user's installed Google Chrome, or None. Used so linked seats
+    drive the browser the user already has (no bundled-Chromium download)."""
+    import sys
+    if sys.platform.startswith("win"):
+        import os as _os
+        for base in (_os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+                     _os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
+                     _os.environ.get("LOCALAPPDATA", "")):
+            if not base:
+                continue
+            cand = Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe"
+            if cand.exists():
+                return str(cand)
+        return None
+    if sys.platform == "darwin":
+        cand = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        return str(cand) if cand.exists() else None
+    for cand in ("/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+                 "/usr/bin/chromium", "/usr/bin/chromium-browser"):
+        if Path(cand).exists():
+            return cand
+    return None
+
+
 @dataclass(frozen=True)
 class Provider:
     id: str                              # harness vendor name (e.g. "openai")
@@ -195,10 +220,12 @@ class AccountManager:
         return not headless and not self.is_done()
 
     # ── on-demand browser linking ────────────────────────────────────────────────
-    def ensure_playwright(self, on_status: Optional[Callable[[str], None]] = None) -> tuple[bool, str]:
-        """Make Playwright + Chromium available, installing them on first use.
-        Returns (ok, message). Heavy (~150MB) but only ever runs when the user
-        actually clicks 'Link via browser'."""
+    def ensure_playwright(self, on_status: Optional[Callable[[str], None]] = None,
+                          *, download_chromium: bool = True) -> tuple[bool, str]:
+        """Make Playwright available, installing it on first use. When the user's
+        installed Chrome will be driven (channel="chrome") we skip the ~150MB
+        Chromium download entirely — only the small `playwright` package is
+        needed. Returns (ok, message). Only ever runs on a 'Link via browser' click."""
         def say(m: str) -> None:
             if on_status:
                 try:
@@ -209,18 +236,19 @@ class AccountManager:
         import subprocess
         import sys
         if importlib.util.find_spec("playwright") is None:
-            say("Installing browser support (one-time, ~1–2 min)…")
+            say("Enabling browser control (one-time)…")
             try:
                 subprocess.run([sys.executable, "-m", "pip", "install", "playwright"],
                                check=True)
             except Exception as e:  # noqa: BLE001
                 return False, f"could not install playwright: {type(e).__name__}"
-        say("Downloading Chromium (one-time)…")
-        try:
-            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
-                           check=True)
-        except Exception as e:  # noqa: BLE001
-            return False, f"could not install chromium: {type(e).__name__}"
+        if download_chromium:
+            say("Downloading Chromium (one-time)…")
+            try:
+                subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                               check=True)
+            except Exception as e:  # noqa: BLE001
+                return False, f"could not install chromium: {type(e).__name__}"
         return True, "browser support ready"
 
     def link_browser(self, p: Provider,
@@ -237,7 +265,12 @@ class AccountManager:
                     pass
         if not p.browser_site:
             return False
-        ok, msg = self.ensure_playwright(on_status=on_status)
+        # Drive the user's INSTALLED Chrome (dedicated FRIDAY profile) when present,
+        # so there's no Chromium download and it's the browser they already have.
+        chrome = installed_chrome()
+        channel = "chrome" if chrome else None
+        ok, msg = self.ensure_playwright(on_status=on_status,
+                                         download_chromium=chrome is None)
         if not ok:
             say(msg)
             return False
@@ -250,8 +283,10 @@ class AccountManager:
                 return False
             seat = self.seat_dir(p.browser_site)
             seat.mkdir(parents=True, exist_ok=True)
-            say("Opening the sign-in window — log in, then return here…")
-            driver = PlaywrightChatDriver(site, user_data_dir=str(seat), headless=False)
+            say("Opening Chrome — sign in, then return here…" if channel
+                else "Opening the sign-in window — log in, then return here…")
+            driver = PlaywrightChatDriver(site, user_data_dir=str(seat), headless=False,
+                                          channel=channel)
             # is_ready() opens the (visible) profile and waits for the compose box,
             # which only appears once the user is signed in.
             ready = driver.is_ready()
@@ -310,9 +345,11 @@ def show_ui(manager: Optional[AccountManager] = None) -> dict:
     header.grid(row=0, column=0, columnspan=4, sticky="we", **pad)
     ttk.Label(header, text="Connect the AI accounts you have",
               font=("Segoe UI", 13, "bold")).grid(row=0, column=0, sticky="w")
+    _browser = "Chrome" if installed_chrome() else "a browser"
     ttk.Label(header,
-              text=("Paste an API key, or link a paid chat account through your "
-                    "browser. Leave the rest blank — you can add more anytime from "
+              text=(f"Paste an API key, or link a paid chat account — 'Link via "
+                    f"browser' opens {_browser} so you sign in once and FRIDAY "
+                    "reuses that seat. Leave the rest blank; add more anytime from "
                     "the tray menu. Keys are stored only on this machine."),
               wraplength=560, foreground="#555").grid(row=1, column=0, sticky="w")
 
