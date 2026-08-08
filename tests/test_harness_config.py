@@ -8,8 +8,7 @@ beating a browser seat. Network-free (fake transport, config passed as a dict).
 
 from __future__ import annotations
 
-from core.harness import (browser_drivers_from_config, build_registry,
-                          configured_vendors)
+from core.harness import build_registry, configured_vendors
 from core.harness.browser_provider import BrowserProvider
 
 _ALL_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
@@ -40,20 +39,7 @@ def test_registry_falls_back_to_default_model_when_unset(monkeypatch):
     assert reg.get("groq").info.model == "llama-3.3-70b-versatile"
 
 
-# ── browser seats from config ────────────────────────────────────────────────
-def test_browser_drivers_from_config_only_enabled():
-    cfg = {"harness": {"browser_seats": {
-        "chatgpt": {"enabled": True, "channel": "chrome"},
-        "claude": {"enabled": False},
-    }}}
-    drivers = browser_drivers_from_config(cfg)
-    assert set(drivers) == {"chatgpt"}          # disabled claude excluded
-
-
-def test_browser_drivers_from_config_empty_when_absent():
-    assert browser_drivers_from_config({}) == {}
-
-
+# ── browser seats (from the launcher's linked seats) ─────────────────────────
 def test_api_key_beats_browser_seat(monkeypatch):
     # user has an OpenAI key AND a chatgpt browser seat → API wins, seat skipped
     _clear_keys(monkeypatch)

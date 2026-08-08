@@ -19,8 +19,7 @@ fallback, and verification operate over one uniform interface.
 from .anthropic_provider import AnthropicProvider, anthropic
 from .browser_provider import (SITES, BrowserProvider, BrowserSite, ChatDriver,
                                browser_provider)
-from .config import (browser_drivers_from_config, build_orchestrator,
-                     build_registry, configured_vendors)
+from .config import build_orchestrator, build_registry, configured_vendors
 from .groq_provider import GroqProvider
 from .local_provider import LocalProvider
 from .openai_compatible import (OpenAICompatibleProvider, gemini, groq, openai,
@@ -49,5 +48,4 @@ __all__ = [
     "BrowserProvider", "BrowserSite", "ChatDriver", "browser_provider", "SITES",
     # wiring
     "build_registry", "build_orchestrator", "configured_vendors",
-    "browser_drivers_from_config",
 ]

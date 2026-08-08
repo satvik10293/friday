@@ -9,9 +9,10 @@ in friday_config.json (`openai_model`, `gemini_model`, `groq_model`, …) so the
 council uses the models the rest of FRIDAY already uses. Keys stay env-only — the
 config file is tracked, so secrets never belong in it.
 
-For plan-but-no-key users it also (opt-in) registers a browser-seat provider for
-any vendor enabled under `harness.browser_seats` — a real API key always wins
-over driving the browser.
+For plan-but-no-key users, `build_registry` also accepts `browser_drivers`
+(vendor → ChatDriver) for chat seats the owner linked — the launcher builds these
+from the AccountManager's linked seats. A real API key always wins over a browser
+seat (dedup via `_BROWSER_TO_API`).
 
 Declarative: add a vendor to `_CLOUD_VENDORS` and it lights up the moment its key
 exists, with no other code change.
@@ -20,7 +21,6 @@ exists, with no other code change.
 from __future__ import annotations
 
 import json
-import logging
 import os
 from pathlib import Path
 from typing import Optional
@@ -35,8 +35,6 @@ try:  # loads .env so GROQ/OPENAI/… keys are visible; optional in bare context
     from core.infra import friday_secrets  # noqa: F401
 except Exception:  # noqa: BLE001
     pass
-
-log = logging.getLogger("friday.harness.config")
 
 _CONFIG_PATH = Path(__file__).resolve().parents[2] / "friday_config.json"
 
@@ -95,29 +93,6 @@ def build_registry(*, include_local: bool = True, only_available: bool = True,
         from .browser_provider import browser_provider
         reg.register(browser_provider(vendor, driver=driver))
     return reg
-
-
-def browser_drivers_from_config(config: Optional[dict] = None) -> dict:
-    """Build `{vendor: PlaywrightChatDriver}` for every seat enabled under
-    `harness.browser_seats` in friday_config.json. Construction is cheap and does
-    not launch a browser (Playwright loads lazily on first use), so this is safe
-    to call at boot even when Playwright is not installed."""
-    cfg = config if config is not None else _load_config()
-    seats = ((cfg.get("harness") or {}).get("browser_seats") or {})
-    drivers: dict = {}
-    for vendor, spec in seats.items():
-        if not (isinstance(spec, dict) and spec.get("enabled")):
-            continue
-        try:
-            from .browser_drivers import playwright_driver
-            drivers[vendor] = playwright_driver(
-                vendor,
-                user_data_dir=spec.get("user_data_dir") or f"data/seats/{vendor}",
-                channel=spec.get("channel") or "chrome",
-                headless=bool(spec.get("headless", False)))
-        except Exception:  # noqa: BLE001 — a bad seat spec must not break boot
-            log.debug("browser seat %r not built", vendor, exc_info=True)
-    return drivers
 
 
 def build_orchestrator(*, transport=None, local_ios=None, only_available: bool = True,

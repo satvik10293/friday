@@ -32,25 +32,6 @@
     ],
     "max_tokens": 900
   },
-  "harness": {
-    "browser_seats": {
-      "chatgpt": {
-        "enabled": false,
-        "channel": "chrome",
-        "user_data_dir": "data/seats/chatgpt"
-      },
-      "claude": {
-        "enabled": false,
-        "channel": "chrome",
-        "user_data_dir": "data/seats/claude"
-      },
-      "gemini": {
-        "enabled": false,
-        "channel": "chrome",
-        "user_data_dir": "data/seats/gemini"
-      }
-    }
-  },
   "local_brain": {
     "enabled": true,
     "model_repo": "Qwen/Qwen2.5-3B-Instruct-GGUF",

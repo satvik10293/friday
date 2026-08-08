@@ -26,6 +26,32 @@ STARTUP_STAGES = ("configuration", "kernel", "runtime", "brains", "memory", "kno
                   "ui", "ready")
 
 
+def _linked_browser_seats() -> dict:
+    """Browser-seat drivers for every chat seat the owner LINKED during onboarding
+    (AccountManager is the source of truth). Keyed by harness SITES vendor
+    (chatgpt/claude/gemini) and driven headless through the user's installed
+    Chrome. Empty when nothing is linked or onboarding/Playwright is unavailable —
+    and a real API key beats a seat anyway (the harness dedups)."""
+    seats: dict = {}
+    try:
+        from core.harness.browser_drivers import PlaywrightChatDriver
+        from core.harness.browser_provider import SITES
+        from core.launcher.account_setup import AccountManager
+    except Exception:  # noqa: BLE001 — seats are always optional
+        return seats
+    try:
+        am = AccountManager()
+        for prov in am.providers():
+            site = prov.browser_site
+            if site and site in SITES and am.seat_linked(site):
+                seats[site] = PlaywrightChatDriver(
+                    SITES[site], user_data_dir=str(am.seat_dir(site)),
+                    headless=True, channel="chrome")
+    except Exception:  # noqa: BLE001
+        log.debug("linked browser seats unavailable", exc_info=True)
+    return seats
+
+
 @dataclass
 class StageResult:
     stage: str
@@ -485,13 +511,12 @@ class StartupSequence:
                 pass
             harness = None
             try:                             # council over the user's AI subscriptions
-                from core.harness import (browser_drivers_from_config,
-                                          build_orchestrator)
+                from core.harness import build_orchestrator
                 # cloud-only: the local mind already has its own turn (_local_pass).
-                # Lights up exactly the vendors whose API key is present in .env,
-                # using the models the owner set in friday_config.json, plus any
-                # opt-in browser seats (harness.browser_seats) for plan-only vendors.
-                seats = browser_drivers_from_config(self.config)
+                # Uses the models the owner set in friday_config.json, plus any
+                # browser seats the owner LINKED during onboarding (AccountManager
+                # is the source of truth), driven through their installed Chrome.
+                seats = _linked_browser_seats()
                 hz = build_orchestrator(include_local=False, only_available=True,
                                         config=self.config, browser_drivers=seats)
                 harness = hz if hz.has_available_provider() else None
