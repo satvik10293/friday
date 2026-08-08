@@ -27,6 +27,7 @@ from .memory.brain import MemoryBrain
 from .reasoning.brain import ReasoningBrain
 from .runtime.brain import RuntimeBrain
 from .spatial.brain import SpatialBrain
+from .trading.brain import TradingBrain
 from .vision.brain import VisionBrain
 from .voice.brain import VoiceBrain
 
@@ -34,15 +35,17 @@ __all__ = [
     "CognitiveBrain", "SituationReport", "SituationReportBus", "LocalMemory",
     "VisionBrain", "AudioBrain", "SpatialBrain", "MemoryBrain", "LearningBrain",
     "EmotionBrain", "AutomationBrain", "RuntimeBrain", "ExecutiveBrain",
-    "KnowledgeBrain", "GoalBrain", "VoiceBrain", "ReasoningBrain", "build_brains",
+    "KnowledgeBrain", "GoalBrain", "VoiceBrain", "ReasoningBrain", "TradingBrain",
+    "build_brains",
 ]
 
 # the sensor + support brains that follow the standard lifecycle (Executive + Memory are
 # managed separately by the Coordinator / society wiring). One brain per module (M46):
 # every subsystem has a voice in the society, and each is user-addressable by name.
+# TradingBrain (M63) wraps Athena, the vendored trading analyst, as a subagent.
 _LIFECYCLE_BRAINS = (VisionBrain, AudioBrain, SpatialBrain, LearningBrain, EmotionBrain,
                      AutomationBrain, RuntimeBrain, KnowledgeBrain, GoalBrain,
-                     VoiceBrain, ReasoningBrain)
+                     VoiceBrain, ReasoningBrain, TradingBrain)
 
 
 def build_brains(*, services=None, report_bus: Optional[SituationReportBus] = None,

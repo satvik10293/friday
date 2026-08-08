@@ -31,6 +31,47 @@ def _osa(script: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, timeout=6)
 
 
+def _resolve_win_app(exe: str) -> Optional[str]:
+    """Resolve a Windows app to a full path via PATH then the App Paths registry
+    (where chrome, edge, spotify, etc. register even when not on PATH). Raw
+    `subprocess.Popen('chrome.exe')` fails because cmd doesn't consult App Paths;
+    this does. Returns a full path or None."""
+    import shutil
+    import winreg
+    hit = shutil.which(exe) or (shutil.which(exe + ".exe")
+                                if not exe.lower().endswith(".exe") else None)
+    if hit:
+        return hit
+    names = [exe] if exe.lower().endswith(".exe") else [exe + ".exe", exe]
+    for nm in names:
+        for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            try:
+                k = winreg.OpenKey(
+                    root,
+                    r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\\" + nm)
+                val, _ = winreg.QueryValueEx(k, None)
+                winreg.CloseKey(k)
+                if val:
+                    return val.strip('"')
+            except OSError:
+                continue
+    return None
+
+
+def _win_media_key(vk: int) -> bool:
+    """Send a media virtual-key via keybd_event — reliable and dependency-free,
+    unlike routing through pyautogui's key map. VK_MEDIA_PLAY_PAUSE=0xB3,
+    NEXT=0xB0, PREV=0xB1."""
+    try:
+        import ctypes
+        ext, up = 0x0001, 0x0002
+        ctypes.windll.user32.keybd_event(vk, 0, ext, 0)
+        ctypes.windll.user32.keybd_event(vk, 0, ext | up, 0)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 class FridayAction:
 
     def __init__(self):
@@ -147,8 +188,17 @@ class FridayAction:
             subprocess.Popen([name])
             return f"Opened {name}"
         exe = _WIN_APPS.get(key, name)
-        subprocess.Popen(exe, creationflags=subprocess.CREATE_NO_WINDOW, shell=True)
-        return f"Opened {name}"
+        target = _resolve_win_app(exe)
+        try:
+            # ShellExecute (os.startfile) consults PATH + App Paths + file assoc,
+            # and RAISES if it can't resolve — so failure is honest, not silent.
+            os.startfile(target or exe)  # noqa: S606 — launching a user-named app
+            return f"Opened {name}"
+        except OSError:
+            if target:                    # resolved but ShellExecute balked
+                subprocess.Popen(f'start "" "{target}"', shell=True)
+                return f"Opened {name}"
+            return f"I couldn't find an app called '{name}'."
 
     def close_app(self, name: str) -> str:
         if _IS_WIN:
@@ -477,23 +527,29 @@ class FridayAction:
 
     # ── Media keys ────────────────────────────────────────────────────────────
 
+    def _media(self, vk: int, key: str, label: str) -> str:
+        if _IS_WIN and _win_media_key(vk):
+            return label
+        if self._caps["pyautogui"]:
+            import pyautogui
+            pyautogui.press(key)
+            return label
+        if _IS_MAC:
+            # macOS media control via AppleScript (Music app; best-effort)
+            verb = {"playpause": "playpause", "nexttrack": "next track",
+                    "prevtrack": "previous track"}[key]
+            _osa(f'tell application "Music" to {verb}')
+            return label
+        return "Media control not available"
+
     def media_play_pause(self) -> str:
-        if not self._caps["pyautogui"]: return "pyautogui not available"
-        import pyautogui
-        pyautogui.press("playpause")
-        return "Play/pause"
+        return self._media(0xB3, "playpause", "Play/pause")
 
     def media_next(self) -> str:
-        if not self._caps["pyautogui"]: return "pyautogui not available"
-        import pyautogui
-        pyautogui.press("nexttrack")
-        return "Next track"
+        return self._media(0xB0, "nexttrack", "Next track")
 
     def media_prev(self) -> str:
-        if not self._caps["pyautogui"]: return "pyautogui not available"
-        import pyautogui
-        pyautogui.press("prevtrack")
-        return "Previous track"
+        return self._media(0xB1, "prevtrack", "Previous track")
 
     # ── File operations ───────────────────────────────────────────────────────
 

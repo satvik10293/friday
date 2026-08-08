@@ -1,0 +1,38 @@
+{
+  "_note": "REAL capabilities, real answers. Local beats run on-device with no network (open app / reason / screenshot). The online beat is Athena, FRIDAY's trading subagent (M63), reading the live market. Regenerate with capture_answers.py / probe_local.py.",
+  "local": [
+    {
+      "prompt": "Open Chrome.",
+      "answer": "Opening it now.",
+      "route": "app.open",
+      "models": "on-device",
+      "caption": "SHE RUNS YOUR MACHINE",
+      "sub": "opens apps, by voice"
+    },
+    {
+      "prompt": "Is 97 a prime number?",
+      "answer": "Yes, 97 is prime.",
+      "route": "local_reasoner",
+      "models": "on-device",
+      "caption": "REASONS ON-DEVICE",
+      "sub": "no cloud, no wait"
+    },
+    {
+      "prompt": "Take a screenshot.",
+      "answer": "I've taken a screenshot.",
+      "route": "skill:system.screenshot",
+      "models": "on-device",
+      "caption": "100% ON-DEVICE",
+      "sub": "Wi-Fi is off — this is all local"
+    }
+  ],
+  "cloud": {
+    "prompt": "Athena, should I buy AAPL?",
+    "answer": "WAIT on AAPL — no clear setup; indicators are mixed or flat.",
+    "say": "Wait on Apple — no clear setup right now.",
+    "route": "trading_brain · athena",
+    "models": "athena subagent",
+    "caption": "HER TRADING ANALYST",
+    "sub": "Athena — a subagent — reads the live market"
+  }
+}
