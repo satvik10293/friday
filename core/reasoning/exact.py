@@ -471,6 +471,55 @@ def aggregate(question: str) -> Optional[str]:
     return None
 
 
+# ── applied physics: projectile motion, computed not recalled ────────────────
+# "projectile range at 30 m/s and 45 degrees" — a language model recalls a
+# rough number; she COMPUTES range / max height / flight time from the launch
+# speed and angle (g = 9.81 m/s^2), the exact way. Fires only on a projectile/
+# trajectory cue with a speed AND an angle, so ordinary prose is never 'solved'.
+
+_PROJ_CUE = re.compile(
+    r"\b(projectile|trajectory|launch(?:ed)?|thrown|throw|fired|fire|"
+    r"cannon|ballistic)\b", re.I)
+_PROJ_SPEED = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:m/s|meters?\s+per\s+second|metres?\s+per\s+second|"
+    r"mps)\b", re.I)
+_PROJ_ANGLE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg|°)\b", re.I)
+_G = 9.81
+
+
+def projectile(question: str) -> Optional[str]:
+    """Projectile-motion facts (range / max height / flight time) from a launch
+    speed and angle, computed exactly. None if it isn't a projectile question."""
+    import math
+    q = question or ""
+    if not _PROJ_CUE.search(q):
+        return None
+    sm, am = _PROJ_SPEED.search(q), _PROJ_ANGLE.search(q)
+    if not sm or not am:
+        return None
+    v, deg = float(sm.group(1)), float(am.group(1))
+    theta = math.radians(deg)
+    rng = v * v * math.sin(2 * theta) / _G
+    apex = v * v * math.sin(theta) ** 2 / (2 * _G)
+    tof = 2 * v * math.sin(theta) / _G
+    spd, ang = _fmt(v), _fmt(deg)
+    only_range = re.search(r"\brange\b|\bdistance\b|\bhow far\b", q, re.I)
+    only_height = re.search(
+        r"\b(?:max(?:imum)? )?height\b|\bhow high\b|\bapex\b", q, re.I)
+    only_time = re.search(
+        r"\bflight time\b|\btime of flight\b|\bhow long\b|\bairborne\b|"
+        r"\bin the air\b", q, re.I)
+    if sum(map(bool, (only_range, only_height, only_time))) == 1:
+        if only_range:
+            return f"At {spd} m/s and {ang} degrees, the range is {_fmt(round(rng, 1))} m."
+        if only_height:
+            return f"At {spd} m/s and {ang} degrees, the max height is {_fmt(round(apex, 1))} m."
+        return f"At {spd} m/s and {ang} degrees, the flight time is {_fmt(round(tof, 2))} s."
+    return (f"At {spd} m/s and {ang} degrees: range {_fmt(round(rng, 1))} m, "
+            f"max height {_fmt(round(apex, 1))} m, "
+            f"flight time {_fmt(round(tof, 2))} s.")
+
+
 # ── syllogisms: SHE deduces, no model anywhere ───────────────────────────────
 # "All cats are animals. Sam is a cat. Is Sam an animal?" → chained deduction
 # over subset/membership/disjointness facts stated IN the question. Answers
@@ -934,8 +983,8 @@ def base_convert(question: str) -> Optional[str]:
 # ── the front door ────────────────────────────────────────────────────────────
 
 _SOLVERS: list[Callable[[str], Optional[str]]] = [
-    syllogism, relations, conditional, disjunctive, text_ops, comparison,
-    primality, parity, perfect_square, factors, gcd_lcm, base_convert,
+    syllogism, relations, conditional, disjunctive, text_ops, projectile,
+    comparison, primality, parity, perfect_square, factors, gcd_lcm, base_convert,
     percent_change, composite, percent, power, units, dates, word_problem,
     algebra, list_ops, aggregate, arithmetic]
 

@@ -68,6 +68,30 @@ def test_average_is_computed():
     assert "is 6" in exact.solve("what is the average of 3, 5 and 10")
 
 
+# ── applied physics ───────────────────────────────────────────────────────────
+
+def test_projectile_motion_is_computed():
+    # a single-quantity ask answers just that quantity, concisely
+    assert exact.solve(
+        "what is the projectile range at 30 m/s and 45 degrees") == \
+        "At 30 m/s and 45 degrees, the range is 91.7 m."
+    assert exact.solve(
+        "how high does a projectile launched at 20 m/s at 60 degrees go") == \
+        "At 20 m/s and 60 degrees, the max height is 15.3 m."
+    # a full trajectory ask reports range, apex and flight time together
+    full = exact.solve(
+        "calculate the projectile trajectory at 30 m/s and 45 degrees")
+    assert "range 91.7 m" in full
+    assert "max height 22.9 m" in full
+    assert "flight time 4.32 s" in full
+
+
+def test_prose_with_degrees_is_not_a_projectile():
+    # no projectile cue → not our question, even though "degrees" appears
+    assert exact.solve("I was born in 1990 and turned 30 degrees") is None
+    assert exact.solve("it's 45 degrees outside today") is None
+
+
 # ── units ─────────────────────────────────────────────────────────────────────
 
 def test_unit_conversions_are_exact():
