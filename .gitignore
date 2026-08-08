@@ -97,3 +97,6 @@ build/
 data/logs/
 data/backups/
 .claude/
+
+# FRIDAY-driven Chrome profile (runtime browser data)
+data/browser_profile/
