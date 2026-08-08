@@ -133,8 +133,19 @@ class PhoneNotifySkill(_HomeSkill):
         return {"ok": ok, "target": target}
 
 
+class PhonePlayMusicSkill(_HomeSkill):
+    name = "phone.play_music"
+    description = "Start music on your phone(s) via the Home Assistant app."
+
+    def run(self, context: Any, **kwargs) -> dict:
+        ha = _client()
+        if not ha.available():
+            return {"ok": False, "reason": "not_configured", "played": []}
+        return ha.play_music()
+
+
 HOME_SKILLS = [HomeTurnOnSkill, HomeTurnOffSkill, HomeToggleSkill,
-               HomeListSkill, PhoneNotifySkill]
+               HomeListSkill, PhoneNotifySkill, PhonePlayMusicSkill]
 
 
 def register_home_skills(registry) -> None:

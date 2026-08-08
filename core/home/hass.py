@@ -54,9 +54,11 @@ class HomeAssistant:
     """A thin, honest Home Assistant REST client. Build via from_config()."""
 
     def __init__(self, url: str = "", token: str = "", *,
+                 phones: Optional[list] = None,
                  timeout: float = _DEFAULT_TIMEOUT) -> None:
         self.url = (url or "").rstrip("/")
         self._token = token or ""
+        self.phones = list(phones or [])       # HA companion-app notify targets
         self.timeout = timeout
         self._ready: Optional[bool] = None
 
@@ -66,7 +68,7 @@ class HomeAssistant:
         url = cfg.get("url") or os.environ.get("HASS_URL", "")
         token = (cfg.get("token") or os.environ.get("HASS_TOKEN")
                  or os.environ.get("HOME_ASSISTANT_TOKEN", ""))
-        return cls(url, token)
+        return cls(url, token, phones=cfg.get("phones") or [])
 
     # ── connectivity ─────────────────────────────────────────────────────────
     def available(self) -> bool:
@@ -190,3 +192,21 @@ class HomeAssistant:
         """Send a notification to the phone via HA's notify service (the
         companion app registers as notify.mobile_app_<device>)."""
         return self.call_service("notify", target, data={"message": message})
+
+    def play_music(self, targets: Optional[list] = None) -> dict:
+        """Start playback on each phone via its HA companion app. Android takes a
+        media 'play' command directly; iPhone needs a Shortcut wired to the
+        notification. Fans out to every configured phone. Returns
+        {ok, played, failed}; never raises."""
+        tgts = list(targets if targets is not None else self.phones)
+        if not self.available() or not tgts:
+            return {"ok": False, "reason": "not_configured",
+                    "played": [], "failed": list(tgts)}
+        played, failed = [], []
+        for t in tgts:
+            svc = str(t).split(".")[-1]            # "notify.mobile_app_x" -> "mobile_app_x"
+            ok = self.call_service("notify", svc,
+                                   data={"message": "command_media",
+                                         "data": {"media_command": "play"}})
+            (played if ok else failed).append(t)
+        return {"ok": bool(played), "played": played, "failed": failed}

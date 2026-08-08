@@ -97,6 +97,9 @@ class _FakeHA:
     def notify_phone(self, message, *, target="notify"):
         return True
 
+    def play_music(self, targets=None):
+        return {"ok": True, "played": ["mobile_app_a", "mobile_app_b"]}
+
 
 def test_turn_on_skill_switches_a_device():
     from core.skills.builtin import home_actions as H
@@ -131,5 +134,38 @@ def test_home_skills_are_safe_and_registered():
     from core.skills.permissions import Permission
     names = {s.name for s in HOME_SKILLS}
     assert {"home.turn_on", "home.turn_off", "home.toggle", "home.list",
-            "phone.notify"} <= names
+            "phone.notify", "phone.play_music"} <= names
     assert all(s.permission == Permission.SAFE for s in HOME_SKILLS)
+
+
+# ── play music across the phones (the "Ultron" move) ──────────────────────────
+
+def test_play_music_fans_out_to_every_phone():
+    ha = HomeAssistant("http://x:8123", "tok",
+                       phones=["mobile_app_pixel", "notify.mobile_app_iphone"])
+    calls = []
+    ha.call_service = lambda dom, svc, entity_id=None, data=None: (   # type: ignore
+        calls.append((dom, svc)) or True)
+    r = ha.play_music()
+    assert r["ok"] is True
+    assert r["played"] == ["mobile_app_pixel", "notify.mobile_app_iphone"]
+    # the "notify." prefix is stripped to the service name
+    assert calls == [("notify", "mobile_app_pixel"), ("notify", "mobile_app_iphone")]
+
+
+def test_play_music_not_configured_without_phones():
+    r = HomeAssistant("http://x", "tok", phones=[]).play_music()
+    assert r["ok"] is False and r["reason"] == "not_configured"
+
+
+def test_from_config_reads_the_phone_list():
+    ha = HomeAssistant.from_config(
+        {"home_assistant": {"url": "http://h", "phones": ["mobile_app_a"]}})
+    assert ha.phones == ["mobile_app_a"]
+
+
+def test_play_music_skill_delegates():
+    from core.skills.builtin import home_actions as H
+    H.set_client(_FakeHA())
+    r = H.PhonePlayMusicSkill().run(None)
+    assert r["ok"] is True and len(r["played"]) == 2

@@ -995,6 +995,15 @@ class ConversationBridge:
             (r"\bunmute\b", "audio.unmute", None, lambda d: "Unmuted."),
             (r"\b(set (the )?volume to|volume to)\s+(?P<n>\d{1,3})\b", "audio.set_volume",
              _num, lambda d: "Done."),
+            # her "Ultron" move: one command, every configured phone starts playing
+            # (checked before the PC media route so "on my phones" isn't the laptop)
+            (r"\bplay music on (?:my |all )?(?:phones?|mobiles?)\b"
+             r"|(?:open|wake)\b.{0,25}\b(?:phones?|mobiles?)\b.{0,25}\bplay\b"
+             r"|\bplay(?:\s+(?:some|the))?\s+music\s+on\s+all\b",
+             "phone.play_music", None,
+             lambda d: (("Playing on " + str(len(d.get("played", []))) + " phone"
+                         + ("s" if len(d.get("played", [])) != 1 else "") + ".")
+                        if isinstance(d, dict) and d.get("ok") else _home_msg(d))),
             (r"\b(play|pause|play ?pause|resume)\b.{0,10}(music|media|track|song|it)?\b",
              "media.play_pause", None, lambda d: "Done."),
             (r"\bnext (track|song)\b|\bskip\b", "media.next", None, lambda d: "Next track."),
