@@ -72,6 +72,66 @@ def _win_media_key(vk: int) -> bool:
         return False
 
 
+_START_APPS_CACHE = None
+
+
+def _win_start_apps() -> tuple:
+    """(name_lower, display_name, AppID) for every launchable app on the Start
+    menu — Store/UWP apps AND desktop apps — via `Get-StartApps`. This is how
+    Windows itself enumerates what you can launch, so it finds Store apps
+    (Spotify, WhatsApp, Discord) that never register on PATH or under App Paths,
+    which is exactly why raw `os.startfile('spotify.exe')` fails for them.
+    Cached for the process (a non-empty result only — a transient PowerShell
+    failure never poisons the cache); empty tuple on failure."""
+    global _START_APPS_CACHE
+    if _START_APPS_CACHE is not None:
+        return _START_APPS_CACHE
+    if not _IS_WIN:
+        return ()
+    try:
+        import json
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "Get-StartApps | ConvertTo-Json -Compress"],
+            capture_output=True, text=True, timeout=10)
+        data = json.loads(out.stdout or "[]")
+        if isinstance(data, dict):                       # single app → one object
+            data = [data]
+        apps = []
+        for d in data:
+            nm = (d.get("Name") or "").strip()
+            aid = (d.get("AppID") or "").strip()
+            if nm and aid:
+                apps.append((nm.lower(), nm, aid))
+        apps = tuple(apps)
+        if apps:
+            _START_APPS_CACHE = apps
+        return apps
+    except Exception:  # noqa: BLE001 — Start-menu enumeration is best-effort
+        return ()
+
+
+def _match_start_app(name: str):
+    """Best Start-menu match for a spoken app name. Prefers exact name, then a
+    prefix match ("spotify" → "Spotify"), then the shortest substring match
+    (so "Spotify" wins over "Spotify Web Helper"). Returns (display, AppID) or
+    None."""
+    q = (name or "").lower().strip()
+    apps = _win_start_apps()
+    if not q or not apps:
+        return None
+    for low, disp, aid in apps:
+        if low == q:
+            return (disp, aid)
+    hits = [(disp, aid) for low, disp, aid in apps if low.startswith(q)]
+    if hits:
+        return min(hits, key=lambda t: len(t[0]))
+    hits = [(disp, aid) for low, disp, aid in apps if q in low]
+    if hits:
+        return min(hits, key=lambda t: len(t[0]))
+    return None
+
+
 class FridayAction:
 
     def __init__(self):
@@ -136,6 +196,7 @@ class FridayAction:
             "media_play_pause":  lambda: self.media_play_pause(),
             "media_next":        lambda: self.media_next(),
             "media_prev":        lambda: self.media_prev(),
+            "play_music":        lambda **kw: self.play_music(**kw),
             "search_files":      self.search_files,
             "recent_files":      lambda **kw: self.get_recent_files(**kw),
             "sleep_pc":          lambda: self.sleep_pc(),
@@ -182,23 +243,87 @@ class FridayAction:
                          "calculator": "Calculator", "notepad": "TextEdit",
                          "explorer": "Finder", "finder": "Finder"}
             app = _MAC_APPS.get(key, name)
-            subprocess.Popen(["open", "-a", app])
+            r = subprocess.run(["open", "-a", app], capture_output=True, text=True)
+            if r.returncode != 0:                    # `open` reports a missing app
+                raise FileNotFoundError(f"I couldn't find an app called '{name}'.")
             return f"Opened {name}"
         if not _IS_WIN:                              # Linux: xdg-open / direct
             subprocess.Popen([name])
             return f"Opened {name}"
+
+        # 1) a real executable — on PATH or in the App Paths registry
         exe = _WIN_APPS.get(key, name)
         target = _resolve_win_app(exe)
+        if target:
+            try:
+                os.startfile(target)  # noqa: S606 — launching a user-named app
+            except OSError:
+                subprocess.Popen(f'start "" "{target}"', shell=True)
+            return f"Opened {name}"
+
+        # 2) a Start-menu app — Store/UWP OR desktop — invisible to PATH and App
+        # Paths (this is why `spotify.exe`/`discord.exe` resolve to None). Windows
+        # itself launches these via the AppsFolder shell namespace by AppID.
+        match = _match_start_app(name) or _match_start_app(key)
+        if match:
+            disp, appid = match
+            subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{appid}"])
+            return f"Opened {disp}"
+
+        # 3) last resort: let ShellExecute try a file association / protocol.
+        # If even that can't resolve it, FAIL HONESTLY — never claim to have
+        # opened an app that isn't there (the old code returned a success string
+        # here, so she'd cheerfully say "opening it" while nothing happened).
         try:
-            # ShellExecute (os.startfile) consults PATH + App Paths + file assoc,
-            # and RAISES if it can't resolve — so failure is honest, not silent.
-            os.startfile(target or exe)  # noqa: S606 — launching a user-named app
+            os.startfile(exe)  # noqa: S606
             return f"Opened {name}"
         except OSError:
-            if target:                    # resolved but ShellExecute balked
-                subprocess.Popen(f'start "" "{target}"', shell=True)
-                return f"Opened {name}"
-            return f"I couldn't find an app called '{name}'."
+            raise FileNotFoundError(f"I couldn't find an app called '{name}'.")
+
+    def play_music(self, query: str = None) -> str:
+        """Actually START music, not just toggle a media key. Launches Spotify
+        (the Store build or the desktop build — see open_app) and starts
+        playback; with a `query` it opens that search in Spotify first. Honest:
+        raises when Spotify can't be found, so she never claims to be playing
+        music that never started. (The bare media key toggles nothing when no
+        player has a queue — which is why 'play music' used to do nothing.)"""
+        if _IS_MAC:
+            r = _osa('tell application "Spotify" to play')
+            if r.returncode != 0:
+                raise FileNotFoundError(
+                    "I couldn't find Spotify to play music.")
+            return f"Playing {query} on Spotify." if query else "Playing music on Spotify."
+
+        launched = False
+        if query:                                    # spotify:search:<q> opens results
+            from urllib.parse import quote
+            try:
+                os.startfile("spotify:search:" + quote(query))
+                launched = True
+            except OSError:
+                launched = False
+        if not launched:                             # open Spotify itself (exe/Store)
+            try:
+                self.open_app("spotify")
+                launched = True
+            except Exception:  # noqa: BLE001 — fall through to the protocol probe
+                launched = False
+        if not launched:                             # bare spotify: protocol
+            try:
+                os.startfile("spotify:")
+                launched = True
+            except OSError:
+                launched = False
+        if not launched:
+            raise FileNotFoundError(
+                "I couldn't find Spotify to play music. Install Spotify, or tell "
+                "me which music app to use.")
+        # let the app come up, then press play so sound actually starts (a
+        # no-op if it's already playing; instant when Spotify was already open)
+        time.sleep(2.5)
+        if _IS_WIN:
+            _win_media_key(0xB3)
+        return f"Playing {query} on Spotify." if query else "Playing music on Spotify."
 
     def close_app(self, name: str) -> str:
         if _IS_WIN:

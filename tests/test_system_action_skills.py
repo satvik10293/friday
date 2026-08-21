@@ -84,7 +84,7 @@ def test_all_37_actions_registered():
     registry = SkillRegistry()
     register_builtins(registry)
     action_names = {s.skill_name for s in ALL_ACTION_SPECS}
-    assert len(ALL_ACTION_SPECS) == 37
+    assert len(ALL_ACTION_SPECS) == 38          # + media.play_music (real playback)
     assert action_names <= set(registry.names())
 
 
@@ -92,7 +92,7 @@ def test_tier_distribution():
     by_permission = {}
     for spec in ALL_ACTION_SPECS:
         by_permission.setdefault(spec.permission, []).append(spec.skill_name)
-    assert len(by_permission[Permission.SAFE]) == 28          # tiers 1 + 2
+    assert len(by_permission[Permission.SAFE]) == 29          # tiers 1 + 2
     assert len(by_permission[Permission.USER_APPROVAL]) == 4  # tier 3
     assert len(by_permission[Permission.ADMIN_ONLY]) == 5     # tier 3+
 

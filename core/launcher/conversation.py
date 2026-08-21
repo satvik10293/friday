@@ -1004,6 +1004,12 @@ class ConversationBridge:
              lambda d: (("Playing on " + str(len(d.get("played", []))) + " phone"
                          + ("s" if len(d.get("played", [])) != 1 else "") + ".")
                         if isinstance(d, dict) and d.get("ok") else _home_msg(d))),
+            # "play music" / "put on some music" ACTUALLY starts music (Spotify),
+            # checked before the bare play/pause toggle below — a media key on an
+            # empty queue plays nothing, which is why this used to no-op silently
+            (r"\b(?:play|put on|start)\b(?:\s+(?:some|the|my))?\s+music\b",
+             "media.play_music", None,
+             lambda d: d if isinstance(d, str) else "Playing music."),
             (r"\b(play|pause|play ?pause|resume)\b.{0,10}(music|media|track|song|it)?\b",
              "media.play_pause", None, lambda d: "Done."),
             (r"\bnext (track|song)\b|\bskip\b", "media.next", None, lambda d: "Next track."),
@@ -1023,14 +1029,21 @@ class ConversationBridge:
              lambda d: "Opening it in your browser."),
             (r"\b(?:open|launch|start)\s+(?:the\s+)?(?P<name>[A-Za-z][\w .+-]{1,40})$",
              "app.open", lambda m: {"name": m.group("name").strip()},
-             lambda d: "Opening it now."),
+             lambda d: d if isinstance(d, str) and d.startswith("Opened")
+                       else "Opening it now."),
             (r"\b(?:focus|switch to)\s+(?:the\s+)?(?P<title>[\w .+-]{2,40})\s*(?:window)?$",
              "window.focus", lambda m: {"title": m.group("title").strip()},
-             lambda d: "Focused."),
+             lambda d: ("I couldn't find that window."
+                        if isinstance(d, str) and d.startswith("Window not found")
+                        else "Focused.")),
             (r"\bminimi[sz]e\b.{0,15}\bwindow\b|\bminimi[sz]e (?:this|it)\b",
-             "window.minimize", None, lambda d: "Minimized."),
+             "window.minimize", None,
+             lambda d: "There's no window to minimize."
+                       if isinstance(d, str) and "No window" in d else "Minimized."),
             (r"\bmaximi[sz]e\b.{0,15}\bwindow\b|\bmaximi[sz]e (?:this|it)\b",
-             "window.maximize", None, lambda d: "Maximized."),
+             "window.maximize", None,
+             lambda d: "There's no window to maximize."
+                       if isinstance(d, str) and "No window" in d else "Maximized."),
             (r"\bsearch (?:my )?files (?:for|named)\s+(?P<q>.{2,60})$|"
              r"\bfind (?:the |a )?files?\s+(?:named|called|for)\s+(?P<q2>.{2,60})$",
              "files.search",
@@ -1140,6 +1153,8 @@ class ConversationBridge:
         "spatial": "spatial_brain", "space": "spatial_brain",
         "memory": "memory_brain", "learning": "learning_brain",
         "emotion": "emotion_brain", "automation": "automation_brain",
+        "pc": "automation_brain", "computer": "automation_brain",
+        "laptop": "automation_brain",
         "runtime": "runtime_brain", "system": "runtime_brain",
         "knowledge": "knowledge_brain", "library": "knowledge_brain",
         "goal": "goal_brain", "goals": "goal_brain",

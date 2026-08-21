@@ -97,6 +97,9 @@ _SPECS: list[ActionSpec] = [
     ActionSpec("audio.unmute", "unmute", "Unmute system audio.", *_T2, ("audio", "act")),
     ActionSpec("media.play_pause", "media_play_pause", "Toggle media play/pause.",
                *_T2, ("media", "act")),
+    ActionSpec("media.play_music", "play_music",
+               "Actually start music playing (launches Spotify and plays).",
+               *_T2, ("media", "act"), {"query": {"type": str}}),
     ActionSpec("media.next", "media_next", "Next media track.", *_T2, ("media", "act")),
     ActionSpec("media.prev", "media_prev", "Previous media track.", *_T2, ("media", "act")),
     ActionSpec("display.brightness_up", "brightness_up", "Raise screen brightness.",
@@ -162,8 +165,16 @@ class SystemActionSkill(Skill):
         self.input_schema = dict(spec.schema)
 
     def run(self, context, **kwargs):
+        from core.skills.exceptions import SkillExecutionError
         method = getattr(_get_action(), self._spec.method)
-        return method(**kwargs)
+        try:
+            return method(**kwargs)
+        except (OSError, ValueError) as e:
+            # an EXPECTED action failure (app not installed, no such window,
+            # device absent) — a clean failure, not a bug. Surfacing it as a
+            # SkillError lets the executor return an honest FailureResult and
+            # log it quietly, instead of an alarming "skill crashed" traceback.
+            raise SkillExecutionError(str(e)) from e
 
     def health(self) -> dict:
         caps = _get_action().capabilities()
