@@ -664,21 +664,86 @@ class ConversationBridge:
             if not result.get("ok"):
                 return ("screen", "I couldn't read any text on your screen just now.")
             text = result["text"]
-            # answer the user's actual ask, grounded in the on-screen text; the
-            # image stays local, only the text is reasoned over
-            if self.reasoner is not None and self.reasoner.available():
-                grounded = self.reasoner.reason(
-                    f"This is the text currently on the user's screen "
-                    f"(read on-device by OCR):\n\"\"\"\n{text[:4000]}\n\"\"\"\n\n"
-                    f"The user asked: {command}\nAnswer concisely from what's on "
-                    f"the screen; if it isn't there, say so.")
-                if getattr(grounded, "ok", False):
-                    return ("screen", grounded.answer)
-            snippet = text[:280] + ("…" if len(text) > 280 else "")
-            return ("screen", f"Here's what I can read on your screen: {snippet}")
+            # UNDERSTAND the screen and answer conversationally — never read the
+            # OCR back like a text reader. The image stays local; only the
+            # extracted text is reasoned over.
+            answer = self._comprehend_screen(text, command)
+            if answer:
+                return ("screen", answer)
+            # last resort: no reasoning model is available (e.g. a keyless box).
+            # Be honest about it instead of robotically dumping the raw text.
+            snippet = text[:240].strip() + ("…" if len(text) > 240 else "")
+            return ("screen", "I can see your screen, but I need my reasoning "
+                    "brain online to actually make sense of it. The gist of the "
+                    "text is: " + snippet)
         except Exception:  # noqa: BLE001 — screen reading must never break a turn
             log.debug("screen read failed", exc_info=True)
             return None
+
+    def _comprehend_screen(self, text: str, command: str) -> Optional[str]:
+        """Turn on-screen text into a natural, spoken-style answer to what was
+        actually asked — summarise/explain, don't recite. Cloud reasoner first
+        (the real comprehension), then her own on-device reasoner. Returns a
+        confident answer or None. Never raises."""
+        prompt = (
+            "You are FRIDAY, speaking out loud to your owner in a warm, natural "
+            "voice. You just glanced at his screen. Here is the text OCR pulled "
+            f"from it:\n\"\"\"\n{text[:4000]}\n\"\"\"\n\n"
+            f"He said: \"{command}\"\n\n"
+            "Reply in one or two short, spoken sentences, the way a person would "
+            "after a glance at the screen. Understand what he's really asking and "
+            "answer THAT. Do NOT read the text back word-for-word or list it out "
+            "— summarise, explain, or answer conversationally. If what he asked "
+            "about isn't on the screen, just say so.")
+        if self.reasoner is not None and self.reasoner.available():
+            try:
+                r = self.reasoner.reason(prompt)
+                if getattr(r, "ok", False) and (getattr(r, "answer", "") or "").strip():
+                    return r.answer.strip()
+            except Exception:  # noqa: BLE001
+                log.debug("cloud screen comprehension failed", exc_info=True)
+        if self.local_reasoner is not None and self.local_reasoner.available():
+            try:
+                r = self.local_reasoner.reason(prompt, context={})
+                if getattr(r, "ok", False) and (getattr(r, "answer", "") or "").strip() \
+                        and float(getattr(r, "confidence", 0) or 0) >= self.escalate_threshold:
+                    return r.answer.strip()
+            except Exception:  # noqa: BLE001
+                log.debug("local screen comprehension failed", exc_info=True)
+        return None
+
+    # ── show / hide herself from screen capture (the private overlay, M51) ───────
+    _SHOW_SELF_RE = re.compile(
+        r"\b(show yourself|show your ?self|make yourself visible|reveal yourself|"
+        r"let (?:them|everyone) see you|become visible|show your face|"
+        r"come out of hiding)\b", re.I)
+    _HIDE_SELF_RE = re.compile(
+        r"\b(hide yourself|hide your ?self|go (?:private|invisible|hidden)|"
+        r"become invisible|hide your face|stay hidden|go back to private)\b", re.I)
+
+    def _visibility(self, command: str) -> Optional[tuple]:
+        """'Show yourself' makes the overlay VISIBLE to everyone — screenshots,
+        screen sharing, live streams (drops the capture exclusion). 'Hide
+        yourself' returns her to private (the default). Returns (key, answer) or
+        None. Never raises."""
+        if self.overlay is None:
+            return None
+        q = command or ""
+        if self._SHOW_SELF_RE.search(q):
+            try:
+                self.overlay.show_self()
+            except Exception:  # noqa: BLE001
+                log.debug("overlay show_self failed", exc_info=True)
+            return ("overlay:show", "Okay — I'm showing myself now. Everyone can "
+                    "see me on your screen, in screenshots and screen sharing.")
+        if self._HIDE_SELF_RE.search(q):
+            try:
+                self.overlay.hide_self()
+            except Exception:  # noqa: BLE001
+                log.debug("overlay hide_self failed", exc_info=True)
+            return ("overlay:hide", "Done — I'm hidden from screenshots and screen "
+                    "sharing again, just for you.")
+        return None
 
     # -- her hands: owner-confirmed code execution in the isolated sandbox --------
     # Running code is consequential, so it is OWNER-CONFIRMED (Build & Behavior
@@ -1682,6 +1747,13 @@ class ConversationBridge:
         if asked is not None:
             key, answer = asked
             return self._respond_directly(turn, f"brain:{key}", answer, t0)
+
+        # show / hide herself from screen capture ("show yourself" → visible to
+        # everyone; the overlay is capture-excluded by default)
+        visible = self._visibility(command)
+        if visible is not None:
+            key, answer = visible
+            return self._respond_directly(turn, key, answer, t0)
 
         # her body (M47): action-shaped commands ("take a screenshot", "system
         # status", "set volume to 40") run through the governed skill executor.

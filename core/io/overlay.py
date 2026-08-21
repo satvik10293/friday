@@ -27,8 +27,9 @@ from typing import Optional
 log = logging.getLogger("friday.io.overlay")
 
 # Win32 constants
-_WDA_EXCLUDEFROMCAPTURE = 0x00000011      # Win10 2004+: excluded from capture
-_WDA_MONITOR = 0x00000001                 # older fallback: black in capture
+_WDA_NONE = 0x00000000                    # visible in capture (shown to everyone)
+_WDA_EXCLUDEFROMCAPTURE = 0x00000011      # Win10 2004+: excluded, content behind shows
+_WDA_MONITOR = 0x00000001                 # legacy: renders BLACK in capture (avoided)
 _GWL_EXSTYLE = -20
 _WS_EX_LAYERED = 0x00080000
 _WS_EX_TRANSPARENT = 0x00000020           # click-through
@@ -72,7 +73,8 @@ class Overlay:
         self._canvas_bg = _TRANSPARENT_KEY
         self._stop = threading.Event()
         self._started = False
-        self.captured_excluded = False    # set True once affinity is applied
+        self._hwnd = 0                    # top-level HWND, resolved on the tk thread
+        self.captured_excluded = False    # True once EXCLUDEFROMCAPTURE is applied
 
     # ── thread-safe feed (call from anywhere) ────────────────────────────────────
     def post(self, **event) -> None:
@@ -157,8 +159,13 @@ class Overlay:
                 except tk.TclError:
                     root.attributes("-alpha", self.opacity)   # e.g. Linux: dim
             self._build_widgets(tk, root)
-            self._apply_platform(root)
             self._redraw()
+            root.update_idletasks()
+            # Apply capture-exclusion AFTER the window is realized. A too-early
+            # SetWindowDisplayAffinity fails, and the old code then fell back to
+            # WDA_MONITOR — which is exactly the black "backed-out" box in
+            # screenshots we're eliminating. Retry on the tk thread instead.
+            root.after(60, lambda: self._apply_platform(root, tries=5))
             root.after(120, self._drain)
             root.mainloop()
         except Exception:  # noqa: BLE001 — the overlay must never crash the app
@@ -222,46 +229,94 @@ class Overlay:
         y = margin if "top" in self.corner else sh - h - margin - 48
         root.geometry(f"{w}x{h}+{x}+{y}")
 
-    def _apply_platform(self, root) -> None:
+    def _apply_platform(self, root, tries: int = 5) -> None:
         """Apply the OS-specific window magic: exclude from screen capture and
-        make it click-through. Windows and macOS have different APIs; Linux has
-        neither (the overlay is simply visible)."""
+        make it click-through. On Windows the exclusion can be refused until the
+        window is fully realized, so we RETRY on the tk thread rather than fall
+        back to the black-box WDA_MONITOR mode (the artifact we're avoiding).
+        macOS differs; Linux has neither (the overlay is simply visible)."""
         import sys
         if sys.platform.startswith("win"):
-            self._apply_win32(root)
+            ok = self._apply_win32(root)
+            if not ok and tries > 1 and not self._stop.is_set() and self._root is not None:
+                root.after(150, lambda: self._apply_platform(root, tries - 1))
         elif sys.platform == "darwin":
             self._apply_macos(root)
 
-    def _apply_win32(self, root) -> None:
+    def _apply_win32(self, root) -> bool:
+        """Returns whether capture-exclusion is now in effect (or wasn't wanted)."""
         try:
             import ctypes
             u = ctypes.windll.user32
             hwnd = u.GetParent(root.winfo_id()) or root.winfo_id()
-            # exclude from screen capture / sharing (the whole point)
-            if self.exclude_capture:
-                ok = u.SetWindowDisplayAffinity(hwnd, _WDA_EXCLUDEFROMCAPTURE)
-                if not ok:
-                    u.SetWindowDisplayAffinity(hwnd, _WDA_MONITOR)   # older fallback
-                self.captured_excluded = bool(ok)
+            self._hwnd = hwnd
             # click-through + no taskbar button
             ex = u.GetWindowLongW(hwnd, _GWL_EXSTYLE)
             ex |= _WS_EX_LAYERED | _WS_EX_TOOLWINDOW
             if self.click_through:
                 ex |= _WS_EX_TRANSPARENT
             u.SetWindowLongW(hwnd, _GWL_EXSTYLE, ex)
-            # CRITICAL: SetWindowLongW above RESETS the layered-window attributes
-            # that Tk set for -transparentcolor — which silently turns the panel
-            # back into a solid (dark) box. Re-apply the colour key so the
-            # background goes clear again and only the text floats.
+            # SetWindowLongW RESETS the layered attrs Tk set for -transparentcolor,
+            # turning the panel into a solid dark box — re-apply the colour key so
+            # the background goes clear and only the text floats.
             if self._transparent:
-                _LWA_COLORKEY = 0x00000001
-                r = int(_TRANSPARENT_KEY[1:3], 16)
-                g = int(_TRANSPARENT_KEY[3:5], 16)
-                b = int(_TRANSPARENT_KEY[5:7], 16)
-                colorref = (b << 16) | (g << 8) | r        # COLORREF 0x00BBGGRR
-                u.SetLayeredWindowAttributes(hwnd, colorref, 255, _LWA_COLORKEY)
+                self._reapply_colorkey(hwnd)
+            # exclude from screen capture / sharing (the whole point) — content
+            # BEHIND the panel shows through in captures; the panel itself is gone.
+            if self.exclude_capture:
+                return self._set_affinity(True)
+            return True
         except Exception:  # noqa: BLE001
             log.debug("overlay win32 setup failed", exc_info=True)
+            return False
+
+    def _reapply_colorkey(self, hwnd) -> None:
+        try:
+            import ctypes
+            _LWA_COLORKEY = 0x00000001
+            r = int(_TRANSPARENT_KEY[1:3], 16)
+            g = int(_TRANSPARENT_KEY[3:5], 16)
+            b = int(_TRANSPARENT_KEY[5:7], 16)
+            colorref = (b << 16) | (g << 8) | r            # COLORREF 0x00BBGGRR
+            ctypes.windll.user32.SetLayeredWindowAttributes(
+                hwnd, colorref, 255, _LWA_COLORKEY)
+        except Exception:  # noqa: BLE001
+            log.debug("colorkey reapply failed", exc_info=True)
+
+    def _set_affinity(self, excluded: bool) -> bool:
+        """Hide the overlay from screen capture (excluded=True → the panel is
+        excluded, whatever is behind it shows through — NOT a black box) or make
+        it visible to everyone in captures/screen-share/live stream
+        (excluded=False → WDA_NONE). Runs on the tk thread. Returns OS success."""
+        hwnd = getattr(self, "_hwnd", 0)
+        if not hwnd:
+            return False
+        try:
+            import ctypes
+            affinity = _WDA_EXCLUDEFROMCAPTURE if excluded else _WDA_NONE
+            ok = bool(ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, affinity))
+            if ok:
+                self.captured_excluded = excluded
+            return ok
+        except Exception:  # noqa: BLE001
+            log.debug("set affinity failed", exc_info=True)
+            return False
+
+    # ── show/hide to the world (screenshots + screen share + live stream) ────────
+    def set_capture_excluded(self, excluded: bool) -> None:
+        """excluded=False → show FRIDAY to everyone (captures include her);
+        excluded=True → hide her again (the default). Marshalled to the tk thread."""
+        self.exclude_capture = bool(excluded)
+        self.post(kind="capture", excluded=bool(excluded))
+
+    def show_self(self) -> None:
+        """'Show yourself' — become visible in screenshots, screen sharing and
+        live streams (drops the capture exclusion)."""
+        self.set_capture_excluded(False)
+
+    def hide_self(self) -> None:
+        """Go back to private — hidden from all screen capture (the default)."""
+        self.set_capture_excluded(True)
 
     def _apply_macos(self, root) -> None:
         """macOS equivalent of the Win32 setup — UNVERIFIED (written on Windows;
@@ -320,6 +375,8 @@ class Overlay:
         elif kind == "notice":
             self._content["answer"] = event.get("text", "")
             self._answer_hide_at = now + 6.0
+        elif kind == "capture":                      # show/hide from screen capture
+            self._set_affinity(bool(event.get("excluded", True)))
 
     def status(self) -> dict:
         return {"started": self._started, "excluded_from_capture": self.captured_excluded,

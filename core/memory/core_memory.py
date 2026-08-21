@@ -38,6 +38,9 @@ log = logging.getLogger("friday.memory.core")
 
 _ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_DIR = _ROOT / "data" / "core_memory"
+# packaged self-knowledge seed (tracked in git; data/core_memory/ is not), so a
+# clean reinstall still boots knowing who she is
+_SEED_DIR = _ROOT / "deploy" / "seed" / "core_memory"
 _INDEX_NAME = "MEMORY.md"
 _TYPES = ("user", "feedback", "project", "reference")
 
@@ -67,6 +70,30 @@ class CoreMemory:
         env = os.environ.get("FRIDAY_CORE_MEMORY", "").strip()
         self.root = Path(root) if root else (Path(env) if env else _DEFAULT_DIR)
         self._lock = threading.Lock()
+        self._seed_if_empty()
+
+    def _seed_if_empty(self) -> None:
+        """A brand-new store (fresh install) knows nothing about itself. Copy the
+        packaged self-knowledge seed in ONCE, only when the store is empty — a
+        populated store (the owner's real memories) is never touched."""
+        try:
+            if self._files() or not _SEED_DIR.is_dir():
+                return
+            seeds = [p for p in _SEED_DIR.glob("*.md") if p.name != _INDEX_NAME]
+            if not seeds:
+                return
+            with self._lock:
+                self.root.mkdir(parents=True, exist_ok=True)
+                for src in seeds:
+                    dst = self.root / src.name
+                    if not dst.exists():
+                        dst.write_text(src.read_text(encoding="utf-8"),
+                                       encoding="utf-8")
+                self._rebuild_index()
+            log.info("core memory seeded self-knowledge (%d files) from %s",
+                     len(seeds), _SEED_DIR)
+        except Exception:  # noqa: BLE001 — seeding is best-effort, never fatal
+            log.debug("core memory seed failed", exc_info=True)
 
     # ── parsing ──────────────────────────────────────────────────────────────────
     @staticmethod

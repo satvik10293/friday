@@ -78,6 +78,13 @@ class AutomationBrain(CognitiveBrain):
     def open_app(self, name: str) -> dict:
         return self.act("app.open", name=name)
 
+    def close_app(self, name: str) -> dict:
+        """Close an app by name. Closing is consequential (app.close is a
+        USER_APPROVAL skill), so through the SAFE-only gate this returns
+        needs_approval unless the owner has cleared it — the honest governed
+        counterpart to open_app, never a silent kill."""
+        return self.act("app.close", name=name)
+
     def play_music(self, query: Optional[str] = None) -> dict:
         return self.act("media.play_music", **({"query": query} if query else {}))
 
