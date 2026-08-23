@@ -75,40 +75,54 @@ def _win_media_key(vk: int) -> bool:
 _START_APPS_CACHE = None
 
 
-def _win_start_apps() -> tuple:
+def _win_start_apps(*, tries: int = 2, timeout: int = 15) -> tuple:
     """(name_lower, display_name, AppID) for every launchable app on the Start
     menu — Store/UWP apps AND desktop apps — via `Get-StartApps`. This is how
     Windows itself enumerates what you can launch, so it finds Store apps
-    (Spotify, WhatsApp, Discord) that never register on PATH or under App Paths,
-    which is exactly why raw `os.startfile('spotify.exe')` fails for them.
-    Cached for the process (a non-empty result only — a transient PowerShell
-    failure never poisons the cache); empty tuple on failure."""
+    (Spotify, WhatsApp, Discord) and Chrome PWAs that never register on PATH or
+    under App Paths, which is exactly why raw `os.startfile('spotify.exe')` fails
+    for them.
+
+    Cached for the process (a NON-EMPTY result only — a transient PowerShell
+    failure never poisons the cache). A cold PowerShell spawn during boot can be
+    slow or get starved, so we give it a generous timeout and one retry: an
+    empty enumeration is why 'open spotify' used to fail with 'couldn't find it'
+    even though the app was installed. Empty tuple only when it truly can't run."""
     global _START_APPS_CACHE
     if _START_APPS_CACHE is not None:
         return _START_APPS_CACHE
     if not _IS_WIN:
         return ()
-    try:
-        import json
-        out = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-             "Get-StartApps | ConvertTo-Json -Compress"],
-            capture_output=True, text=True, timeout=10)
-        data = json.loads(out.stdout or "[]")
-        if isinstance(data, dict):                       # single app → one object
-            data = [data]
-        apps = []
-        for d in data:
-            nm = (d.get("Name") or "").strip()
-            aid = (d.get("AppID") or "").strip()
-            if nm and aid:
-                apps.append((nm.lower(), nm, aid))
-        apps = tuple(apps)
-        if apps:
-            _START_APPS_CACHE = apps
-        return apps
-    except Exception:  # noqa: BLE001 — Start-menu enumeration is best-effort
-        return ()
+    import json
+    for attempt in range(max(1, tries)):
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 "Get-StartApps | ConvertTo-Json -Compress"],
+                capture_output=True, text=True, timeout=timeout)
+            data = json.loads(out.stdout or "[]")
+            if isinstance(data, dict):                   # single app → one object
+                data = [data]
+            apps = tuple((nm.lower(), nm, aid) for d in data
+                         for nm in [(d.get("Name") or "").strip()]
+                         for aid in [(d.get("AppID") or "").strip()]
+                         if nm and aid)
+            if apps:
+                _START_APPS_CACHE = apps
+                return apps
+        except Exception:  # noqa: BLE001 — Start-menu enumeration is best-effort
+            log.debug("Get-StartApps attempt %d failed", attempt + 1, exc_info=True)
+    return ()
+
+
+def warm_start_apps() -> None:
+    """Pre-fetch the Start-app list in the background so it's ready BEFORE the
+    owner asks to open something. Without warming, the first 'open <store app>'
+    pays the cold PowerShell spawn on the turn itself and could time out."""
+    if not _IS_WIN or _START_APPS_CACHE is not None:
+        return
+    threading.Thread(target=_win_start_apps, name="friday-warm-startapps",
+                     daemon=True).start()
 
 
 def _match_start_app(name: str):
@@ -136,6 +150,7 @@ class FridayAction:
 
     def __init__(self):
         self._caps = self._probe()
+        warm_start_apps()          # ready the Store/PWA app list before she's asked
         log.info("Action ready — caps: %s", self._caps)
 
     def _probe(self) -> dict:
