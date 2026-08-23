@@ -40,6 +40,26 @@ def _paths():
     return base, base / "credentials.json", base / "token.json"
 
 
+def _dotenv_value(key: str) -> str:
+    """Read one KEY from the app-root .env (best-effort). The app loads .env at
+    boot, but a standalone call may not have, so read it directly too."""
+    try:
+        from core.launcher.platform_adapter import PlatformAdapter
+        env = PlatformAdapter().config_dir() / ".env"
+        if not env.exists():
+            return ""
+        for line in env.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k.strip() == key:
+                return v.strip().strip('"').strip("'")
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
 class GmailClient:
     """Read/send Gmail over the API. Lazy, never-raises."""
 
@@ -58,18 +78,31 @@ class GmailClient:
         _, creds, token = _paths()
         return creds.exists() or token.exists()
 
+    @staticmethod
+    def _app_creds():
+        """(address, app_password) from the environment / .env, or None. This is
+        the SIMPLE path: one Google App Password (2-Step Verification + one
+        screen) unlocks IMAP read + SMTP send with zero Cloud-Console setup."""
+        import os
+        addr = (os.environ.get("GMAIL_ADDRESS") or "").strip()
+        pw = (os.environ.get("GMAIL_APP_PASSWORD") or "").replace(" ", "").strip()
+        if not (addr and pw):                       # fall back to the app-root .env
+            addr = addr or _dotenv_value("GMAIL_ADDRESS")
+            pw = pw or (_dotenv_value("GMAIL_APP_PASSWORD") or "").replace(" ", "")
+        return (addr, pw) if addr and pw else None
+
     def available(self) -> bool:
+        # the app-password path (IMAP/SMTP) needs no google libs at all
+        if self._app_creds():
+            return True
         return self.libs_available() and self.credentials_present()
 
     def setup_hint(self) -> str:
-        base, creds, _ = _paths()
-        if not self.libs_available():
-            return ("Gmail's Python libraries aren't installed "
-                    "(google-api-python-client, google-auth-oauthlib).")
-        if not creds.exists():
-            return (f"Gmail isn't connected yet. Put your Google OAuth "
-                    f"credentials.json at {creds} — see the setup steps.")
-        return "Gmail is set up."
+        _, creds, _t = _paths()
+        return ("Gmail isn't connected yet. The easy way: turn on 2-Step "
+                "Verification, create an App Password at "
+                "myaccount.google.com/apppasswords, and give it to me — no Google "
+                "Cloud setup needed.")
 
     # ── auth ─────────────────────────────────────────────────────────────────
     def _service(self):
@@ -125,8 +158,11 @@ class GmailClient:
 
     # ── read ─────────────────────────────────────────────────────────────────
     def check(self, *, max_results: int = 5, query: str = "is:unread") -> dict:
-        """Recent messages matching `query` (default: unread) as {from, subject,
-        snippet}. Never raises."""
+        """Recent unread messages as {from, subject, snippet}. Never raises. Uses
+        the app-password IMAP path when configured, else the OAuth API."""
+        app = self._app_creds()
+        if app:
+            return self._imap_check(app, max_results)
         svc = self._service()
         if svc is None:
             return {"ok": False, "error": "not_ready"}
@@ -148,9 +184,45 @@ class GmailClient:
             log.debug("gmail check failed", exc_info=True)
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    # ── read: app-password IMAP (no google libs, no Cloud setup) ──────────────
+    @staticmethod
+    def _imap_check(app, max_results: int) -> dict:
+        addr, pw = app
+        import imaplib
+        from email import message_from_bytes
+        from email.header import decode_header, make_header
+        try:
+            box = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+            try:
+                box.login(addr, pw)
+                box.select("INBOX")
+                _typ, data = box.search(None, "UNSEEN")
+                ids = (data[0].split() if data and data[0] else [])[-max_results:][::-1]
+                out = []
+                for mid in ids:
+                    _t, md = box.fetch(mid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)])")
+                    raw = md[0][1] if md and md[0] else b""
+                    msg = message_from_bytes(raw)
+                    frm = str(make_header(decode_header(msg.get("From", ""))))
+                    subj = str(make_header(decode_header(msg.get("Subject", "(no subject)"))))
+                    out.append({"from": frm, "subject": subj, "snippet": ""})
+                return {"ok": True, "messages": out}
+            finally:
+                try:
+                    box.logout()
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as e:  # noqa: BLE001
+            log.debug("gmail imap check failed", exc_info=True)
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     # ── send ─────────────────────────────────────────────────────────────────
     def send(self, to: str, subject: str, body: str) -> dict:
-        """Send an email. Called ONLY after the owner confirmed the draft."""
+        """Send an email. Called ONLY after the owner confirmed the draft. Uses
+        the app-password SMTP path when configured, else the OAuth API."""
+        app = self._app_creds()
+        if app:
+            return self._smtp_send(app, to, subject, body)
         svc = self._service()
         if svc is None:
             return {"ok": False, "error": "not_ready"}
@@ -163,6 +235,30 @@ class GmailClient:
             return {"ok": True}
         except Exception as e:  # noqa: BLE001
             log.debug("gmail send failed", exc_info=True)
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    @staticmethod
+    def _smtp_send(app, to: str, subject: str, body: str) -> dict:
+        addr, pw = app
+        import smtplib
+        try:
+            msg = MIMEText(body or "")
+            msg["From"] = addr
+            msg["To"] = to
+            msg["Subject"] = subject or "(no subject)"
+            server = smtplib.SMTP("smtp.gmail.com", 587, timeout=20)
+            try:
+                server.starttls()
+                server.login(addr, pw)
+                server.sendmail(addr, [to], msg.as_string())
+            finally:
+                try:
+                    server.quit()
+                except Exception:  # noqa: BLE001
+                    pass
+            return {"ok": True}
+        except Exception as e:  # noqa: BLE001
+            log.debug("gmail smtp send failed", exc_info=True)
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 

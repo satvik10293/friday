@@ -90,6 +90,30 @@ def test_service_none_degrades_honestly(monkeypatch):
     assert c.send("a@b.com", "s", "b")["ok"] is False
 
 
+def test_app_password_path_routes_imap_and_smtp(monkeypatch):
+    # with an app password configured, read = IMAP and send = SMTP (no google libs)
+    monkeypatch.setattr(GmailClient, "_app_creds",
+                        staticmethod(lambda: ("me@gmail.com", "apppw")))
+    calls: dict = {}
+
+    def fake_imap(app, n):
+        calls["imap"] = (app, n)
+        return {"ok": True, "messages": []}
+
+    def fake_smtp(app, to, subject, body):
+        calls["smtp"] = (app, to, subject, body)
+        return {"ok": True}
+
+    monkeypatch.setattr(GmailClient, "_imap_check", staticmethod(fake_imap))
+    monkeypatch.setattr(GmailClient, "_smtp_send", staticmethod(fake_smtp))
+    c = GmailClient()
+    assert c.available() is True                     # app password alone is enough
+    assert c.check(max_results=3)["ok"]
+    assert calls["imap"] == (("me@gmail.com", "apppw"), 3)
+    assert c.send("x@y.com", "Hi", "body")["ok"]
+    assert calls["smtp"][1] == "x@y.com"
+
+
 # ── conversation wiring ─────────────────────────────────────────────────────────────
 def test_summarize_email():
     b = ConversationBridge(ios=None)
