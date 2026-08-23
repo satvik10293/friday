@@ -146,6 +146,25 @@ def _match_start_app(name: str):
     return None
 
 
+# Process names FRIDAY must NEVER terminate on a fuzzy 'close X'. Killing any of
+# these can take the desktop, the session, or FRIDAY herself down — this is the
+# guard that stops a vague or MIS-HEARD close command from wrecking the machine.
+_PROTECTED_PROCS = {
+    "system", "system idle process", "registry", "smss", "csrss", "wininit",
+    "winlogon", "services", "lsass", "svchost", "dwm", "fontdrvhost", "sihost",
+    "ctfmon", "explorer", "taskmgr", "runtimebroker", "conhost", "audiodg",
+    "python", "pythonw", "shellexperiencehost", "searchhost", "spoolsv",
+    "startmenuexperiencehost", "textinputhost", "lockapp", "dllhost",
+}
+
+# a window whose title ends like this is a BROWSER's own window (a tab), not a
+# standalone app — closing "Instagram" must not kill the whole browser and every
+# other tab, so these are skipped in the title match (real PWAs are titled just
+# "Instagram"/"Spotify"). Closing the browser itself still works by exe name.
+_BROWSER_WINDOWS = ("google chrome", "mozilla firefox", "microsoft edge",
+                    "brave", "opera", "chromium")
+
+
 class FridayAction:
 
     def __init__(self):
@@ -341,12 +360,92 @@ class FridayAction:
         return f"Playing {query} on Spotify." if query else "Playing music on Spotify."
 
     def close_app(self, name: str) -> str:
-        if _IS_WIN:
-            subprocess.run(f"taskkill /F /IM {name}.exe",
-                           shell=True, capture_output=True)
-        else:
-            subprocess.run(["pkill", "-f", name], capture_output=True)
-        return f"Closed {name}"
+        """Close a running app by name — the programmatic 'End task'. Finds the
+        matching running processes (by executable name AND by window title, so a
+        Store/PWA app like a Chrome-wrapped Spotify is caught even though there is
+        no spotify.exe) and terminates them by PID with taskkill. Refuses to touch
+        critical system processes, so a vague or misheard 'close ...' can never
+        take the machine down. Honest: says so when nothing matched — never a fake
+        'Closed'."""
+        q = (name or "").strip().lower()
+        if len(q) < 2:
+            return "Tell me which app to close."
+        if not _IS_WIN:
+            r = subprocess.run(["pkill", "-f", q], capture_output=True)
+            return (f"Closed {name}." if r.returncode == 0
+                    else f"I couldn't find a running app called '{name}'.")
+        pids, label = self._find_app_processes(q)
+        if not pids:
+            return f"I couldn't find a running app called '{name}'."
+        killed = 0
+        for pid in pids:
+            # /F force, /T also ends the process tree (a PWA's renderer children);
+            # argv (no shell) so a spoken name can't inject a second command
+            r = subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                killed += 1
+        if killed:
+            return f"Closed {label}."
+        return f"I found '{name}' but couldn't close it — it may need admin rights."
+
+    @staticmethod
+    def _window_pids_matching(q: str) -> dict:
+        """{pid: window_title} for every visible window whose title contains q.
+        Catches Store/PWA apps that run under a generic host exe (a PWA 'Spotify'
+        is a chrome.exe whose window title is just 'Spotify'). Browser windows
+        (tabs) are skipped so closing an app never kills the whole browser."""
+        found: dict = {}
+        try:
+            import ctypes
+            import pygetwindow as gw
+            get_pid = ctypes.windll.user32.GetWindowThreadProcessId
+            for w in gw.getAllWindows():
+                title = (getattr(w, "title", "") or "").strip()
+                hwnd = getattr(w, "_hWnd", 0)
+                low = title.lower()
+                if not title or not hwnd:
+                    continue
+                # a standalone app/PWA window title IS the app name, optionally
+                # with a suffix after a boundary ("Spotify", "Spotify - Playlist").
+                # Require that boundary so "PythonProject1 - editor" does NOT match
+                # "python" — that over-match once caught the IDE.
+                if not (low == q or (low.startswith(q)
+                                     and not low[len(q):len(q) + 1].isalnum())):
+                    continue
+                if any(low.endswith(b) for b in _BROWSER_WINDOWS):
+                    continue                       # a browser tab, not an app
+                pid = ctypes.c_ulong()
+                get_pid(int(hwnd), ctypes.byref(pid))
+                if pid.value:
+                    found[pid.value] = title
+        except Exception:  # noqa: BLE001 — window enumeration is best-effort
+            log.debug("window pid match failed", exc_info=True)
+        return found
+
+    def _find_app_processes(self, q: str):
+        """([pid, ...], label) for running processes matching q by exe name or
+        window title, excluding protected system processes."""
+        import psutil
+        title_pids = self._window_pids_matching(q)
+        pids: list = []
+        label = ""
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                pid = proc.info["pid"]
+                pname = proc.info["name"] or ""
+                base = pname[:-4].lower() if pname.lower().endswith(".exe") \
+                    else pname.lower()
+                if not base or base in _PROTECTED_PROCS or base.startswith("python"):
+                    continue                       # never kill FRIDAY's own runtime
+                by_name = (len(q) >= 2 and q in base) or (len(base) >= 3 and base in q)
+                if by_name or pid in title_pids:
+                    pids.append(pid)
+                    if not label:
+                        label = title_pids.get(pid) or pname
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return pids, (label or q)
 
     def focus_window(self, title: str) -> str:
         if not self._caps["pygetwindow"]:
