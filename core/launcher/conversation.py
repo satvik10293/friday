@@ -227,6 +227,7 @@ class ConversationBridge:
         self._pending_approval: Optional[tuple] = None   # (goal_id, title, expires_at)
         self._pending_paused: Optional[tuple] = None     # (goal_id, title, skill, expires_at)
         self._pending_command: Optional[tuple] = None    # (skill, args, describe, expires_at)
+        self._pending_send: Optional[dict] = None        # a composed message await confirm
         self._lock = threading.Lock()
 
     def _log(self):
@@ -634,6 +635,7 @@ class ConversationBridge:
                     continue                         # empty target → not a command
                 self._pending_approval = None        # one confirm flow at a time
                 self._pending_paused = None
+                self._pending_send = None            # never let 'confirm' send a stale draft
                 self._pending_command = (skill_name, args, describe,
                                          time.time() + self._APPROVAL_TTL_S)
                 return (f"skill:{skill_name}:await_confirm",
@@ -808,6 +810,7 @@ class ConversationBridge:
             self._pending_command = None      # one confirm flow at a time, like
             self._pending_approval = None      # _command_gate does when it arms
             self._pending_paused = None
+            self._pending_send = None          # never let 'confirm' send a stale draft
             preview = code if len(code) <= 300 else code[:300] + " ..."
             return ("code.run",
                     "That runs in an isolated sandbox (no internet, no system "
@@ -909,6 +912,130 @@ class ConversationBridge:
                 "exactly, and from where? Point me at a folder or a pattern "
                 "(like *.tmp in Downloads) and I'll show you what matches before "
                 "removing anything.")
+
+    # -- her accounts: ACT (send an email / WhatsApp message) -- owner-confirmed --
+    # High-stakes: she sends AS you. The gate is mandatory and two-step: she DRAFTS
+    # (opens a pre-filled, VISIBLE compose window) and reads it back, then SENDS
+    # only after you say "send it". Never auto-sends. Recipients resolve through a
+    # local contacts map or a spoken address/number -- she refuses if she can't
+    # resolve who. Instagram posting isn't reliably automatable and isn't offered.
+    _SEND_EMAIL_RE = re.compile(
+        r"^\s*(?:send (?:an? )?email to|e-?mail)\s+(?P<to>.+?)"
+        r"(?:\s+subject\s+(?P<subj>.+?))?"
+        r"\s+(?:saying|that says?|with the message|message:?)\s+(?P<body>.+?)\s*$",
+        re.I)
+    _SEND_WA_RE = re.compile(
+        r"^\s*(?:whatsapp|text|message)\s+(?P<to>.+?)\s+"
+        r"(?:on whatsapp\s+)?(?:saying|that says?|message:?)\s+(?P<body>.+?)\s*$",
+        re.I)
+    _SEND_CONFIRM_RE = re.compile(
+        r"^\s*(send(?: it)?|yes,? send(?: it)?|confirm|go ahead)\s*$", re.I)
+
+    def _account_action(self, command: str) -> Optional[tuple]:
+        """Compose + owner-confirmed send on an account. Returns (route_key,
+        answer) or None. Never raises; never auto-sends."""
+        q = (command or "").strip()
+        pending = self._pending_send
+        if pending is not None:                      # a draft is waiting
+            if time.time() > pending.get("expires_at", 0):
+                self._pending_send = None            # a forgotten draft expires — never sends late
+            elif self._SEND_CONFIRM_RE.match(q):
+                self._pending_send = None
+                return ("account.send", self._do_send(pending))
+            elif self._CANCEL_RUN_RE.match(q):
+                self._pending_send = None
+                return ("account.send", "Okay -- I won't send it.")
+            else:
+                self._pending_send = None            # any other turn drops the draft; fall through
+        if not q:
+            return None
+        try:
+            from core.web.browser import BrowserController
+            m = self._SEND_EMAIL_RE.match(q)
+            if m:
+                return self._draft_email(m.group("to"), m.group("subj"),
+                                         m.group("body"), BrowserController)
+            m = self._SEND_WA_RE.match(q)
+            if m and "whatsapp" in q.lower():
+                return self._draft_whatsapp(m.group("to"), m.group("body"),
+                                            BrowserController)
+        except Exception:  # noqa: BLE001 -- an account fault never breaks the turn
+            log.debug("account action route failed", exc_info=True)
+        return None
+
+    def _draft_email(self, to_raw, subj_raw, body_raw, BrowserController):
+        from core.web.accounts import compose_email, resolve_contact
+        to = resolve_contact(to_raw, "email")
+        if to is None:
+            return ("account.send:no_contact",
+                    f"I don't have an email address for {(to_raw or '').strip()!r}. "
+                    "Add them to contacts or tell me the address.")
+        if not BrowserController.available():
+            return ("account.send", "I can't drive a browser to send that yet.")
+        subject = (subj_raw or "").strip() or "(no subject)"
+        body = (body_raw or "").strip()
+        if not compose_email(to, subject, body).get("ok"):
+            return ("account.send", "I couldn't open the email draft.")
+        self._arm_send({"account": "Gmail", "to": to, "subject": subject,
+                        "body": body, "host": "mail.google.com"})
+        return ("account.send:await_confirm",
+                f"Draft ready in Gmail -- to {to}, subject '{subject}', saying: "
+                f"{body[:160]}. Say 'send it' to send, or 'cancel'.")
+
+    def _draft_whatsapp(self, to_raw, body_raw, BrowserController):
+        from core.web.accounts import compose_whatsapp, resolve_contact
+        phone = resolve_contact(to_raw, "phone")
+        if phone is None:
+            return ("account.send:no_contact",
+                    f"I don't have a WhatsApp number for {(to_raw or '').strip()!r}. "
+                    "Add them to contacts or tell me the number with country code.")
+        if not BrowserController.available():
+            return ("account.send", "I can't drive a browser to send that yet.")
+        body = (body_raw or "").strip()
+        if not compose_whatsapp(phone, body).get("ok"):
+            return ("account.send", "I couldn't open the WhatsApp chat.")
+        self._arm_send({"account": "WhatsApp", "to": phone, "body": body,
+                        "host": "web.whatsapp.com"})
+        return ("account.send:await_confirm",
+                f"Draft ready in WhatsApp -- to {phone}, saying: {body[:160]}. "
+                "Say 'send it' to send, or 'cancel'.")
+
+    def _arm_send(self, pending: dict) -> None:
+        """Arm a pending send and clear every other confirm flow (only one at a
+        time), the way _command_gate / _run_code do when they arm. A draft
+        expires on the same 60s window as the other confirm gates, so a forgotten
+        draft can't be fired by a much-later stray 'confirm'/'go ahead'."""
+        pending["expires_at"] = time.time() + self._APPROVAL_TTL_S
+        self._pending_send = pending
+        self._pending_command = None
+        self._pending_approval = None
+        self._pending_paused = None
+        self._pending_code = None
+        self._pending_browser = None
+
+    def _do_send(self, pending: dict) -> str:
+        from urllib.parse import urlparse
+
+        from core.web.accounts import send_open_draft
+        from core.web.browser import get_browser
+        account, who = pending["account"], pending.get("to", "")
+        try:
+            # the shared browser page must still be ON the drafted compose — never
+            # press send/Enter on whatever page happens to be focused now (it could
+            # send Enter in the wrong chat). Verify the host before pressing.
+            cur = get_browser().current()
+            host = (urlparse(cur.get("url", "")).hostname or "") if cur.get("ok") else ""
+            if pending.get("host") and pending["host"] not in host:
+                return ("The draft isn't open anymore, so I won't send it to the "
+                        "wrong place — ask me to compose it again.")
+            ok = send_open_draft(account).get("ok")
+        except Exception:  # noqa: BLE001
+            log.debug("send failed", exc_info=True)
+            ok = False
+        if ok:
+            return f"Sent your {account} message to {who}."
+        return (f"I opened the {account} draft but couldn't send it "
+                "automatically -- it's ready in the window if you want to send it.")
 
     # -- her accounts (Gmail / Instagram / WhatsApp / Google): READ side ----------
     # "open my gmail" navigates her Chrome there (you log in once); "check my
@@ -1027,6 +1154,7 @@ class ConversationBridge:
             self._pending_approval = None
             self._pending_paused = None
             self._pending_code = None
+            self._pending_send = None          # never let 'confirm' send a stale draft
             where = (" on " + host) if host else " on the open page"
             return ("browser.click:await_confirm",
                     "Say 'confirm' and I'll click '" + text + "'" + where + ".")
@@ -1817,6 +1945,15 @@ class ConversationBridge:
         paused_answer = self._paused_goals(command)
         if paused_answer is not None:
             return self._respond_directly(turn, "goal_approval", paused_answer, t0)
+
+        # her accounts -- ACT: compose + owner-confirmed send ("email X saying Y",
+        # "whatsapp Y saying Z"). Two-step: she drafts + reads it back, and sends
+        # only on "send it". Checked early so a pending "send it"/"cancel" is caught.
+        # No command= -- recipient and message are personal, off the cloud window.
+        sent = self._account_action(command)
+        if sent is not None:
+            key, answer = sent
+            return self._respond_directly(turn, key, answer, t0)
 
         # Athena (M63): trading questions delegate to the trading subagent, LIVE.
         # No `command=` — a portfolio/analysis answer may carry account data and

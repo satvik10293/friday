@@ -81,6 +81,7 @@
     "language": "en",
     "beam_size": 5
   },
+  "contacts": {},
   "listening": {
     "require_wake": true,
     "verify": true,

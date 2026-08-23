@@ -211,6 +211,27 @@ class BrowserController:
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "reason": "type_failed", "error": str(e)}
 
+    _ALLOWED_KEYS = {"Enter", "Control+Enter"}
+
+    def press(self, combo: str) -> dict:
+        """Press ONE allow-listed keyboard combo on the open page -- only the keys
+        that SEND a composed message ('Control+Enter' for Gmail, 'Enter' for
+        WhatsApp). This is deliberately not a general keystroke channel: an
+        untrusted transcript can't drive arbitrary typing through it, and it is
+        only ever reached from an owner-confirmed send."""
+        if combo not in self._ALLOWED_KEYS:
+            return {"ok": False, "reason": "key_not_allowed",
+                    "error": f"{combo!r} is not an allowed key"}
+        if not self.available():
+            return self._not_ready()
+        try:
+            page = self._ensure_page()
+            page.keyboard.press(combo)
+            page.wait_for_timeout(1200)
+            return {"ok": True, "pressed": combo, "url": page.url}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "reason": "press_failed", "error": str(e)}
+
     def close(self) -> None:
         for obj in (self._ctx, self._pw):
             try:

@@ -14,8 +14,10 @@ never unattended.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Optional
+from urllib.parse import quote
 
 log = logging.getLogger("friday.web.accounts")
 
@@ -93,3 +95,71 @@ _LOGGED_OUT_HINTS = (
 def _looks_logged_out(text: str, title: str) -> bool:
     blob = (text + " " + title).lower()
     return any(h in blob for h in _LOGGED_OUT_HINTS)
+
+
+# ── acting: draft, then SEND only on the owner's explicit confirm ────────────────────
+# Composing pre-fills a real draft in her browser (visible to you) and NEVER
+# sends; sending is a separate call the conversation layer makes only after you
+# say "send it". Deep links (Gmail cm / WhatsApp send) are used over brittle DOM
+# clicking so the draft lands reliably.
+
+def _contacts() -> dict:
+    """name(lower) -> {"email":.., "phone":..} from friday_config.json (optional).
+    Voice can't spell an address or reel off a number, so the owner maps the
+    people FRIDAY may contact once, by name. Best-effort; empty if unset."""
+    import json
+    from pathlib import Path
+    try:
+        root = Path(__file__).resolve().parents[2]
+        cfg = json.loads((root / "friday_config.json").read_text(encoding="utf-8"))
+        return {str(k).lower(): v for k, v in (cfg.get("contacts") or {}).items()
+                if isinstance(v, dict)}
+    except (OSError, ValueError):
+        return {}
+
+
+def resolve_contact(name: str, kind: str) -> Optional[str]:
+    """Resolve a spoken recipient to an email address or phone number (kind =
+    "email" | "phone"). Looks up the contacts map first, then accepts a value the
+    owner spoke literally (an address with '@', or a 7+ digit number). None means
+    'I don't know who that is' — the caller must refuse rather than guess."""
+    q = (name or "").strip().strip(".?!")
+    if not q:
+        return None
+    contact = _contacts().get(q.lower())
+    if contact and contact.get(kind):
+        return str(contact[kind])
+    if kind == "email" and "@" in q and "." in q.split("@")[-1]:
+        return q.replace(" ", "")
+    if kind == "phone":
+        digits = re.sub(r"\D", "", q)
+        if len(digits) >= 7:
+            return digits
+    return None
+
+
+def compose_email(to: str, subject: str, body: str) -> dict:
+    """Open a Gmail compose window PRE-FILLED with to/subject/body. Does NOT send."""
+    url = ("https://mail.google.com/mail/?view=cm&fs=1"
+           f"&to={quote(to or '')}&su={quote(subject or '')}&body={quote(body or '')}")
+    from core.web.browser import get_browser
+    r = get_browser().open(url)
+    r["account"] = "Gmail"
+    return r
+
+
+def compose_whatsapp(phone: str, text: str) -> dict:
+    """Open a WhatsApp Web chat with `phone`, message PRE-FILLED. Does NOT send."""
+    url = f"https://web.whatsapp.com/send?phone={quote(phone or '')}&text={quote(text or '')}"
+    from core.web.browser import get_browser
+    r = get_browser().open(url)
+    r["account"] = "WhatsApp"
+    return r
+
+
+def send_open_draft(account: str) -> dict:
+    """Send the draft currently open in her browser — Gmail with Ctrl+Enter,
+    WhatsApp with Enter. Called ONLY after the owner confirmed 'send it'."""
+    from core.web.browser import get_browser
+    key = "Control+Enter" if account == "Gmail" else "Enter"
+    return get_browser().press(key)
