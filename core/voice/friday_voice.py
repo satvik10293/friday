@@ -22,7 +22,7 @@ import sys
 import time
 from pathlib import Path
 
-from core.voice.friday_audio import get_temp_audio_file
+from core.voice.friday_audio import new_temp_audio_file, prune_temp_audio
 
 log = logging.getLogger("friday.voice")
 
@@ -53,7 +53,10 @@ class FridayVoice:
 
     def __init__(self, voice=None):
         self.voice = voice or _config_voice() or DEFAULT_VOICE
-        self.temp_file = get_temp_audio_file()
+        # a fresh file is chosen per utterance (see say); clear any leftovers a
+        # prior run left locked so the temp dir doesn't grow without bound
+        self.temp_file = None
+        prune_temp_audio()
 
     # ── synthesis (cloud neural voice) ────────────────────────────────────────
     def _generate(self, text: str) -> bool:
@@ -83,9 +86,14 @@ class FridayVoice:
         pygame = self._ensure_mixer()
         pygame.mixer.music.load(path)
         pygame.mixer.music.play()
-        while pygame.mixer.music.get_busy():
-            time.sleep(0.05)
-        pygame.mixer.music.unload()      # release the file handle (Windows)
+        try:
+            while pygame.mixer.music.get_busy():
+                time.sleep(0.05)
+        finally:
+            # ALWAYS release the file handle (Windows), even if a barge-in
+            # stop() or an exception ends playback early — otherwise the file
+            # stays locked and can't be cleaned up.
+            pygame.mixer.music.unload()
 
     # ── offline fallback (OS-native TTS — built in, no dependencies) ──────────
     # Windows → SAPI (System.Speech); macOS → the `say` command. Both ship with
@@ -121,21 +129,42 @@ class FridayVoice:
         if not text:
             return
         print(f"\n[Friday] {text}")
-        if self._generate(text):
-            try:
-                self._play(self.temp_file)
-                return
-            except Exception:  # noqa: BLE001 — audio device trouble → fallback
-                log.warning("playback failed", exc_info=True)
-                _degraded("voice.playback",
-                          "audio playback failed — using offline voice")
-        else:
-            _degraded("voice.tts",
-                      "edge-tts unavailable (offline?) — using offline voice")
+        # a FRESH file per utterance: never overwrite one that may still be
+        # locked (mid-play or left by a barge-in) — that collision is what made
+        # her repeat the previous line instead of speaking the new one.
+        self.temp_file = new_temp_audio_file()
+        played = False
+        try:
+            if self._generate(text):
+                try:
+                    self._play(self.temp_file)
+                    played = True
+                except Exception:  # noqa: BLE001 — audio device trouble → fallback
+                    log.warning("playback failed", exc_info=True)
+                    _degraded("voice.playback",
+                              "audio playback failed — using offline voice")
+            else:
+                _degraded("voice.tts",
+                          "edge-tts unavailable (offline?) — using offline voice")
+        finally:
+            self._cleanup(self.temp_file)
+        if played:
+            return
         if not self._speak_offline(text):
             log.error("all speech paths failed for %r — staying silent", text[:60])
             _degraded("voice", "all speech paths failed — staying silent",
                       failed=True)
+
+    @staticmethod
+    def _cleanup(path) -> None:
+        """Delete an utterance's temp file once it's played. Best-effort: a file
+        still held is left for prune_temp_audio() on the next start."""
+        if not path:
+            return
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def audio_nonempty(path: str) -> bool:
