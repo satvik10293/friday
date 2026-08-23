@@ -75,10 +75,11 @@
     "goals_per_cycle": 2
   },
   "stt": {
-    "model": "base",
+    "model": "small.en",
     "device": "cpu",
     "compute_type": "int8",
-    "language": "en"
+    "language": "en",
+    "beam_size": 5
   },
   "listening": {
     "require_wake": true,
