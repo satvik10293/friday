@@ -101,6 +101,10 @@ class BrowserController:
         launch_kw = {"headless": self.headless}
         if self.channel:
             launch_kw["channel"] = self.channel
+        # drop the "Chrome is being controlled by automated test software" infobar
+        # (it's a nag, and this is an isolated throwaway profile). Control is over
+        # CDP, so removing the flag doesn't affect anything FRIDAY does.
+        launch_kw["ignore_default_args"] = ["--enable-automation"]
         self._ctx = self._pw.chromium.launch_persistent_context(
             self.profile_dir, **launch_kw)
         self._page = (self._ctx.pages[0] if self._ctx.pages
