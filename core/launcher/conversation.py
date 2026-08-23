@@ -357,6 +357,39 @@ class ConversationBridge:
             log.debug("self model introspection failed", exc_info=True)
         return None
 
+    # ── the owner's name: answered directly, never guessed ───────────────────────
+    _MY_NAME_RE = re.compile(
+        r"\bwhat'?s my name\b|\bwhat is my name\b|\bwho am i\b|"
+        r"\b(?:do you (?:know|remember)|tell me|say)\s+my name\b|"
+        r"\bmy name\s*\?\s*$", re.I)
+    _NAME_FACT_RE = re.compile(r"\bmy name is\s+([A-Z][A-Za-z'’-]{1,30})", re.I)
+
+    def _owner_identity(self, command: str) -> Optional[tuple]:
+        """"What is my name / who am I" → the owner's name, straight from what she
+        holds: a name he told her and it was stored (core memory), else the config
+        seed. Returns (route_key, answer) or None. Never raises."""
+        q = (command or "").strip()
+        if not q or not self._MY_NAME_RE.search(q):
+            return None
+        name = self._name_from_core() or (self._owner_name or "")
+        if name:
+            return ("self_model", f"Your name is {name}.")
+        return ("self_model",
+                "I don't know your name yet — tell me and I'll remember it.")
+
+    def _name_from_core(self) -> str:
+        """The most authoritative stored name: scan core-memory facts for
+        'my name is X'. Empty string if none. Never raises."""
+        try:
+            for m in (self.core.all() or []):
+                hit = self._NAME_FACT_RE.search(
+                    (m.get("body") or "") + " " + (m.get("description") or ""))
+                if hit:
+                    return hit.group(1)
+        except Exception:  # noqa: BLE001
+            log.debug("name-from-core failed", exc_info=True)
+        return ""
+
     # ── truthful self-assessment: how independent is she, really ─────────────────
     _INDEP_RE = re.compile(
         r"\bhow (?:independent|self.?sufficient) are you\b|"
@@ -1921,6 +1954,15 @@ class ConversationBridge:
         if introspective is not None:
             return self._respond_directly(turn, "self_model", introspective, t0,
                                           command=command)
+
+        # "what is my name / who am I" — answered directly from the owner's name
+        # she holds (the name he told her and it was stored, else the config
+        # seed), never left to the general reasoner (which used to say "I don't
+        # know your name" even with the fact sitting in core memory)
+        identity = self._owner_identity(command)
+        if identity is not None:
+            key, answer = identity
+            return self._respond_directly(turn, key, answer, t0)
 
         # "are you getting smarter?" → the measured answer (DecisionLog +
         # notebook growth), never a vibe
