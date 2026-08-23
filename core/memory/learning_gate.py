@@ -50,6 +50,12 @@ _PERSONAL_RE = re.compile(
     r"\b(my name|call me|i live|my (address|birthday|phone|email|password|age)|"
     r"i (like|love|hate|prefer|enjoy)|my (favorite|favourite)|i work|my job|"
     r"my (wife|husband|mom|dad|mother|father|sister|brother|family|friend))\b", re.I)
+# a QUESTION is not a fact. "What is my name?" matches _PERSONAL_RE ("my name")
+# and used to be stored as a personal fact — polluting memory with the question
+# itself. Store the ANSWER (via an explicit "remember"), never the asking.
+_QUESTION_RE = re.compile(
+    r"\?\s*$|^\s*(what|who|whose|where|when|why|which|how|is|are|am|do|does|"
+    r"did|can|could|will|would|should|have|has)\b", re.I)
 _SMALL_TALK_RE = re.compile(
     r"^\s*(hi|hey|hello|yo|thanks?( you)?|ok(ay)?|yes|no|nice|cool|good "
     r"(morning|night|evening)|bye|goodbye|stop|never ?mind)\b[\s!.,]*$", re.I)
@@ -144,7 +150,7 @@ class LearningGate:
         elif _REMEMBER_RE.search(text):
             decision = GateDecision(store=True, reason="explicit_request",
                                     kind="personal", importance=0.9, private=True)
-        elif _PERSONAL_RE.search(text):
+        elif _PERSONAL_RE.search(text) and not _QUESTION_RE.search(text):
             decision = GateDecision(store=True, reason="personal_info",
                                     kind="personal", importance=0.8, private=True)
         elif "clarify" in route or "self_model" in route:

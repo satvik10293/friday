@@ -129,3 +129,15 @@ def test_learning_gate_explicit_remember_ignores_verify():
     d = gate.decide("remember that my dentist is Dr. Lee", "ok",
                     confidence=0.1, verified=False)
     assert d.store and d.reason == "explicit_request" and d.private
+
+
+def test_a_question_is_never_stored_as_a_personal_fact():
+    # "What is my name?" matches _PERSONAL_RE ("my name") but is a QUESTION —
+    # it must NOT become a personal fact (that once polluted core memory with
+    # the question itself). A real statement of the same fact still stores.
+    from core.memory.learning_gate import LearningGate
+    gate = LearningGate()
+    q = gate.decide("what is my name?", "Satvik", confidence=0.9)
+    assert q.reason != "personal_info"
+    stated = gate.decide("my name is Satvik", "ok", confidence=0.9)
+    assert stated.store and stated.reason == "personal_info" and stated.private
