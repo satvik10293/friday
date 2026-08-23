@@ -1003,10 +1003,21 @@ class ConversationBridge:
             return ("account.send:no_contact",
                     f"I don't have an email address for {(to_raw or '').strip()!r}. "
                     "Add them to contacts or tell me the address.")
-        if not BrowserController.available():
-            return ("account.send", "I can't drive a browser to send that yet.")
         subject = (subj_raw or "").strip() or "(no subject)"
         body = (body_raw or "").strip()
+        # Gmail goes through the API (Google blocks automation-browser login), so
+        # there's no draft window — arm a confirmed API send and read it back.
+        from core.web.gmail_api import get_gmail
+        if get_gmail().available():
+            self._arm_send({"account": "Gmail", "method": "gmail_api",
+                            "to": to, "subject": subject, "body": body})
+            return ("account.send:await_confirm",
+                    f"Ready to email {to} via Gmail -- subject '{subject}', saying: "
+                    f"{body[:160]}. Say 'send it' to send, or 'cancel'.")
+        # browser fallback (only useful if Gmail is somehow signed in there)
+        if not BrowserController.available():
+            return ("account.send", "Gmail isn't set up to send yet -- "
+                    + get_gmail().setup_hint())
         if not compose_email(to, subject, body).get("ok"):
             return ("account.send", "I couldn't open the email draft.")
         self._arm_send({"account": "Gmail", "to": to, "subject": subject,
@@ -1052,6 +1063,17 @@ class ConversationBridge:
         from core.web.accounts import send_open_draft
         from core.web.browser import get_browser
         account, who = pending["account"], pending.get("to", "")
+        # Gmail sends through the API — no browser, no page to guard
+        if pending.get("method") == "gmail_api":
+            from core.web.gmail_api import get_gmail
+            try:
+                ok = get_gmail().send(who, pending.get("subject", ""),
+                                      pending.get("body", "")).get("ok")
+            except Exception:  # noqa: BLE001
+                log.debug("gmail api send failed", exc_info=True)
+                ok = False
+            return (f"Sent your email to {who}." if ok
+                    else "I couldn't send that email just now.")
         try:
             # the shared browser page must still be ON the drafted compose — never
             # press send/Enter on whatever page happens to be focused now (it could
@@ -1097,6 +1119,10 @@ class ConversationBridge:
         if hit is None:
             return None
         label = hit[0]
+        # Gmail reads through the API (Google blocks automation-browser login), so
+        # it's handled here and works with no browser at all.
+        if label == "Gmail" and self._ACCOUNT_READ_RE.search(q):
+            return ("account:Gmail", self._read_gmail())
         try:
             from core.web.browser import BrowserController
             if not BrowserController.available():
@@ -1129,6 +1155,34 @@ class ConversationBridge:
         except Exception:  # noqa: BLE001 — an account fault never breaks the turn
             log.debug("account route failed", exc_info=True)
             return ("account:" + label, f"I ran into trouble with {label}.")
+
+    def _read_gmail(self) -> str:
+        """Read unread Gmail via the API (browser login is blocked by Google).
+        Honest setup hint when it isn't connected. Never raises."""
+        try:
+            from core.web.gmail_api import get_gmail
+            gmail = get_gmail()
+            if not gmail.available():
+                return "Gmail isn't connected yet -- " + gmail.setup_hint()
+            r = gmail.check(max_results=5)
+            if not r.get("ok"):
+                return "I couldn't reach Gmail just now."
+            return self._summarize_email(r.get("messages") or [])
+        except Exception:  # noqa: BLE001
+            log.debug("read gmail failed", exc_info=True)
+            return "I couldn't read your Gmail just now."
+
+    @staticmethod
+    def _summarize_email(messages: list) -> str:
+        if not messages:
+            return "No unread emails."
+        n = len(messages)
+        lead = f"You have {n} unread email{'s' if n != 1 else ''}. "
+        parts = []
+        for msg in messages[:5]:
+            frm = (msg.get("from") or "").split("<")[0].strip().strip('"') or "someone"
+            parts.append(f"from {frm}: {msg.get('subject') or '(no subject)'}")
+        return lead + "; ".join(parts) + "."
 
     # -- driving Chrome: owner-confirmed click on the OPEN page --------------------
     # Guardrails (2026-08-08 security review): the confirm names the EXACT text
