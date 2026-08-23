@@ -910,6 +910,66 @@ class ConversationBridge:
                 "(like *.tmp in Downloads) and I'll show you what matches before "
                 "removing anything.")
 
+    # -- her accounts (Gmail / Instagram / WhatsApp / Google): READ side ----------
+    # "open my gmail" navigates her Chrome there (you log in once); "check my
+    # email" / "any new whatsapp" opens + reads it. This is the read/navigate
+    # path only — ACTING on an account (send / post / message) is a separate,
+    # owner-confirmed flow and is deliberately NOT wired here yet.
+    _ACCOUNT_RE = re.compile(
+        r"\b(open|check|read|show|look at|any(?:\s+new)?|got any|what'?s on|"
+        r"do i have)\b[^.?!]*?\b"
+        r"(gmail|e-?mails?|inbox|instagram|insta|whatsapp|"
+        r"google calendar|calendar|google)\b", re.I)
+    _ACCOUNT_READ_RE = re.compile(
+        r"\b(check|read|show|any|got|what|do i have|look)\b", re.I)
+
+    def _check_account(self, command: str) -> Optional[tuple]:
+        """Open (and optionally read) one of the owner's signed-in accounts in
+        her browser. Returns (route_key, answer) or None. Never raises. Read-only
+        — never sends or posts. The caller passes no command= (account content is
+        personal and must not ride the conversation window to the cloud)."""
+        q = (command or "").strip()
+        m = self._ACCOUNT_RE.search(q) if q else None
+        if not m:
+            return None
+        from core.web.accounts import resolve
+        hit = resolve(m.group(2))
+        if hit is None:
+            return None
+        label = hit[0]
+        try:
+            from core.web.browser import BrowserController
+            if not BrowserController.available():
+                return ("account:" + label,
+                        "I can open that in my browser, but browser control "
+                        "isn't set up yet.")
+            if self._ACCOUNT_READ_RE.search(q):
+                from core.web.accounts import read_account
+                r = read_account(m.group(2))
+                if not r.get("ok"):
+                    return ("account:" + label, f"I couldn't open {label} just now.")
+                if not r.get("logged_in", True):
+                    return ("account:" + label,
+                            f"I opened {label}, but you're not signed in yet — log "
+                            f"into {label} once in my browser window and I'll be "
+                            "able to read it.")
+                text = " ".join(ln.strip() for ln in
+                                (r.get("text") or "").splitlines() if ln.strip())
+                if not text:
+                    return ("account:" + label,
+                            f"I opened {label} but there was nothing to read.")
+                return ("account:" + label, f"On your {label}: {text[:400]}")
+            from core.web.accounts import open_account
+            r = open_account(m.group(2))
+            if not r.get("ok"):
+                return ("account:" + label, f"I couldn't open {label} just now.")
+            return ("account:" + label,
+                    f"Opened {label} in my browser. If it asks you to sign in, "
+                    "log in once and I'll remember it from now on.")
+        except Exception:  # noqa: BLE001 — an account fault never breaks the turn
+            log.debug("account route failed", exc_info=True)
+            return ("account:" + label, f"I ran into trouble with {label}.")
+
     # -- driving Chrome: owner-confirmed click on the OPEN page --------------------
     # Guardrails (2026-08-08 security review): the confirm names the EXACT text
     # AND the site; sensitive hosts (banking/checkout/admin) are refused by voice;
@@ -1808,6 +1868,14 @@ class ConversationBridge:
         clarified = self._clarify_destructive(command)
         if clarified is not None:
             key, answer = clarified
+            return self._respond_directly(turn, key, answer, t0)
+
+        # her accounts (Gmail / Instagram / WhatsApp / Google): "open my gmail",
+        # "check my email", "any new whatsapp" — opens + reads in her browser.
+        # No command= — account content is personal and stays off the cloud window.
+        account = self._check_account(command)
+        if account is not None:
+            key, answer = account
             return self._respond_directly(turn, key, answer, t0)
 
         # driving Chrome: owner-confirmed click on the open page (guardrailed)
