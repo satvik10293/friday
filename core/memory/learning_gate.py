@@ -121,7 +121,12 @@ class LearningGate:
 
     # ── the decision ─────────────────────────────────────────────────────────────
     def decide(self, command: str, answer: str = "",
-               confidence: float = 1.0, route: tuple = ()) -> GateDecision:
+               confidence: float = 1.0, route: tuple = (),
+               verified: bool = True) -> GateDecision:
+        """`verified` is the verify gate's verdict on the answer (core/verify).
+        It withholds only the answer-quality store paths (a substantive exchange
+        or a taught fact): explicit "remember", personal info, and forget /
+        adversarial handling are the gate's own and ride through unchanged."""
         text = (command or "").strip()
 
         # adversarial refusals come first: they must win over "remember"/"forget"
@@ -158,10 +163,18 @@ class LearningGate:
             decision = GateDecision(store=False, reason="no_answer")
         elif "groq_teacher" in route:
             # taught by the temporary teacher (M30): keep only the answer, as
-            # knowledge — recalling it must never echo the question back
-            decision = GateDecision(store=True, reason="taught",
-                                    kind="knowledge", importance=0.7,
-                                    answer_only=True)
+            # knowledge — recalling it must never echo the question back. An
+            # answer that failed verification is not knowledge worth keeping.
+            if not verified:
+                decision = GateDecision(store=False, reason="unverified_answer")
+            else:
+                decision = GateDecision(store=True, reason="taught",
+                                        kind="knowledge", importance=0.7,
+                                        answer_only=True)
+        elif not verified:
+            # a substantive exchange whose answer the verify gate rejected: don't
+            # let an unverified guess become recallable memory
+            decision = GateDecision(store=False, reason="unverified_answer")
         else:
             decision = GateDecision(store=True, reason="substantive",
                                     kind="conversation", importance=0.5)

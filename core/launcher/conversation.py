@@ -186,6 +186,8 @@ class ConversationBridge:
         self._owner_name = self._get_owner_name()   # for natural small talk
         from core.memory.learning_gate import LearningGate
         self.gate = LearningGate()          # selective learning (M27)
+        from core.verify import Verifier
+        self.verifier = Verifier()          # verify gate, extracted from friday-v0
         if core_memory is not None:
             self.core = core_memory         # standing memory (M43)
         else:
@@ -239,8 +241,12 @@ class ConversationBridge:
             return self._turn
 
     def _record(self, *, turn: int, route: list, response, latency_ms: int,
-                memory_used: Optional[list] = None) -> None:
+                memory_used: Optional[list] = None, verify=None) -> None:
         try:
+            rationale = "voice turn routed through the Intelligence OS"
+            if verify is not None:                 # the verify gate's verdict
+                rationale += (f" · verify tier {verify.tier} {verify.verdict}"
+                              f" ({verify.detail})")
             self._log().log(
                 trace_id=getattr(response, "trace_id", None) or None,
                 turn_id=turn,
@@ -251,12 +257,33 @@ class ConversationBridge:
                 confidence=float(getattr(response, "confidence", 0.0) or 0.0),
                 latency_ms=latency_ms,
                 outcome=(getattr(response, "answer", "") or "")[:400],
-                rationale="voice turn routed through the Intelligence OS",
+                rationale=rationale,
                 was_autonomous=False,
                 source="voice",
             )
         except Exception:  # noqa: BLE001 — observability must not break a turn
             log.debug("decision log write failed", exc_info=True)
+
+    # ── the verify stage (friday-v0's gate) ──────────────────────────────────────
+    def _verify_answer(self, answer: str, response):
+        """Rule one verdict on the answer the chat box produced. A spoken answer
+        carries no machine-checkable criteria, so this is friday-v0's self-report
+        tier over her OWN confidence — the gate module also carries v0's objective
+        and second-model differential tiers for callers that supply criteria or a
+        checker, but the turn path stays on-device and makes no extra model call.
+        An answer she already disowns (`ok` is false) fails without a second look.
+        Never raises — a verify fault defaults to success so it can't silently
+        swallow her learning."""
+        from core.verify import VerifyResult
+        try:
+            ok = bool(getattr(response, "ok", False))
+            conf = float(getattr(response, "confidence", 0.0) or 0.0)
+            return self.verifier.verify(artifact=answer,
+                                        self_confidence=conf if ok else 0.0)
+        except Exception:  # noqa: BLE001 — verify must never break a turn
+            log.debug("verify stage failed", exc_info=True)
+            return VerifyResult(success=True, verdict="unknown", tier=0,
+                                detail="verify skipped")
 
     # ── small talk: greetings answered as herself, never parroted ────────────────
     @staticmethod
@@ -1928,17 +1955,27 @@ class ConversationBridge:
             if ended_weak and not self._is_personal(command):
                 self._note_gap(command)
 
+        answer = getattr(response, "answer", "") or ""
+
+        # (friday-v0) VERIFY STAGE — after the chat box, rule ONE verdict on the
+        # answer before it is trusted enough to be saved. The gate returns a
+        # single result contract (success true/false + tier + detail). It runs
+        # on-device only: it never speaks and never calls out — a failed verdict
+        # simply withholds learning, it does not change what she says.
+        verdict = self._verify_answer(answer, response)
+        route.append("verify:" + verdict.verdict)
+
         self._record(turn=turn, route=route, response=response,
                      latency_ms=int((time.perf_counter() - t0) * 1000),
-                     memory_used=memory_used)
+                     memory_used=memory_used, verify=verdict)
 
         # selective learning: the gate decides what (if anything) becomes memory —
-        # explicit requests + personal info stored (private, local), noise dropped
-        answer = getattr(response, "answer", "") or ""
+        # explicit requests + personal info stored (private, local), noise dropped;
+        # an unverified answer is withheld from the substantive/taught store paths.
         decision = self.gate.decide(
             command, answer,
             confidence=float(getattr(response, "confidence", 0.0) or 0.0),
-            route=tuple(route))
+            route=tuple(route), verified=verdict.success)
         self.gate.apply(self.memory, decision, command, answer, core=self.core)
 
         if getattr(response, "ok", False):
