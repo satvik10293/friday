@@ -374,22 +374,49 @@ class NeuralTrainer:
     are saved. Perplexity is the growth curve. Never raises."""
 
     def __init__(self, tokenizer, knowledge=None, *, core: Optional[NeuralCore] = None,
-                 steps_per_cycle: int = 150, max_seconds: float = 45.0) -> None:
+                 steps_per_cycle: int = 150, max_seconds: float = 45.0,
+                 d_model: int = 144, n_layers: int = 3, n_ctx: int = 96) -> None:
         self.tokenizer = tokenizer
         self.knowledge = knowledge
         self.core = core
         self.steps_per_cycle = int(steps_per_cycle)
         self.max_seconds = float(max_seconds)
+        # The target architecture (grown to ~1M params at the full vocab, M64).
+        # Threaded from the `neural` config block so the owner can scale her.
+        self.d_model = int(d_model)
+        self.n_layers = int(n_layers)
+        self.n_ctx = int(n_ctx)
         self.cycles = 0
         self.last_report: dict = {}
+
+    def _new_core(self) -> NeuralCore:
+        return NeuralCore(self.tokenizer.size, d_model=self.d_model,
+                          n_layers=self.n_layers, n_ctx=self.n_ctx)
+
+    def _matches_target(self, core: NeuralCore) -> bool:
+        """A saved brain is only reusable if BOTH its vocabulary and its
+        architecture match the target — a bigger d_model/n_layers/n_ctx (or a
+        retrained tokenizer) means the old weights don't fit, so a new brain is
+        born rather than crashing on a shape mismatch."""
+        return (core.vocab_size == self.tokenizer.size
+                and core.d == self.d_model
+                and len(core.blocks) == self.n_layers
+                and core.n_ctx == self.n_ctx)
 
     def _ensure_core(self) -> Optional[NeuralCore]:
         if self.core is not None:
             return self.core
-        self.core = NeuralCore.load() or NeuralCore(self.tokenizer.size)
-        if self.core.vocab_size != self.tokenizer.size:
-            # vocabulary changed (retrained tokenizer) → a new brain begins
-            self.core = NeuralCore(self.tokenizer.size)
+        loaded = NeuralCore.load()
+        if loaded is not None and self._matches_target(loaded):
+            self.core = loaded
+        else:
+            # first boot, retrained tokenizer, or a resize → a new brain begins
+            if loaded is not None:
+                log.info("neural: architecture/vocab changed "
+                         "(%s→d%d/l%d/c%d/v%d) — starting a fresh brain",
+                         "loaded" if loaded else "none", self.d_model,
+                         self.n_layers, self.n_ctx, self.tokenizer.size)
+            self.core = self._new_core()
         return self.core
 
     def _corpus_ids(self) -> list:

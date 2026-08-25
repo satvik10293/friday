@@ -35,8 +35,16 @@ data/core_memory/
 data/distiller_queue.json
 data/curiosity_state.json
 data/neural_brain.json
+data/neural_brain.npz
 data/tokenizer.json
 core/world_data/
+# Vision runtime artifacts — machine-local (YOLO weights, self-signed cert,
+# vendored socket.io, tunnel URL). The remembered-object CATALOG is kept: it's
+# small and meant to sync across machines.
+data/vision/*
+!data/vision/object_catalog.json
+# Rendered simulation images (regenerable on demand)
+data/simulations/
 # Migration framework backups (M10) — regenerable snapshots
 **/migration_backups/
 # Vendored JS libs (M10/M11 UI) — re-download to vendor, never bloat Git

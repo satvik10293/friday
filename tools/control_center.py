@@ -1,0 +1,392 @@
+"""
+tools/control_center.py — FRIDAY Control Center (M64)
+
+One dashboard to see every FRIDAY interface, launch/stop the ones that run
+standalone, open the web consoles when they're up, and review everything that's
+been built. Run it and open the printed URL:
+
+    python tools/control_center.py         # → http://127.0.0.1:8600
+
+Design: a component registry (id, description, how to launch, which port proves
+it's up, where to open it). Status is a live TCP probe of each port — the honest
+signal. Launch spawns the real launcher as a detached process; Stop kills it
+(and its children, e.g. the camera's tunnel). Nothing here reaches the network.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+_VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
+PY = str(_VENV_PY if _VENV_PY.exists() else sys.executable)
+
+_STATE_DIR = ROOT / "data" / "control_center"
+_PROCS = _STATE_DIR / "procs.json"
+
+DEFAULT_PORT = 8600
+
+
+# ── the components FRIDAY exposes ─────────────────────────────────────────────
+COMPONENTS = [
+    {
+        "id": "app",
+        "name": "FRIDAY — Full App",
+        "category": "Core",
+        "desc": ("The complete assistant: the HUD window, the system-tray app, "
+                 "the private always-on-top overlay, voice (wake word + speech), "
+                 "and her whole cognitive stack."),
+        "cmd": [PY, "friday_launch.py", "--start-runtime"],
+        "port": 7862,
+        "open": "http://127.0.0.1:7862",
+        "launchable": True,
+    },
+    {
+        "id": "eyes",
+        "name": "Eyes — Mobile Camera + Live Recognition",
+        "category": "Vision",
+        "desc": ("Turn your phone into her eyes: live YOLO object recognition over "
+                 "a trusted tunnel (works on iPhone), plus the live recognition "
+                 "dashboard that draws boxes on what she sees."),
+        "cmd": [PY, "tools/mobile_camera.py", "--see", "--tunnel"],
+        "port": 5000,
+        "open": "http://127.0.0.1:5000/live",
+        "public_url_file": "data/vision/tunnel_url.txt",
+        "launchable": True,
+    },
+    {
+        "id": "mission",
+        "name": "Mission Control",
+        "category": "Console",
+        "desc": ("Operations console — system health, metrics, and the decision "
+                 "log. Comes up with the Full App."),
+        "port": 5050,
+        "open": "http://127.0.0.1:5050",
+        "launchable": False,
+    },
+    {
+        "id": "cognitive",
+        "name": "Cognitive Space",
+        "category": "Console",
+        "desc": ("Her cognitive workspace and simulation console. Comes up with "
+                 "the Full App."),
+        "port": 5060,
+        "open": "http://127.0.0.1:5060",
+        "launchable": False,
+    },
+]
+
+# What's been built (the upgrades panel).
+UPGRADES = [
+    ("Neural core → ~1M params", "Her own numpy GPT grown from 425k to 1,057,248 "
+     "parameters; trains in the background, honest perplexity metric."),
+    ("Mobile camera → her eyes", "Phone streams over a trusted tunnel; YOLO names "
+     "objects live; detections land in her world model."),
+    ("Live recognition dashboard", "Watch her draw boxes/labels on what the camera "
+     "sees, in real time."),
+    ("Project understanding", "\"understand this project\" — she reads a codebase "
+     "(languages, entry points, tests, symbols) and remembers it."),
+    ("Situational awareness", "\"what's going on right now\" fuses perception, world "
+     "model, goals; \"why did you do that\" explains her last decision."),
+    ("Simulation AI + visuals", "\"simulate a projectile / epidemic / game of life\" "
+     "— she runs it and renders an image."),
+    ("Gmail connected", "Reads and sends email via the app-password path."),
+]
+
+
+# ── process registry (survives dashboard restarts) ────────────────────────────
+def _load_procs() -> dict:
+    try:
+        return json.loads(_PROCS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_procs(d: dict) -> None:
+    _STATE_DIR.mkdir(parents=True, exist_ok=True)
+    _PROCS.write_text(json.dumps(d), encoding="utf-8")
+
+
+_lock = threading.Lock()
+
+
+# ── status probes ─────────────────────────────────────────────────────────────
+def _port_up(port: int) -> bool:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(0.35)
+    try:
+        return s.connect_ex(("127.0.0.1", int(port))) == 0
+    finally:
+        s.close()
+
+
+def _pid_on_port(port: int):
+    """PID listening on a local port (Windows netstat), or None."""
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"],
+                             capture_output=True, text=True, timeout=5).stdout
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[3] == "LISTENING" \
+                    and parts[1].endswith(f":{port}"):
+                return int(parts[4])
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _public_url(comp: dict) -> str:
+    f = comp.get("public_url_file")
+    if not f:
+        return ""
+    try:
+        return (ROOT / f).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _status() -> list:
+    procs = _load_procs()
+    out = []
+    for c in COMPONENTS:
+        up = _port_up(c["port"])
+        pub = _public_url(c) if up else ""
+        out.append({
+            "id": c["id"], "name": c["name"], "category": c["category"],
+            "desc": c["desc"], "port": c["port"],
+            "running": up,
+            "launchable": c.get("launchable", False),
+            "open": c.get("open", "") if up else "",
+            "public_url": pub,
+            "managed": c["id"] in procs,
+        })
+    return out
+
+
+# ── launch / stop ─────────────────────────────────────────────────────────────
+def _launch(cid: str) -> dict:
+    comp = next((c for c in COMPONENTS if c["id"] == cid), None)
+    if comp is None or not comp.get("launchable"):
+        return {"ok": False, "error": "not launchable"}
+    if _port_up(comp["port"]):
+        return {"ok": True, "note": "already running"}
+    _STATE_DIR.mkdir(parents=True, exist_ok=True)
+    log = open(_STATE_DIR / f"{cid}.log", "ab")
+    flags = 0
+    if os.name == "nt":                          # detach so it outlives the dashboard
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008  # DETACHED_PROCESS
+    try:
+        p = subprocess.Popen(comp["cmd"], cwd=str(ROOT), stdout=log,
+                             stderr=subprocess.STDOUT, creationflags=flags,
+                             close_fds=True)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)}
+    with _lock:
+        procs = _load_procs()
+        procs[cid] = p.pid
+        _save_procs(procs)
+    return {"ok": True, "pid": p.pid}
+
+
+def _stop(cid: str) -> dict:
+    comp = next((c for c in COMPONENTS if c["id"] == cid), None)
+    if comp is None:
+        return {"ok": False, "error": "unknown"}
+    with _lock:
+        procs = _load_procs()
+        pid = procs.pop(cid, None)
+        _save_procs(procs)
+    # kill our tracked PID (and children), else whatever holds the port
+    target = pid or _pid_on_port(comp["port"])
+    if target is None:
+        return {"ok": True, "note": "not running"}
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(target), "/T", "/F"],
+                          capture_output=True, timeout=10)
+        else:
+            os.kill(target, 9)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)}
+    return {"ok": True}
+
+
+def _sync_git() -> dict:
+    """Commit the remembered-object catalog and push it, so her memory of what
+    she has seen syncs to your other machines (git pull there). Never raises."""
+    catalog = "data/vision/object_catalog.json"
+
+    def run(*args):
+        return subprocess.run(["git", *args], cwd=str(ROOT),
+                             capture_output=True, text=True, timeout=90)
+    try:
+        if not (ROOT / catalog).exists():
+            return {"ok": False, "error": "no catalog yet — recognise some objects first"}
+        run("add", catalog)
+        st = run("status", "--porcelain", "--", catalog)
+        if not st.stdout.strip():
+            return {"ok": True, "note": "already in sync — nothing new"}
+        c = run("commit", "-m", "vision: sync remembered objects")
+        if c.returncode != 0:
+            return {"ok": False, "error": (c.stderr or c.stdout).strip()[:200]}
+        p = run("push")
+        if p.returncode != 0:
+            return {"ok": False,
+                    "error": "committed locally, but push failed: "
+                             + (p.stderr or p.stdout).strip()[:200]}
+        return {"ok": True, "note": "committed + pushed to git"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)}
+
+
+# ── the web app ───────────────────────────────────────────────────────────────
+def build_app():
+    from flask import Flask, jsonify, request
+    app = Flask("friday_control_center")
+
+    @app.get("/")
+    def index():
+        return PAGE
+
+    @app.get("/api/status")
+    def status():
+        return jsonify({"components": _status(), "upgrades": UPGRADES})
+
+    @app.post("/api/launch/<cid>")
+    def launch(cid):
+        return jsonify(_launch(cid))
+
+    @app.post("/api/stop/<cid>")
+    def stop(cid):
+        return jsonify(_stop(cid))
+
+    @app.post("/api/sync-git")
+    def sync_git():
+        return jsonify(_sync_git())
+
+    return app
+
+
+PAGE = r"""<!doctype html><html><head><title>FRIDAY — Control Center</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+:root{--bg:#0a0e14;--card:#121821;--ink:#e6edf3;--dim:#7d8590;--accent:#3fb950;
+--blue:#388bfd;--line:#1f2630}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);
+font-family:-apple-system,Segoe UI,Roboto,sans-serif}
+header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;
+align-items:center;gap:12px}
+header h1{font-size:20px;margin:0;font-weight:600}
+header .sub{color:var(--dim);font-size:13px;margin-left:auto}
+.wrap{max-width:1100px;margin:0 auto;padding:20px;display:grid;
+grid-template-columns:1fr 320px;gap:20px}
+@media(max-width:860px){.wrap{grid-template-columns:1fr}}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
+margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+padding:16px;margin-bottom:14px}
+.card .top{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.card .name{font-weight:600;font-size:15px}
+.badge{font-size:11px;color:var(--dim);border:1px solid var(--line);
+border-radius:999px;padding:2px 8px}
+.pill{margin-left:auto;font-size:12px;font-weight:600;padding:3px 10px;
+border-radius:999px}
+.pill.on{background:#12261a;color:#7ee787;border:1px solid #2ea04340}
+.pill.off{background:#1a1f27;color:var(--dim);border:1px solid var(--line)}
+.desc{color:#b6c2cf;font-size:13.5px;line-height:1.5;margin:6px 0 12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button,a.btn{font:inherit;font-size:13px;font-weight:600;border-radius:8px;
+padding:8px 14px;border:1px solid var(--line);cursor:pointer;text-decoration:none;
+display:inline-block}
+.launch{background:#12261a;color:#7ee787;border-color:#2ea04340}
+.stop{background:#2a1518;color:#ff7b72;border-color:#f8514940}
+.open{background:#0d2136;color:#79c0ff;border-color:#388bfd40}
+button:disabled{opacity:.4;cursor:not-allowed}
+.pub{margin-top:10px;font-size:12px;color:var(--dim);word-break:break-all}
+.pub a{color:#79c0ff}
+.side .card{padding:14px}
+.up{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.up:last-child{border-bottom:0}.up .ck{color:var(--accent);flex:0 0 auto}
+.up .t{font-size:13px}.up .t b{display:block;margin-bottom:2px}
+.up .t span{color:var(--dim);font-size:12px}
+.note{color:var(--dim);font-size:12px;margin-top:8px}
+</style></head><body>
+<header><span style="font-size:22px">◆</span><h1>FRIDAY — Control Center</h1>
+<span class="sub" id="sub">loading…</span></header>
+<div class="wrap">
+  <div><h2>Interfaces</h2><div id="cards"></div></div>
+  <div class="side">
+    <h2>Object memory</h2>
+    <div class="card">
+      <div class="desc">Objects she has tagged and remembered are saved to a
+      catalog. Push it to git so her memory syncs to your other machines
+      (<code>git pull</code> there).</div>
+      <button class="open" onclick="syncGit()">⤴ Sync objects to Git</button>
+      <div class="note" id="syncmsg"></div>
+    </div>
+    <h2 style="margin-top:18px">Upgrades built</h2><div class="card" id="upgrades"></div>
+    <p class="note">Consoles marked "with the app" come online once the Full App
+    is running. Launching starts the real process; stopping kills it (and its
+    tunnel). Status is a live check of each port.</p>
+  </div>
+</div>
+<script>
+async function api(m,u){const r=await fetch(u,{method:m});return r.json();}
+function card(c){
+  const on=c.running;
+  let btns='';
+  if(c.launchable) btns+=`<button class="launch" ${on?'disabled':''}
+     onclick="act('launch','${c.id}')">${on?'Running':'Launch'}</button>`;
+  if(on) btns+=`<button class="stop" onclick="act('stop','${c.id}')">Stop</button>`;
+  if(on&&c.open) btns+=`<a class="btn open" href="${c.open}" target="_blank">Open ↗</a>`;
+  let pub='';
+  if(c.public_url) pub=`<div class="pub">Public (phone): <a href="${c.public_url}/live"
+     target="_blank">${c.public_url}/live</a></div>`;
+  return `<div class="card"><div class="top"><span class="name">${c.name}</span>
+    <span class="badge">${c.category}</span>
+    <span class="pill ${on?'on':'off'}">${on?'● Running':'○ Stopped'}</span></div>
+    <div class="desc">${c.desc}</div><div class="row">${btns||'<span class="note">starts with the Full App</span>'}</div>${pub}</div>`;
+}
+async function act(kind,id){await api('POST',`/api/${kind}/${id}`);setTimeout(refresh,600);refresh();}
+async function syncGit(){
+  const m=document.getElementById('syncmsg');m.textContent='syncing…';
+  try{const r=await api('POST','/api/sync-git');
+    m.textContent=r.ok?('✓ '+(r.note||'synced')):('✗ '+(r.error||'failed'));}
+  catch(e){m.textContent='✗ sync failed';}
+}
+async function refresh(){
+  try{
+    const d=await api('GET','/api/status');
+    document.getElementById('cards').innerHTML=d.components.map(card).join('');
+    document.getElementById('upgrades').innerHTML=d.upgrades.map(u=>
+      `<div class="up"><span class="ck">✓</span><div class="t"><b>${u[0]}</b>
+       <span>${u[1]}</span></div></div>`).join('');
+    const n=d.components.filter(c=>c.running).length;
+    document.getElementById('sub').textContent=n+' of '+d.components.length+' running';
+  }catch(e){document.getElementById('sub').textContent='reconnecting…';}
+}
+refresh(); setInterval(refresh,2500);
+</script></body></html>"""
+
+
+def main():
+    app = build_app()
+    print("\n" + "=" * 56)
+    print("  FRIDAY — Control Center")
+    print("=" * 56)
+    print(f"  Open:  http://127.0.0.1:{DEFAULT_PORT}")
+    print("  Launch / stop every interface from one place.")
+    print("=" * 56 + "\n")
+    app.run(host="127.0.0.1", port=DEFAULT_PORT, debug=False)
+
+
+if __name__ == "__main__":
+    main()

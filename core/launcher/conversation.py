@@ -774,6 +774,156 @@ class ConversationBridge:
                 log.debug("local screen comprehension failed", exc_info=True)
         return None
 
+    # ── understand a project: she goes into the code (M64) ───────────────────────
+    _PROJECT_RE = re.compile(
+        r"\b(?:understand|analy[sz]e|explore|explain|onboard|review|study|"
+        r"go through|go into|look through|help me with|get familiar with|"
+        r"get up to speed on|make sense of|what(?:'s| is| does))\b.{0,30}?"
+        r"\b(?:project|code ?base|repo(?:sitory)?|source ?code|this code)\b", re.I)
+    _PROJECT_WHERE_RE = re.compile(
+        r"\b(?:where(?:'s| is| are)?|find|locate|which file (?:has|defines|contains))\b"
+        r".{0,30}?\b(?:function|class|method|def(?:inition)?|code for)\b\s*"
+        r"[`\"']?([A-Za-z_][A-Za-z0-9_]*)", re.I)
+
+    def _project_path(self, command: str) -> str:
+        """Pull an explicit project path out of the command, else the cwd."""
+        from pathlib import Path
+        m = re.search(r'["\']([^"\']+)["\']', command)
+        if m and ("/" in m.group(1) or "\\" in m.group(1) or Path(m.group(1)).exists()):
+            return m.group(1)
+        m = re.search(r'\b(?:at|in|under|folder|directory|path)\s+'
+                      r'([A-Za-z]:\\[^\s"\']+|/[^\s"\']+|\.[\\/][^\s"\']+)', command)
+        if m:
+            return m.group(1)
+        m = re.search(r'([A-Za-z]:\\[^\s"\']+)', command)     # bare Windows path
+        if m:
+            return m.group(1)
+        return "."
+
+    def _understand_project(self, command: str) -> Optional[tuple]:
+        """She reads a project folder and explains it — languages, how to run it,
+        the main parts, tests — then remembers it (World Model + core memory) so
+        she can help. A follow-up like 'where is the class NeuralCore' is answered
+        from the symbol index of the project she last read. Returns (key, answer)
+        or None. Never raises."""
+        q = command or ""
+        # follow-up symbol lookup over the last project she read
+        where = self._PROJECT_WHERE_RE.search(q)
+        last = getattr(self, "_last_project_understanding", None)
+        if where and last is not None:
+            try:
+                from core.comprehension.project import find_symbol
+                name = where.group(1)
+                hits = find_symbol(last, name)
+                if hits:
+                    rel, sym = hits[0]
+                    more = f" (and {len(hits) - 1} more)" if len(hits) > 1 else ""
+                    return ("project:symbol", f"{sym} is defined in {rel}{more}.")
+                return ("project:symbol",
+                        f"I don't see {name} defined in {last.name}.")
+            except Exception:  # noqa: BLE001
+                log.debug("project symbol lookup failed", exc_info=True)
+                return None
+        if not self._PROJECT_RE.search(q):
+            return None
+        try:
+            from core.comprehension.project import understand_project
+            result = understand_project(
+                self._project_path(q),
+                world_model=getattr(self, "world_model", None),
+            )
+            if result.get("ok"):
+                self._last_project_understanding = result["understanding"]
+            return ("project", result["summary"])
+        except Exception:  # noqa: BLE001 — comprehension must never break a turn
+            log.debug("project understanding failed", exc_info=True)
+            return None
+
+    # ── situational awareness + self-explanation (M64) ───────────────────────────
+    _SITUATION_RE = re.compile(
+        r"\b(?:what'?s|what is)\s+(?:going on|happening|the situation)\b"
+        r"|\bsit ?rep\b|\bsituation(?:al)? (?:report|update)\b|\bstatus report\b"
+        r"|\b(?:brief|catch) me (?:up|in)\b"
+        r"|\bwhat (?:are you aware of|do you (?:see|know|sense) (?:right now|currently))\b"
+        r"|\bwhat'?s the (?:situation|status)\b", re.I)
+    _WHY_RE = re.compile(
+        r"\bwhy did you (?:do|say|answer|choose|pick|decide|go with)\b"
+        r"|\bexplain (?:your|that) (?:reasoning|decision|answer|thinking|choice)\b"
+        r"|\bhow did you (?:get|arrive at|come up with|reach) (?:that|it)\b"
+        r"|\bwhat made you (?:do|say|choose) that\b", re.I)
+
+    def _situation_report(self, command: str) -> Optional[tuple]:
+        """'What's going on right now' — narrate the fused picture (perception +
+        World Model + goals + what she just did). Returns (key, answer) or None."""
+        if not self._SITUATION_RE.search(command or ""):
+            return None
+        try:
+            from core.awareness.situation import describe_situation
+            proj = getattr(self, "_last_project_understanding", None)
+            text = describe_situation(
+                goals=self.goals, decision_log=self._log(),
+                self_model=self.self_model,
+                project=(proj.name if proj is not None else None))
+            return ("situation", text)
+        except Exception:  # noqa: BLE001 — awareness must never break a turn
+            log.debug("situation report failed", exc_info=True)
+            return None
+
+    def _explain_decision(self, command: str) -> Optional[tuple]:
+        """'Why did you do that?' — explain her last decision from the log in
+        plain words. Returns (key, answer) or None."""
+        if not self._WHY_RE.search(command or ""):
+            return None
+        try:
+            from core.awareness.situation import explain_last_decision
+            return ("why", explain_last_decision(self._log()))
+        except Exception:  # noqa: BLE001
+            log.debug("explain decision failed", exc_info=True)
+            return None
+
+    # ── simulation AI with visual output (M64) ───────────────────────────────────
+    _SIMULATE_RE = re.compile(
+        r"\bsimulat(?:e|ion|ing)\b"
+        r"|\brun a (?:sim|simulation)\b"
+        r"|\b(?:show|give|render|draw) me (?:a |an )?(?:visual|simulation|animation)\b"
+        r"|\bvisuali[sz]e\b"
+        r"|\b(?:plot|graph)\b.{0,20}\b(?:of|y\s*=|function|curve)\b"
+        r"|\by\s*=\s*[a-z0-9(]", re.I)
+    _SIM_LIST_RE = re.compile(
+        r"\bwhat (?:can|kind of).{0,20}\bsimulat", re.I)
+
+    def _simulate(self, command: str) -> Optional[tuple]:
+        """'Simulate X' / 'show me a simulation of X' — she picks the simulation,
+        runs it on-device, renders an image, and opens it for you. Returns
+        (key, answer) or None. Never raises."""
+        q = command or ""
+        if self._SIM_LIST_RE.search(q):
+            try:
+                from core.simulation.visual.sims import list_sims
+                opts = ", ".join(s["name"].replace("_", " ") for s in list_sims())
+                return ("simulation", f"I can simulate: {opts}. And any y = f(x) "
+                        "you want plotted. Just say 'simulate ...'.")
+            except Exception:  # noqa: BLE001
+                return None
+        if not self._SIMULATE_RE.search(q):
+            return None
+        try:
+            from core.simulation.visual.ai import SimulationAI, open_images
+            out = SimulationAI(reasoner=self.reasoner).simulate(q)
+            if out.get("images"):
+                self._last_sim = out
+                opened = open_images(out["images"])
+                is_gif = str(out["images"][0]).lower().endswith(".gif")
+                if opened:
+                    tail = f" I've opened the {'animation' if is_gif else 'image'} for you."
+                else:
+                    tail = f" It's saved at {out['images'][0]}."
+                return ("simulation", out["summary"] + tail)
+            return ("simulation", out["summary"])
+        except Exception:  # noqa: BLE001 — a simulation must never break a turn
+            log.debug("simulation failed", exc_info=True)
+            return None
+
     # ── show / hide herself from screen capture (the private overlay, M51) ───────
     _SHOW_SELF_RE = re.compile(
         r"\b(show yourself|show your ?self|make yourself visible|reveal yourself|"
@@ -2130,6 +2280,36 @@ class ConversationBridge:
             key, answer = seen
             self._screen_reads += 1
             return self._respond_directly(turn, key, answer, t0, command=command)
+
+        # she goes into a project and understands it (M64): "understand this
+        # project", "analyze the codebase at C:\path", "where is the class X".
+        # Runs on-device (reads files locally); nothing goes to the cloud window.
+        project = self._understand_project(command)
+        if project is not None:
+            key, answer = project
+            return self._respond_directly(turn, key, answer, t0)
+
+        # situational awareness (M64): "what's going on right now" — she narrates
+        # the fused picture from perception + World Model + goals + recent actions.
+        situ = self._situation_report(command)
+        if situ is not None:
+            key, answer = situ
+            return self._respond_directly(turn, key, answer, t0)
+
+        # self-explanation (M64): "why did you do that" — she reads her own
+        # decision log and explains, in plain words, how she got there.
+        why = self._explain_decision(command)
+        if why is not None:
+            key, answer = why
+            return self._respond_directly(turn, key, answer, t0)
+
+        # simulation AI (M64): "simulate a projectile at 30 m/s", "show me a
+        # logistic growth curve", "simulate game of life" — she runs it and
+        # opens the rendered image/animation. All on-device.
+        sim = self._simulate(command)
+        if sim is not None:
+            key, answer = sim
+            return self._respond_directly(turn, key, answer, t0)
 
         # the command gate (M59.1): an imperative no route matched is STILL a
         # command — approval-refuse or honestly decline; never essay about it

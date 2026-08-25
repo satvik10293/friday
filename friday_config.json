@@ -67,7 +67,10 @@
     "enabled": true,
     "train_s": 900.0,
     "steps_per_cycle": 150,
-    "max_seconds": 45.0
+    "max_seconds": 45.0,
+    "d_model": 144,
+    "n_layers": 3,
+    "n_ctx": 96
   },
   "agentic": {
     "enabled": true,

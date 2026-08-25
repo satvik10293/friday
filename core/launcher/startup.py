@@ -572,7 +572,10 @@ class StartupSequence:
                     neural = NeuralTrainer(
                         get_tokenizer(knowledge), knowledge,
                         steps_per_cycle=int(nc.get("steps_per_cycle", 150)),
-                        max_seconds=float(nc.get("max_seconds", 45.0)))
+                        max_seconds=float(nc.get("max_seconds", 45.0)),
+                        d_model=int(nc.get("d_model", 144)),
+                        n_layers=int(nc.get("n_layers", 3)),
+                        n_ctx=int(nc.get("n_ctx", 96)))
                     runtime = self.components.get("runtime")
                     if runtime is not None and self.start_runtime \
                             and hasattr(runtime, "schedule"):

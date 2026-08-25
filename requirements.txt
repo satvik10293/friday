@@ -40,6 +40,7 @@ opencv-python
 # ── Web UI ───────────────────────────────────────────────────────────
 flask
 flask-cors
+flask-socketio   # phone-camera ingress (tools/mobile_camera.py, core/vision transport)
 pywebview
 
 # Desktop window (native HUD) + gesture control (webcam hand tracking, pinch volume)
