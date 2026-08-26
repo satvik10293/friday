@@ -21,6 +21,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -272,6 +273,15 @@ def build_app():
     def sync_git():
         return jsonify(_sync_git())
 
+    @app.post("/api/open")
+    def open_url():
+        import webbrowser
+        url = (request.get_json(silent=True) or {}).get("url", "")
+        if url.startswith(("http://127.0.0.1", "http://localhost")):
+            webbrowser.open(url)          # open a local console in the real browser
+            return jsonify({"ok": True})
+        return jsonify({"ok": False, "error": "only local consoles"})
+
     return app
 
 
@@ -311,7 +321,7 @@ display:inline-block}
 .open{background:#0d2136;color:#79c0ff;border-color:#388bfd40}
 button:disabled{opacity:.4;cursor:not-allowed}
 .pub{margin-top:10px;font-size:12px;color:var(--dim);word-break:break-all}
-.pub a{color:#79c0ff}
+.pub a{color:#79c0ff}.pub .sel{user-select:all;color:#79c0ff}
 .side .card{padding:14px}
 .up{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
 .up:last-child{border-bottom:0}.up .ck{color:var(--accent);flex:0 0 auto}
@@ -346,10 +356,9 @@ function card(c){
   if(c.launchable) btns+=`<button class="launch" ${on?'disabled':''}
      onclick="act('launch','${c.id}')">${on?'Running':'Launch'}</button>`;
   if(on) btns+=`<button class="stop" onclick="act('stop','${c.id}')">Stop</button>`;
-  if(on&&c.open) btns+=`<a class="btn open" href="${c.open}" target="_blank">Open ↗</a>`;
+  if(on&&c.open) btns+=`<button class="open" onclick="openUrl('${c.open}')">Open ↗</button>`;
   let pub='';
-  if(c.public_url) pub=`<div class="pub">Public (phone): <a href="${c.public_url}/live"
-     target="_blank">${c.public_url}/live</a></div>`;
+  if(c.public_url) pub=`<div class="pub">On your phone, open: <b class="sel">${c.public_url}</b></div>`;
   return `<div class="card"><div class="top"><span class="name">${c.name}</span>
     <span class="badge">${c.category}</span>
     <span class="pill ${on?'on':'off'}">${on?'● Running':'○ Stopped'}</span></div>
@@ -361,6 +370,11 @@ async function syncGit(){
   try{const r=await api('POST','/api/sync-git');
     m.textContent=r.ok?('✓ '+(r.note||'synced')):('✗ '+(r.error||'failed'));}
   catch(e){m.textContent='✗ sync failed';}
+}
+async function openUrl(u){
+  try{await fetch('/api/open',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u})});}
+  catch(e){}
 }
 async function refresh(){
   try{
@@ -377,16 +391,65 @@ refresh(); setInterval(refresh,2500);
 </script></body></html>"""
 
 
-def main():
+def _wait_up(port: int, timeout: float = 8.0) -> bool:
+    end = time.time() + timeout
+    while time.time() < end:
+        if _port_up(port):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _serve_background(port: int) -> None:
+    app = build_app()
+    threading.Thread(
+        target=lambda: app.run(host="127.0.0.1", port=port, debug=False,
+                               use_reloader=False, threaded=True),
+        daemon=True, name="control-center-flask").start()
+
+
+def main(argv=None) -> int:
+    import argparse
+    ap = argparse.ArgumentParser(description="FRIDAY Control Center")
+    ap.add_argument("--web", action="store_true",
+                    help="serve in the browser instead of a native desktop window")
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    args = ap.parse_args(argv)
+
+    # Default: a NATIVE desktop window (not a browser tab) — the backend runs on
+    # a background thread and pywebview (WebView2 on Windows) shows it in a real
+    # window, matching the rest of FRIDAY's UI.
+    if not args.web:
+        try:
+            import webview
+        except Exception:  # noqa: BLE001
+            webview = None
+        if webview is not None:
+            _serve_background(args.port)
+            if _wait_up(args.port):
+                print(f"[control_center] opening the desktop window "
+                      f"(backend on 127.0.0.1:{args.port})")
+                webview.create_window("FRIDAY — Control Center",
+                                      f"http://127.0.0.1:{args.port}/",
+                                      width=1180, height=840, min_size=(900, 640),
+                                      background_color="#0a0e14")
+                webview.start()             # blocks until the window is closed
+                return 0
+            print("[control_center] backend didn't start; falling back to browser")
+        else:
+            print("[control_center] pywebview not available; serving in the browser")
+
+    # --web / fallback: plain local server
     app = build_app()
     print("\n" + "=" * 56)
     print("  FRIDAY — Control Center")
     print("=" * 56)
-    print(f"  Open:  http://127.0.0.1:{DEFAULT_PORT}")
+    print(f"  Open:  http://127.0.0.1:{args.port}")
     print("  Launch / stop every interface from one place.")
     print("=" * 56 + "\n")
-    app.run(host="127.0.0.1", port=DEFAULT_PORT, debug=False)
+    app.run(host="127.0.0.1", port=args.port, debug=False)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
