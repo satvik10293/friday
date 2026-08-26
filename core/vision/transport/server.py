@@ -300,6 +300,23 @@ class VisionTransportServer:
             cat = get_object_catalog()
             return jsonify({"objects": cat.all(), "count": cat.count()})
 
+        @app.post("/live/enroll")
+        def _live_enroll():  # pragma: no cover - "remember this face as X"
+            from flask import jsonify, request as _rq
+            from core.vision.memory.face_memory import get_face_gallery
+            name = ((_rq.get_json(silent=True) or {}).get("name") or "").strip()
+            if not name:
+                return jsonify({"ok": False, "error": "name required"})
+            get_face_gallery().request_enroll(name)   # eyes loop grabs the next face
+            return jsonify({"ok": True, "queued": name})
+
+        @app.get("/live/faces.json")
+        def _live_faces():  # pragma: no cover - who she has learned
+            from flask import jsonify
+            from core.vision.memory.face_memory import get_face_gallery
+            g = get_face_gallery()
+            return jsonify({"faces": g.all(), "count": g.count()})
+
         @socketio.on("register")
         def _register(payload):  # pragma: no cover - needs socket clients
             token = (payload or {}).get("token") or request.sid

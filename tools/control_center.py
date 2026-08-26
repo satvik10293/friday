@@ -361,11 +361,32 @@ def build_app():
         try:
             o = json.load(urllib.request.urlopen(base + "objects.json", timeout=2))
             c = json.load(urllib.request.urlopen(base + "catalog.json", timeout=2))
+            try:
+                f = json.load(urllib.request.urlopen(base + "faces.json", timeout=2))
+            except Exception:  # noqa: BLE001
+                f = {}
             return jsonify({"running": True, "objects": o.get("objects", []),
-                            "frames": o.get("frames", 0),
-                            "catalog": c.get("objects", []), "count": c.get("count", 0)})
+                            "frames": o.get("frames", 0), "events": o.get("events", []),
+                            "catalog": c.get("objects", []), "count": c.get("count", 0),
+                            "faces": f.get("faces", []), "faces_count": f.get("count", 0)})
         except Exception:  # noqa: BLE001 — eyes down = just say so
-            return jsonify({"running": False, "objects": [], "catalog": [], "count": 0})
+            return jsonify({"running": False, "objects": [], "catalog": [], "count": 0,
+                            "faces": [], "faces_count": 0})
+
+    @app.post("/api/enroll")
+    def enroll():
+        import urllib.request
+        name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        if not name:
+            return jsonify({"ok": False, "error": "name required"})
+        try:
+            req = urllib.request.Request(
+                "http://127.0.0.1:5000/live/enroll",
+                data=json.dumps({"name": name}).encode(),
+                headers={"Content-Type": "application/json"})
+            return jsonify(json.load(urllib.request.urlopen(req, timeout=4)))
+        except Exception:  # noqa: BLE001
+            return jsonify({"ok": False, "error": "eyes not running — launch Eyes first"})
 
     @app.post("/api/launch/<cid>")
     def launch(cid):
@@ -455,6 +476,8 @@ color:var(--ink);padding:10px 12px;font:inherit;font-size:14px;outline:none}
 overflow:hidden;min-height:200px;display:flex;align-items:center;justify-content:center}
 .feedbox img{width:100%;display:block}
 .feedhint{position:absolute;color:var(--dim);font-size:13px;padding:24px;text-align:center}
+.alerts{margin-top:8px;display:flex;flex-direction:column;gap:3px}
+.alert{font-size:12px;color:#d29922}
 </style></head><body>
 <header><span style="font-size:22px">◆</span><h1>FRIDAY — Control Center</h1>
 <span class="sub" id="sub">loading…</span></header>
@@ -481,6 +504,13 @@ overflow:hidden;min-height:200px;display:flex;align-items:center;justify-content
         open the phone URL and point it at things — the recognised feed shows here.</div>
       </div>
       <div class="chips" id="eyenow" style="margin-top:10px"></div>
+      <div class="alerts" id="eyealerts"></div>
+      <div class="inputrow" style="margin-top:10px">
+        <input id="facename" placeholder="Name someone in view to learn their face…"
+          autocomplete="off" onkeydown="if(event.key==='Enter')enrollFace()"/>
+        <button class="open" onclick="enrollFace()">Learn face</button>
+      </div>
+      <div class="note" id="facemsg"></div>
     </div>
     <h2 style="margin-top:18px">Interfaces</h2><div id="cards"></div>
   </div>
@@ -559,7 +589,15 @@ async function send(){
     wait.remove();
     if(r.status==='ok'){const meta=r.strategy+' · '+r.confidence+
       (r.models&&r.models!=='-'?(' · '+r.models):'');
-      addMsg('f',r.answer||'(no answer)',meta);}
+      addMsg('f',r.answer||'(no answer)',meta);
+      if(r.strategy==='vision'&&eyesRunning){
+        const m=document.createElement('div');m.className='msg f';
+        m.innerHTML='<img src="http://127.0.0.1:5000/live/frame.jpg?t='+Date.now()+
+          '" style="width:100%;border-radius:8px;display:block"/>';
+        const box=document.getElementById('msgs');box.appendChild(m);
+        box.scrollTop=box.scrollHeight;
+      }
+    }
     else addMsg('f','(couldn\'t answer: '+(r.error||'unavailable')+')');
   }catch(e){wait.remove();addMsg('f','(error reaching my brain)');}
   busy=false;
@@ -581,12 +619,23 @@ async function pollEyes(){
         '<span class="chip'+(l==='person'?' person':'')+'">'+esc(l)+
         (n>1?'<span class="c">×'+n+'</span>':'')+'</span>').join('')
         :'<span class="empty">nothing in view</span>';
-      stat.textContent=d.count?(d.count+' remembered'):'';
+      stat.textContent=(d.count?(d.count+' objects'):'')+
+        (d.faces_count?(' · '+d.faces_count+' faces known'):'');
+      document.getElementById('eyealerts').innerHTML=(d.events||[]).map(e=>
+        '<div class="alert">• '+esc(e.text)+'</div>').join('');
     }else{
       eyesRunning=false;img.removeAttribute('src');hint.style.display='block';
-      now.innerHTML='';stat.textContent='';
+      now.innerHTML='';stat.textContent='';document.getElementById('eyealerts').innerHTML='';
     }
   }catch(e){}
+}
+async function enrollFace(){
+  const el=document.getElementById('facename'),n=el.value.trim();if(!n)return;
+  const m=document.getElementById('facemsg');
+  const r=await pj('/api/enroll',{name:n});
+  m.textContent=r.ok?('Learning '+n+' — hold their face clearly in view for a moment.')
+    :('✗ '+(r.error||'failed'));
+  if(r.ok)el.value='';
 }
 setInterval(()=>{if(eyesRunning)
   document.getElementById('eyecam').src='http://127.0.0.1:5000/live/frame.jpg?t='+Date.now();},140);

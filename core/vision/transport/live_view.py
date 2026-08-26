@@ -21,6 +21,7 @@ class LiveView:
         self._objects: list = []
         self._ts = 0.0
         self._frames = 0
+        self._events: list = []          # proactive alerts (newest last)
 
     def update(self, jpeg: bytes, objects: list) -> None:
         with self._lock:
@@ -29,6 +30,12 @@ class LiveView:
             self._ts = time.time()
             self._frames += 1
 
+    def add_event(self, text: str, kind: str = "info") -> None:
+        """Record a notable thing she noticed (a new object, someone appearing)."""
+        with self._lock:
+            self._events.append({"ts": time.time(), "text": str(text), "kind": kind})
+            self._events = self._events[-40:]
+
     def frame(self) -> bytes:
         with self._lock:
             return self._jpeg
@@ -36,7 +43,8 @@ class LiveView:
     def state(self) -> dict:
         with self._lock:
             return {"objects": list(self._objects), "ts": self._ts,
-                    "frames": self._frames, "has_frame": bool(self._jpeg)}
+                    "frames": self._frames, "has_frame": bool(self._jpeg),
+                    "events": list(reversed(self._events[-8:]))}
 
 
 _live: LiveView | None = None

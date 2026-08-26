@@ -929,6 +929,55 @@ class ConversationBridge:
         except Exception:  # noqa: BLE001
             return []
 
+    _SEEN_X_RE = re.compile(
+        r"\b(?:when did (?:you|i) last see|when(?:'?s| was) the last time you saw|"
+        r"have you seen my|did you see my|have you seen the|seen my)\s+"
+        r"(?:a |an |the |any )?([a-z][a-z ]{1,28})", re.I)
+
+    @staticmethod
+    def _time_ago(ts: float) -> str:
+        import time
+        s = max(0.0, time.time() - float(ts or 0))
+        if s < 45:
+            return "just now"
+        if s < 3600:
+            m = max(1, int(round(s / 60)))
+            return f"about {m} minute{'s' if m != 1 else ''} ago"
+        if s < 86400:
+            h = int(round(s / 3600))
+            return f"about {h} hour{'s' if h != 1 else ''} ago"
+        d = int(s / 86400)
+        return f"about {d} day{'s' if d != 1 else ''} ago"
+
+    def _when_last_seen(self, command: str) -> Optional[tuple]:
+        """'When did you last see my laptop?' — answered from the object catalog's
+        timestamps. Returns (key, answer) or None. Never raises."""
+        m = self._SEEN_X_RE.search(command or "")
+        if not m:
+            return None
+        try:
+            query = m.group(1).strip().lower().rstrip("?.!").strip()
+            from core.vision.memory.object_catalog import get_object_catalog
+            cat = get_object_catalog().all()
+            last_word = query.split()[-1] if query.split() else query
+            match = None
+            for o in cat:
+                lab = (o.get("label") or "").lower()
+                if lab and (lab == query or lab == last_word
+                            or lab in query or query in lab):
+                    match = o
+                    break
+            if match:
+                ago = self._time_ago(match.get("last_seen", 0))
+                n = int(match.get("sightings", 1))
+                return ("vision", f"I last saw a {match['label']} {ago} — I've "
+                        f"spotted it {n} time{'s' if n != 1 else ''} through my camera.")
+            return ("vision", f"I haven't seen {query} through my camera — I can only "
+                    "recall things I've actually had my eyes on.")
+        except Exception:  # noqa: BLE001
+            log.debug("when-last-seen failed", exc_info=True)
+            return None
+
     def _what_do_you_see(self, command: str) -> Optional[tuple]:
         """Answer from her eyes: what the camera sees now, else what she has
         recognised + remembered. Returns (key, answer) or None. Never raises."""
@@ -2380,6 +2429,12 @@ class ConversationBridge:
         seen_now = self._what_do_you_see(command)
         if seen_now is not None:
             key, answer = seen_now
+            return self._respond_directly(turn, key, answer, t0)
+
+        # temporal object memory (M64): "when did you last see my laptop?"
+        last_seen = self._when_last_seen(command)
+        if last_seen is not None:
+            key, answer = last_seen
             return self._respond_directly(turn, key, answer, t0)
 
         # simulation AI (M64): "simulate a projectile at 30 m/s", "show me a

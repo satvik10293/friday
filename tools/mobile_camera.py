@@ -94,13 +94,15 @@ def main(argv=None) -> int:
         yolo = Path(__file__).resolve().parents[1] / "data" / "vision" / "yolov8n.pt"
         if yolo.exists():
             cfg.processing = ProcessingConfig(
-                enabled=["scene_stats", "objects", "tracking"],
+                enabled=["scene_stats", "objects", "face", "face_recognition",
+                         "tracking"],
                 object_backend="ultralytics", object_model_path=str(yolo),
                 object_confidence=0.35)
-            print("  [vision] object detection: YOLO (naming objects)")
+            print("  [vision] object detection: YOLO + face memory")
         else:
             cfg.processing = ProcessingConfig(
-                enabled=["scene_stats", "motion", "face", "tracking"])
+                enabled=["scene_stats", "motion", "face", "face_recognition",
+                         "tracking"])
             print("  [vision] object detection: off (scene / motion / faces only)")
         vision = VisionSystem(config=cfg)
         transport = vision.transport
@@ -230,16 +232,29 @@ def _eyes_loop(vision, stop) -> None:
     from core.world.world_model import WorldModel
     from core.vision.transport.live_view import get_live_view
     from core.vision.memory.object_catalog import get_object_catalog
+    from core.vision.memory.face_memory import get_face_gallery, simple_embedding
     world = WorldModel()
     live = get_live_view()
     catalog = get_object_catalog()
+    faces = get_face_gallery()
     try:
         vision.warmup()              # load YOLO up front so the first frame isn't slow
+    except Exception:                # noqa: BLE001
+        pass
+    # wire the face recognizer with our no-install embedder + the saved gallery,
+    # so enrolled people are named live.
+    frproc = None
+    try:
+        for _p in vision.pipeline.processors():
+            if getattr(_p, "name", "") == "face_recognition":
+                _p.set_embedder(simple_embedding, gallery=faces.vectors(), threshold=0.86)
+                frproc = _p
     except Exception:                # noqa: BLE001
         pass
     font = cv2.FONT_HERSHEY_SIMPLEX
     last_desc = ""
     last_sync = 0.0
+    last_person = 0.0
     while not stop.is_set():
         try:
             cam_ids = vision.transport.manager.camera_ids()
@@ -288,19 +303,57 @@ def _eyes_loop(vision, stop) -> None:
                     if desc != last_desc:
                         print(f"  \N{EYE} she sees: {desc}")
                         last_desc = desc
+                    # learn a face on request: capture the biggest face in view now
+                    pend = faces.take_pending()
+                    if pend:
+                        fb = None
+                        for d in result.detections():
+                            if getattr(d, "kind", "") == "face" and getattr(d, "bbox", None):
+                                if fb is None or d.bbox.w * d.bbox.h > fb.w * fb.h:
+                                    fb = d.bbox
+                        if fb is not None:
+                            crop = frame.data[max(0, fb.y):fb.y + fb.h,
+                                              max(0, fb.x):fb.x + fb.w]
+                            vec = simple_embedding(crop)
+                            faces.enroll(pend, vec)
+                            if frproc is not None:
+                                frproc.enroll(pend, vec)
+                            live.add_event(f"Learned {pend}'s face", "new")
+                            print(f"     \N{PENCIL} learned {pend}'s face")
+                        else:
+                            faces.request_enroll(pend)   # re-queue until a face is in view
+                            live.add_event(f"To learn {pend}: put a face in view", "info")
+
+                    # proactive: someone appearing (after a gap) is worth flagging —
+                    # by name if she recognises them
+                    named = [o["label"] for o in objs
+                             if o["kind"] in ("face", "person")
+                             and o["label"] not in ("person", "face", "motion_region")]
+                    person_now = named or any(
+                        o["kind"] in ("face", "person") or o["label"] == "person"
+                        for o in objs)
+                    if person_now and (now - last_person > 12):
+                        who = named[0] if named else "Someone"
+                        live.add_event(f"{who} appeared in view", "person")
+                        print(f"     \N{WAVING HAND SIGN} {who} appeared")
+                    if person_now:
+                        last_person = now
                     for o in objs:
                         label = o["label"]
                         if label == "motion_region":
                             continue
-                        # tag + remember once (deduped, debounced sightings)
                         res = catalog.observe(label, o["confidence"], o["kind"])
                         if res == "new":
                             print(f"     \N{PENCIL} tagged a new object: {label}")
-                        # keep the world model in sync (also deduped by name)
+                            live.add_event(f"New: {label}", "new")
+                        # keep the world model in sync — by NAME when recognised
                         if o["kind"] in ("face", "person") or label == "person":
-                            world.observe("person", "person (seen on camera)",
-                                          state={"source": "camera",
-                                                 "last_seen": frame.timestamp})
+                            is_named = label not in ("person", "face")
+                            if is_named:
+                                faces.note_seen(label)
+                            world.observe(
+                                "person", label if is_named else "person (seen on camera)",
+                                state={"source": "camera", "last_seen": frame.timestamp})
                         else:
                             world.observe("visual_object", label,
                                           state={"source": "camera", "label": label,
