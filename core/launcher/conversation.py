@@ -881,6 +881,78 @@ class ConversationBridge:
             log.debug("explain decision failed", exc_info=True)
             return None
 
+    # ── vision-aware conversation: "what do you see?" (M64) ───────────────────────
+    _WHAT_SEE_RE = re.compile(
+        r"\bwhat (?:do|can) you see\b|\bwhat are you (?:looking at|seeing)\b"
+        r"|\bwhat(?:'?s| is) (?:in front of (?:you|me)|around (?:me|us)|"
+        r"on (?:the |your )?camera)\b"
+        r"|\bdescribe what you (?:see|can see)\b", re.I)
+
+    @staticmethod
+    def _nl_list(labels: list) -> str:
+        def art(w):
+            return ("an " if w[:1].lower() in "aeiou" else "a ") + w
+        items = [art(str(l)) for l in labels]
+        if len(items) == 1:
+            return items[0]
+        if len(items) == 2:
+            return items[0] + " and " + items[1]
+        return ", ".join(items[:-1]) + ", and " + items[-1]
+
+    @staticmethod
+    def _live_camera_state() -> tuple:
+        """(camera_up, [labels she sees right now]) from the live vision server."""
+        try:
+            import json as _json
+            import urllib.request
+            d = _json.load(urllib.request.urlopen(
+                "http://127.0.0.1:5000/live/objects.json", timeout=1.0))
+            seen = []
+            for o in d.get("objects", []):
+                lab = o.get("label")
+                if lab and lab != "motion_region" and lab not in seen:
+                    seen.append(lab)
+            return bool(d.get("has_frame")), seen[:8]
+        except Exception:  # noqa: BLE001
+            return False, []
+
+    @staticmethod
+    def _remembered_objects() -> list:
+        try:
+            from core.vision.memory.object_catalog import get_object_catalog
+            labels = []
+            for o in get_object_catalog().all():
+                lab = o.get("label")
+                if lab and lab not in labels:
+                    labels.append(lab)
+            return labels[:10]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _what_do_you_see(self, command: str) -> Optional[tuple]:
+        """Answer from her eyes: what the camera sees now, else what she has
+        recognised + remembered. Returns (key, answer) or None. Never raises."""
+        if not self._WHAT_SEE_RE.search(command or ""):
+            return None
+        try:
+            up, now = self._live_camera_state()
+            if now:
+                return ("vision", "Right now I can see " + self._nl_list(now) + ".")
+            remembered = self._remembered_objects()
+            if up:
+                tail = (" Earlier I recognised " + self._nl_list(remembered) + ".") \
+                    if remembered else ""
+                return ("vision", "My camera's on, but nothing distinct is in view "
+                        "this moment." + tail)
+            if remembered:
+                return ("vision", "My camera's off right now, but through it I've "
+                        "recognised " + self._nl_list(remembered) + ".")
+            return ("vision", "My eyes are off right now — start the camera and I'll "
+                    "tell you exactly what I see.")
+        except Exception:  # noqa: BLE001 — vision answer must never break a turn
+            log.debug("what-do-you-see failed", exc_info=True)
+            return None
+
     # ── simulation AI with visual output (M64) ───────────────────────────────────
     _SIMULATE_RE = re.compile(
         r"\bsimulat(?:e|ion|ing)\b"
@@ -2301,6 +2373,13 @@ class ConversationBridge:
         why = self._explain_decision(command)
         if why is not None:
             key, answer = why
+            return self._respond_directly(turn, key, answer, t0)
+
+        # vision-aware (M64): "what do you see" — answers from her live camera and
+        # the objects she has recognised + remembered (works by voice or chat).
+        seen_now = self._what_do_you_see(command)
+        if seen_now is not None:
+            key, answer = seen_now
             return self._respond_directly(turn, key, answer, t0)
 
         # simulation AI (M64): "simulate a projectile at 30 m/s", "show me a

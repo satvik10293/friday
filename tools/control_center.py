@@ -353,6 +353,20 @@ def build_app():
     def brain():
         return jsonify(_brain_status())
 
+    @app.get("/api/eyes")
+    def eyes():
+        # proxy the live vision detections + catalog (server-side, no CORS issue)
+        import urllib.request
+        base = "http://127.0.0.1:5000/live/"
+        try:
+            o = json.load(urllib.request.urlopen(base + "objects.json", timeout=2))
+            c = json.load(urllib.request.urlopen(base + "catalog.json", timeout=2))
+            return jsonify({"running": True, "objects": o.get("objects", []),
+                            "frames": o.get("frames", 0),
+                            "catalog": c.get("objects", []), "count": c.get("count", 0)})
+        except Exception:  # noqa: BLE001 — eyes down = just say so
+            return jsonify({"running": False, "objects": [], "catalog": [], "count": 0})
+
     @app.post("/api/launch/<cid>")
     def launch(cid):
         return jsonify(_launch(cid))
@@ -437,6 +451,10 @@ color:var(--ink);padding:10px 12px;font:inherit;font-size:14px;outline:none}
 .cap{display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--line)}
 .cap:last-child{border-bottom:0}.cap .i{color:var(--blue);flex:0 0 auto}
 .cap b{display:block;font-size:13px}.cap span{color:var(--dim);font-size:12px}
+.feedbox{position:relative;background:#000;border:1px solid var(--line);border-radius:10px;
+overflow:hidden;min-height:200px;display:flex;align-items:center;justify-content:center}
+.feedbox img{width:100%;display:block}
+.feedhint{position:absolute;color:var(--dim);font-size:13px;padding:24px;text-align:center}
 </style></head><body>
 <header><span style="font-size:22px">◆</span><h1>FRIDAY — Control Center</h1>
 <span class="sub" id="sub">loading…</span></header>
@@ -455,6 +473,14 @@ color:var(--ink);padding:10px 12px;font:inherit;font-size:14px;outline:none}
           onkeydown="if(event.key==='Enter')send()"/>
         <button class="send" onclick="send()">Send</button>
       </div>
+    </div>
+    <h2 style="margin-top:18px">Live camera <span id="eyestat" class="badge"></span></h2>
+    <div class="card">
+      <div class="feedbox"><img id="eyecam" alt=""/>
+        <div class="feedhint" id="feedhint">Eyes are off. Launch “Eyes” below, then
+        open the phone URL and point it at things — the recognised feed shows here.</div>
+      </div>
+      <div class="chips" id="eyenow" style="margin-top:10px"></div>
     </div>
     <h2 style="margin-top:18px">Interfaces</h2><div id="cards"></div>
   </div>
@@ -541,6 +567,30 @@ async function send(){
 function fillSend(t){document.getElementById('q').value=t;send();}
 document.getElementById('qa').innerHTML=
   QA.map(q=>'<button onclick="fillSend(this.textContent)">'+esc(q)+'</button>').join('');
+// ── embedded live camera ──────────────────────────────────────────────────
+let eyesRunning=false;
+async function pollEyes(){
+  try{
+    const d=await gj('/api/eyes');
+    const img=document.getElementById('eyecam'),hint=document.getElementById('feedhint'),
+      now=document.getElementById('eyenow'),stat=document.getElementById('eyestat');
+    if(d.running){
+      eyesRunning=true;hint.style.display='none';
+      const counts={};(d.objects||[]).forEach(o=>counts[o.label]=(counts[o.label]||0)+1);
+      now.innerHTML=Object.keys(counts).length?Object.entries(counts).map(([l,n])=>
+        '<span class="chip'+(l==='person'?' person':'')+'">'+esc(l)+
+        (n>1?'<span class="c">×'+n+'</span>':'')+'</span>').join('')
+        :'<span class="empty">nothing in view</span>';
+      stat.textContent=d.count?(d.count+' remembered'):'';
+    }else{
+      eyesRunning=false;img.removeAttribute('src');hint.style.display='block';
+      now.innerHTML='';stat.textContent='';
+    }
+  }catch(e){}
+}
+setInterval(()=>{if(eyesRunning)
+  document.getElementById('eyecam').src='http://127.0.0.1:5000/live/frame.jpg?t='+Date.now();},140);
+setInterval(pollEyes,700);pollEyes();
 async function refresh(){
   try{
     const d=await api('GET','/api/status');
