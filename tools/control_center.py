@@ -102,6 +102,88 @@ UPGRADES = [
     ("Gmail connected", "Reads and sends email via the app-password path."),
 ]
 
+# Everything she can do — reachable from the chat box below (talk to her real
+# brain), or by voice in the Full App.
+CAPABILITIES = [
+    ("Converse & reason", "Ask anything — she reasons, does exact math, logic, "
+     "dates, units, and cites her sources."),
+    ("Simulate + visualise", "\"simulate a projectile / epidemic / game of life\" "
+     "or \"plot y = sin(x)\" — she runs it and renders an image."),
+    ("Understand a project", "\"understand this project\" — reads a codebase and "
+     "answers \"where is class X\"."),
+    ("Situational awareness", "\"what's going on right now\" and \"why did you do "
+     "that\" — she narrates and explains herself."),
+    ("See (vision)", "Recognises objects through your phone camera; tags and "
+     "remembers them."),
+    ("Read your screen", "\"read my screen\" — on-device OCR, understood not recited."),
+    ("Remember", "People, projects, facts, and standing core memories."),
+    ("Act (skills)", "37 governed actions — open apps, control the system, "
+     "with a confirm gate."),
+    ("Home control", "Lights, TV, plugs via Home Assistant."),
+    ("Web & email", "Drives Chrome, web search, reads/sends Gmail."),
+    ("Autonomous goals", "Proposes and pursues her own goals (you approve)."),
+    ("Brain society", "\"ask the trading brain / memory brain …\" — 12 addressable "
+     "brains."),
+    ("Keeps learning", "Her own neural core trains in the background; curiosity "
+     "engine studies while idle."),
+]
+
+# ── her brain (lazy boot, shared) ─────────────────────────────────────────────
+_brain = {"bridge": None, "booting": False, "error": None}
+_brain_lock = threading.Lock()
+
+
+def _boot_brain() -> None:
+    with _brain_lock:
+        if _brain["bridge"] is not None or _brain["booting"]:
+            return
+        _brain["booting"], _brain["error"] = True, None
+
+    def _work():
+        try:
+            import importlib.util
+            dp = ROOT / ".claude" / "skills" / "run-friday" / "driver.py"
+            spec = importlib.util.spec_from_file_location("friday_driver", str(dp))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            bridge, _report = mod.build_bridge(use_teacher=True)
+            with _brain_lock:
+                _brain["bridge"] = bridge
+        except Exception as e:  # noqa: BLE001
+            with _brain_lock:
+                _brain["error"] = str(e)[:300]
+        finally:
+            with _brain_lock:
+                _brain["booting"] = False
+
+    threading.Thread(target=_work, daemon=True, name="cc-brain-boot").start()
+
+
+def _brain_status() -> dict:
+    with _brain_lock:
+        return {"ready": _brain["bridge"] is not None,
+                "booting": _brain["booting"], "error": _brain["error"]}
+
+
+def _ask(message: str) -> dict:
+    message = (message or "").strip()
+    if not message:
+        return {"status": "error", "error": "empty"}
+    with _brain_lock:
+        bridge = _brain["bridge"]
+        err = _brain["error"]
+    if bridge is None:
+        _boot_brain()
+        return {"status": "booting", "error": err}
+    try:
+        r = bridge.think(message)
+        return {"status": "ok", "answer": getattr(r, "answer", "") or "",
+                "strategy": getattr(r, "strategy", "?"),
+                "confidence": round(float(getattr(r, "confidence", 0) or 0), 2),
+                "models": ",".join(getattr(r, "models_used", []) or []) or "-"}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "error": str(e)[:300]}
+
 
 # ── process registry (survives dashboard restarts) ────────────────────────────
 def _load_procs() -> dict:
@@ -259,7 +341,17 @@ def build_app():
 
     @app.get("/api/status")
     def status():
-        return jsonify({"components": _status(), "upgrades": UPGRADES})
+        return jsonify({"components": _status(), "upgrades": UPGRADES,
+                        "capabilities": CAPABILITIES})
+
+    @app.post("/api/ask")
+    def ask():
+        msg = (request.get_json(silent=True) or {}).get("message", "")
+        return jsonify(_ask(msg))
+
+    @app.get("/api/brain")
+    def brain():
+        return jsonify(_brain_status())
 
     @app.post("/api/launch/<cid>")
     def launch(cid):
@@ -328,13 +420,47 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .up .t{font-size:13px}.up .t b{display:block;margin-bottom:2px}
 .up .t span{color:var(--dim);font-size:12px}
 .note{color:var(--dim);font-size:12px;margin-top:8px}
+.chat{display:flex;flex-direction:column;height:320px}
+.msgs{flex:1;overflow-y:auto;padding:2px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:86%;padding:8px 12px;border-radius:12px;font-size:13.5px;line-height:1.45;
+white-space:pre-wrap;word-wrap:break-word}
+.msg.you{align-self:flex-end;background:#12233a;color:#cfe3ff}
+.msg.f{align-self:flex-start;background:#0d1117;border:1px solid var(--line)}
+.msg .meta{display:block;color:var(--dim);font-size:11px;margin-top:5px}
+.qa{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 2px}
+.qa button{background:#0d1117;color:#b6c2cf;border:1px solid var(--line);
+border-radius:999px;padding:5px 11px;font:inherit;font-size:12px;cursor:pointer}
+.inputrow{display:flex;gap:8px;margin-top:8px}
+.inputrow input{flex:1;background:#0d1117;border:1px solid var(--line);border-radius:8px;
+color:var(--ink);padding:10px 12px;font:inherit;font-size:14px;outline:none}
+.send{background:#12261a;color:#7ee787;border:1px solid #2ea04340}
+.cap{display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--line)}
+.cap:last-child{border-bottom:0}.cap .i{color:var(--blue);flex:0 0 auto}
+.cap b{display:block;font-size:13px}.cap span{color:var(--dim);font-size:12px}
 </style></head><body>
 <header><span style="font-size:22px">◆</span><h1>FRIDAY — Control Center</h1>
 <span class="sub" id="sub">loading…</span></header>
 <div class="wrap">
-  <div><h2>Interfaces</h2><div id="cards"></div></div>
+  <div>
+    <h2>Talk to FRIDAY</h2>
+    <div class="card">
+      <div class="chat"><div class="msgs" id="msgs">
+        <div class="msg f">Ask me anything — I can reason, simulate and draw it,
+        read a project or your screen, remember things, check email, control your
+        home, and more.<span class="meta">the first message wakes my brain (~10s)</span></div>
+      </div></div>
+      <div class="qa" id="qa"></div>
+      <div class="inputrow">
+        <input id="q" placeholder="Ask FRIDAY anything…" autocomplete="off"
+          onkeydown="if(event.key==='Enter')send()"/>
+        <button class="send" onclick="send()">Send</button>
+      </div>
+    </div>
+    <h2 style="margin-top:18px">Interfaces</h2><div id="cards"></div>
+  </div>
   <div class="side">
-    <h2>Object memory</h2>
+    <h2>What she can do</h2><div class="card" id="caps"></div>
+    <h2 style="margin-top:18px">Object memory</h2>
     <div class="card">
       <div class="desc">Objects she has tagged and remembered are saved to a
       catalog. Push it to git so her memory syncs to your other machines
@@ -376,6 +502,45 @@ async function openUrl(u){
     headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u})});}
   catch(e){}
 }
+// ── chat with her real brain ──────────────────────────────────────────────
+const QA=["What's going on right now",
+  "Simulate a projectile at 30 m/s and 45 degrees",
+  "Understand this project","Read my screen",
+  "What can you simulate","Why did you do that"];
+function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+async function pj(u,b){const r=await fetch(u,{method:'POST',
+  headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json();}
+async function gj(u){const r=await fetch(u);return r.json();}
+function addMsg(who,text,meta){
+  const m=document.createElement('div');m.className='msg '+(who==='you'?'you':'f');
+  m.innerHTML=esc(text)+(meta?('<span class="meta">'+esc(meta)+'</span>'):'');
+  const box=document.getElementById('msgs');box.appendChild(m);
+  box.scrollTop=box.scrollHeight;return m;}
+let busy=false;
+async function send(){
+  if(busy)return;const inp=document.getElementById('q');const msg=inp.value.trim();
+  if(!msg)return;inp.value='';busy=true;
+  addMsg('you',msg);const wait=addMsg('f','…thinking');
+  try{
+    let r=await pj('/api/ask',{message:msg});
+    if(r.status==='booting'){
+      wait.textContent='waking my brain (~10s)…';
+      for(let i=0;i<40;i++){await sleep(1500);const s=await gj('/api/brain');
+        if(s.ready){r=await pj('/api/ask',{message:msg});break;}
+        if(s.error){r={status:'error',error:s.error};break;}}
+    }
+    wait.remove();
+    if(r.status==='ok'){const meta=r.strategy+' · '+r.confidence+
+      (r.models&&r.models!=='-'?(' · '+r.models):'');
+      addMsg('f',r.answer||'(no answer)',meta);}
+    else addMsg('f','(couldn\'t answer: '+(r.error||'unavailable')+')');
+  }catch(e){wait.remove();addMsg('f','(error reaching my brain)');}
+  busy=false;
+}
+function fillSend(t){document.getElementById('q').value=t;send();}
+document.getElementById('qa').innerHTML=
+  QA.map(q=>'<button onclick="fillSend(this.textContent)">'+esc(q)+'</button>').join('');
 async function refresh(){
   try{
     const d=await api('GET','/api/status');
@@ -383,6 +548,9 @@ async function refresh(){
     document.getElementById('upgrades').innerHTML=d.upgrades.map(u=>
       `<div class="up"><span class="ck">✓</span><div class="t"><b>${u[0]}</b>
        <span>${u[1]}</span></div></div>`).join('');
+    document.getElementById('caps').innerHTML=(d.capabilities||[]).map(c=>
+      '<div class="cap"><span class="i">◆</span><div><b>'+esc(c[0])+'</b>'+
+      '<span>'+esc(c[1])+'</span></div></div>').join('');
     const n=d.components.filter(c=>c.running).length;
     document.getElementById('sub').textContent=n+' of '+d.components.length+' running';
   }catch(e){document.getElementById('sub').textContent='reconnecting…';}
