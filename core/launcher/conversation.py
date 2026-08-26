@@ -2245,6 +2245,14 @@ class ConversationBridge:
 
     # ── the pipeline's intelligence protocol ─────────────────────────────────────
     def think(self, command: str, context: Optional[dict] = None):
+        # Beacon the live turn boundary so background work (e.g. neural training)
+        # yields to the person in front of her. Thin wrapper only — all turn logic
+        # lives in _run_turn; the public name/behaviour is unchanged.
+        from core.reasoning.activity import request_active
+        with request_active():
+            return self._run_turn(command, context)
+
+    def _run_turn(self, command: str, context: Optional[dict] = None):
         t0 = time.perf_counter()
         turn = self._next_turn()
         ctx = dict(context or {})

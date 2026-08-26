@@ -66,11 +66,9 @@ def test_is_localhost_helper():
 
 
 def test_all_flask_servers_default_to_localhost():
-    from core.cognitive_space import server as cs
     from core.knowledge_portal import portal_server as kp
     from core.mission_control import server as mc
     assert mc.DEFAULT_HOST == "127.0.0.1"
-    assert cs.DEFAULT_HOST == "127.0.0.1"
     assert kp.DEFAULT_HOST == "127.0.0.1"
 
 

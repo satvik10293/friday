@@ -29,7 +29,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -254,10 +254,15 @@ class NeuralCore:
     # ── the public surface ───────────────────────────────────────────────────────
     def train_steps(self, token_ids: list, *, steps: int = 200,
                     batch: int = 8, lr: float = 3e-4,
-                    max_seconds: float = 60.0, seed: int = 0) -> dict:
+                    max_seconds: float = 60.0, seed: int = 0,
+                    should_yield: Optional[Callable[[], bool]] = None) -> dict:
         """A bounded training burst over her corpus (token ids). Returns the
         measured before/after loss — the honest growth curve. Thread-safe;
-        never raises out."""
+        never raises out.
+
+        `should_yield`, if given, is polled each step: the moment it returns True
+        the burst stops and gives the CPU back (used to yield to a live user turn
+        — see core/reasoning/activity.py)."""
         data = np.asarray(token_ids, np.int64)
         need = self.n_ctx + 1
         if data.size < need * 2:
@@ -266,9 +271,13 @@ class NeuralCore:
         t0 = time.time()
         first = last = None
         done = 0
+        yielded = False
         with self._lock:
             for _ in range(int(steps)):
                 if time.time() - t0 > max_seconds:
+                    break
+                if should_yield is not None and should_yield():
+                    yielded = True
                     break
                 starts = rng.integers(0, data.size - need, size=batch)
                 chunk = np.stack([data[s:s + need] for s in starts])
@@ -279,7 +288,7 @@ class NeuralCore:
             self.steps_trained += done
             self.last_loss = last
         return {"trained": done, "loss_start": first, "loss": last,
-                "seconds": round(time.time() - t0, 1)}
+                "seconds": round(time.time() - t0, 1), "yielded": yielded}
 
     def perplexity(self, token_ids: list, *, samples: int = 16) -> Optional[float]:
         """Measured on held-out order (fixed stride): the honest number."""
@@ -425,11 +434,18 @@ class NeuralTrainer:
         return self.tokenizer.encode(text)
 
     def train_cycle(self) -> dict:
+        # Never start a background burst while a user turn is being handled — the
+        # live path takes priority on a CPU-only box. (A burst already running
+        # yields via should_yield below.)
+        from core.reasoning.activity import is_busy
+        if is_busy():
+            return {"trained": 0, "skipped": "request in flight"}
         try:
             core = self._ensure_core()
             ids = self._corpus_ids()
             report = core.train_steps(ids, steps=self.steps_per_cycle,
-                                      max_seconds=self.max_seconds)
+                                      max_seconds=self.max_seconds,
+                                      should_yield=is_busy)
             if report.get("trained"):
                 core.save()
                 report["perplexity"] = core.perplexity(ids)
