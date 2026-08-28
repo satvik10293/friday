@@ -8,8 +8,16 @@ from core.runtime import Runtime
 @pytest.fixture(autouse=True)
 def _isolated_core_memory(tmp_path, monkeypatch):
     """Standing memory (M43) is file-backed and singleton-accessed; re-root it
-    per test so bridge-based tests never write the real data/core_memory."""
+    per test so bridge-based tests never write the real data/core_memory.
+
+    Also point the packaged self-knowledge seed at an empty dir: every new
+    CoreMemory seeds itself from deploy/seed/core_memory/ when empty, which
+    would leak production self-knowledge (friday-identity, …) into the isolated
+    temp stores unit tests build. Tests want to start from a clean store."""
     import core.memory.core_memory as core_memory
+    empty_seed = tmp_path / "empty_seed"
+    empty_seed.mkdir()
+    monkeypatch.setattr(core_memory, "_SEED_DIR", empty_seed)
     monkeypatch.setattr(core_memory, "_instance",
                         core_memory.CoreMemory(root=tmp_path / "core_memory"))
 

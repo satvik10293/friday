@@ -73,7 +73,7 @@ def test_turn_routes_through_the_council():
     assert ios.thinks == 0                          # local team not consulted
     assert harness.calls and harness.calls[0][0].startswith("explain why")
     row = bridge._decision_log.rows[0]
-    assert row["route"] == ["cloud_reasoner"]
+    assert row["route"] == ["cloud_reasoner", "verify:pass"]
     assert row["models_used"] == ["harness:openai", "harness:gemini", "harness:groq"]
 
 

@@ -96,7 +96,7 @@ def test_substantive_questions_ask_the_cloud_first():
     assert response.strategy == "cloud_reasoner"
     assert ios.thinks == 0, "local team consulted despite a cloud answer"
     row = bridge._decision_log.rows[0]
-    assert row["route"] == ["cloud_reasoner"]
+    assert row["route"] == ["cloud_reasoner", "verify:pass"]
     assert row["models_used"] == ["groq:gpt-oss-test"]
     assert bridge.status()["cloud_turns"] == 1
 

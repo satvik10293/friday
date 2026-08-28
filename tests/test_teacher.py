@@ -110,7 +110,7 @@ def test_weak_local_answer_escalates_to_the_teacher_and_is_learned():
     assert response.confidence == 0.85
     assert teacher.asked == ["what is the capital of France?"]
     row = bridge._decision_log.rows[0]
-    assert row["route"][-1] == "groq_teacher"          # truthful independence
+    assert "groq_teacher" in row["route"]              # truthful independence
     assert row["models_used"] == ["groq:llama-test"]
     # the taught answer went through the learning gate into memory
     assert any("Paris" in m for m in memory.remembered)
