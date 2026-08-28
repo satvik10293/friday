@@ -308,5 +308,7 @@ def start_runtime(**kwargs) -> Runtime:
 
 def stop_runtime() -> None:
     global _runtime
-    if _runtime is not None:
-        _runtime.stop()
+    with _runtime_lock:
+        if _runtime is not None:
+            _runtime.stop()
+            _runtime = None      # clear the singleton so a later get_runtime() builds a fresh one
