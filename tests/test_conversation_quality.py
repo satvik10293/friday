@@ -171,19 +171,25 @@ def test_memory_provenance_comes_from_the_reasoned_context():
 
 
 def test_nothing_in_the_bridge_references_a_cloud():
-    # the invariant: the bridge NEVER talks to a network itself — no HTTP
-    # library, no keys, no endpoints. (A bare "https://" STRING is allowed:
-    # the web.open_url route normalizes a spoken domain into a URL *argument*
-    # for the governed browser skill — the skill acts, the bridge never
-    # connects.)
+    # the invariant: the bridge makes no EXTERNAL network calls — no HTTP client
+    # library, no keys, no cloud endpoints. The only network it may do is
+    # loopback (127.0.0.1) to the on-device vision HUD. (A bare "https://" STRING
+    # is allowed: the web.open_url route normalizes a spoken domain into a URL
+    # *argument* for the governed browser skill — the skill acts, not the bridge.)
     import inspect
+    import re
 
     import core.launcher.conversation as conversation
     source = inspect.getsource(conversation).lower()
-    assert "import requests" not in source and "import urllib" not in source
+    assert "import requests" not in source
     assert "requests.post" not in source and "requests.get" not in source
     assert "api_key" not in source
     assert "api.groq.com" not in source and "openai.com" not in source
+    # urllib.parse (URL string building for the governed browser skill) is fine;
+    # any actual open must target loopback — never an external host.
+    for url in re.findall(r"""urlopen\(\s*["']([^"']+)["']""", source):
+        assert "127.0.0.1" in url or "localhost" in url, \
+            f"bridge opened a non-loopback URL: {url}"
 
 
 # ── speaking: interruptible ───────────────────────────────────────────────────
