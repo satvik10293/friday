@@ -1,11 +1,23 @@
-# FRIDAY LLM routing rules — version-controlled brain architecture.
+# FRIDAY LLM routing rules — version-controlled brain architecture (descriptive).
+# NOTE: this file documents the intended routing; it is not loaded at runtime.
+# The live behaviour lives in core/intelligence (LocalReasoner + service) and
+# core/launcher/conversation.py, and every route is recorded in the M1 DecisionLog.
+#
 # Local-first: she answers from her own reasoning when confident, and only then
-# escalates through the cloud chain. Mirrors core.brain.friday_neural.
+# escalates through the cloud chain.
 routing:
   strategy: local-first
   local:
-    model: flan-t5
+    # The local reasoning brain is now Qwen2.5-3B-Instruct (GGUF via llama.cpp),
+    # behind a draft -> self-critique scaffold — see core/intelligence/local_reasoner.py
+    # (M54). It must be provisioned first:
+    #     python -m core.intelligence.local_reasoner --pull   # installs weights
+    # and needs the `llama-cpp-python` package. When absent, local answering
+    # falls back to the extractive builtin_models team + the exact deliberate
+    # reasoner, and substantive questions escalate to the cloud chain below.
+    model: qwen2.5-3b-instruct
     confidence_threshold: 0.45     # below this -> escalate to cloud
+    legacy_fallback: flan-t5       # optional HF plugin (core/intelligence/plugins/flan_t5.py); superseded
   cloud_chain:                      # tried in order until one succeeds
     - groq
     - gemini
