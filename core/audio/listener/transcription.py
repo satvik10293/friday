@@ -14,7 +14,6 @@ from typing import Optional
 
 import numpy as np
 
-from .microphone import SAMPLE_RATE
 
 
 @dataclass

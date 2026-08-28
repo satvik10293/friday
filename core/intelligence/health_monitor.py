@@ -11,7 +11,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 log = logging.getLogger("friday.intelligence.health")

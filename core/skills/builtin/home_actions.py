@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
-from typing import Any, Optional
+from typing import Any
 
 from core.skills.permissions import Permission, RiskLevel
 from core.skills.skill import Skill

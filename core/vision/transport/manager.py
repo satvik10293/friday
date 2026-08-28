@@ -20,11 +20,11 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from .adapters.base import CameraAdapter, PushAdapter
-from .camera import CameraInfo, CameraKind, CameraStatus
+from .camera import CameraInfo, CameraStatus
 from .decoder import FrameDecoder
 from .events import VisionEvent
 from .frame import Frame

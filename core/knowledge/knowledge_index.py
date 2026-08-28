@@ -16,10 +16,9 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-import numpy as np
 
 from core.memory.embedder import Embedder, HashingEmbedder
-from core.memory.index import NumpyFlatIndex, VectorIndex, build_index
+from core.memory.index import VectorIndex, build_index
 
 log = logging.getLogger("friday.knowledge.index")
 

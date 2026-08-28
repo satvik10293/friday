@@ -7,7 +7,6 @@ ranking feeds the router's model selection and Mission Control.
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from typing import Optional
 

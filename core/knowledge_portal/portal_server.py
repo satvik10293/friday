@@ -10,7 +10,6 @@ side-effect-free and dependency-light (the API/UI/graph layers don't need Flask)
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from .portal_api import PortalAPI
 from .portal_ui import render_dashboard

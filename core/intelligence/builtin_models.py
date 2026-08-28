@@ -12,7 +12,6 @@ and call pure helpers. They never touch FRIDAY's stores or services.
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from core.society import worker_tasks as wt
 from .base import BaseModel, InferenceRequest, ModelInfo, TaskType

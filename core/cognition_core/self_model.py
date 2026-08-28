@@ -9,7 +9,6 @@ a missing or failing provider yields an empty field, never an error.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from .models import SelfModelSnapshot
 

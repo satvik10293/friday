@@ -14,9 +14,8 @@ Signals come from observed conversation cues (the user asks for "more detail",
 
 from __future__ import annotations
 
-from typing import Optional
 
-from .models import CommunicationAspect, now
+from .models import CommunicationAspect
 from .store import UserModelEvent, UserModelStore
 
 _DEFAULT = 0.5

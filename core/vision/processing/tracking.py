@@ -16,7 +16,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from .base import BoundingBox, Detection, VisionProcessor
+from .base import BoundingBox, VisionProcessor
 from .pipeline import VisionPipeline
 
 

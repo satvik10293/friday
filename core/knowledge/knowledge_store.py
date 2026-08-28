@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from .knowledge_models import KnowledgeEntry, KnowledgeLink, KnowledgeStatus
+from .knowledge_models import KnowledgeEntry, KnowledgeLink
 
 log = logging.getLogger("friday.knowledge.store")
 

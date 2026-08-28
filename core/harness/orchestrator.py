@@ -30,7 +30,7 @@ import inspect
 import logging
 import re
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Optional, Protocol, Union
+from typing import Callable, Optional, Protocol, Union
 
 from .providers import (Capability, GenRequest, GenResult, ModelProvider,
                         as_capability)

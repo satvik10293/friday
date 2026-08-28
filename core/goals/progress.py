@@ -7,7 +7,6 @@ Records every change in the goal_events history table.
 from __future__ import annotations
 
 import logging
-import time
 from typing import Optional
 
 from .models import Goal, GoalStatus

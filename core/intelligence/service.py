@@ -19,7 +19,6 @@ import threading
 import time
 from typing import Optional
 
-from .base import TaskType
 from .benchmark import BenchmarkSystem
 from .cache import IntelligenceCache
 from .confidence_engine import ConfidenceEngine

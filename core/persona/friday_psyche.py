@@ -359,7 +359,6 @@ if __name__ == "__main__":
     print(f"  ✓ Full status: {status}")
 
     # Verify persistence
-    import importlib
     _state = None  # force reload
     state2 = get_state()
     assert state2.emotional.mood == Mood.CURIOUS

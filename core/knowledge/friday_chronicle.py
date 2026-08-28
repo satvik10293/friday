@@ -11,10 +11,9 @@ import time
 import atexit
 import logging
 import sqlite3
-import hashlib
 import threading
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional
 from dataclasses import dataclass
 
 log = logging.getLogger("friday.chronicle")
@@ -325,7 +324,6 @@ def _index_memory(mem_id: int, content: str) -> None:
         if not _load_embedder() or not _load_faiss():
             return
         try:
-            import numpy as np
             vec = _embed(content)
             if vec is None:
                 return
@@ -410,7 +408,6 @@ def search_neural(query: str, limit: int = 8) -> list[dict]:
             return search_keyword(query, limit=limit)
 
         try:
-            import numpy as np
             vec = _embed(query)
             if vec is None:
                 return search_keyword(query, limit=limit)

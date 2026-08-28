@@ -15,7 +15,6 @@ until a local generation is actually requested.
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 from .providers import (BaseProvider, Capability, GenRequest, GenResult,
                         make_info)

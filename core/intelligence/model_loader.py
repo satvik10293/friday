@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-from typing import Optional
 
 from .base import Model
 from .builtin_models import builtin_models

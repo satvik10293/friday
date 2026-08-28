@@ -8,7 +8,7 @@ the transcriber's own score. Surfaced to Mission Control.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 _WEIGHTS = {"signal_quality": 0.30, "language": 0.15, "wake": 0.15, "transcription": 0.40}
 

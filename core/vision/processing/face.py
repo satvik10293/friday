@@ -15,7 +15,6 @@ permanent person entity happens downstream in the Cognitive Bridge.
 
 from __future__ import annotations
 
-import importlib.util
 from typing import Callable, Optional
 
 import numpy as np

@@ -14,7 +14,6 @@ Directives 8 (roadmap Phase D) and 13 of docs/FRIDAY_5X_COGNITIVE_EVOLUTION.md.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 log = logging.getLogger("friday.self_model")
 

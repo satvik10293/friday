@@ -16,7 +16,7 @@ from typing import Optional
 
 from .bus import COORDINATOR, AgentBus
 from .models import (AgentKind, AgentRecord, AgentStatus, SubTask, Task, TaskResult,
-                     TaskStatus, WorkerResult)
+                     TaskStatus)
 from .reputation import ReputationSystem
 from .scheduler import AgentScheduler
 

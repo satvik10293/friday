@@ -17,7 +17,6 @@ import time
 import json
 import logging
 import threading
-from typing import Optional
 from pathlib import Path
 from dataclasses import dataclass, field
 

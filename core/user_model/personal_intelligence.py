@@ -15,7 +15,6 @@ purely by composition through the injected services — no M4/M8 file is modifie
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from .models import Evidence
 

@@ -13,7 +13,7 @@ import logging
 import threading
 from typing import Optional
 
-from .base import Model, ModelInfo, ModelStatus
+from .base import Model, ModelStatus
 from .store import IntelligenceStore
 
 log = logging.getLogger("friday.intelligence.registry")

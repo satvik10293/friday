@@ -14,7 +14,7 @@ from typing import Optional
 
 from .interfaces import EntityRepository
 from .matching import normalize
-from .models import Entity, now
+from .models import Entity
 
 
 class PersistentEntityRegistry:

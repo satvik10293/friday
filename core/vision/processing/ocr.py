@@ -9,7 +9,6 @@ text, so the Observation Builder can surface read text as visual evidence.
 
 from __future__ import annotations
 
-from typing import Optional
 
 import numpy as np
 

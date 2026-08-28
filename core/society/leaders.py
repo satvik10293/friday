@@ -12,7 +12,7 @@ from enum import Enum
 from typing import Optional
 
 from .models import SubTask, Task
-from .workers import WORKER_TEMPLATES, WorkerTemplate, get_template
+from .workers import WorkerTemplate, get_template
 
 
 class LeaderRole(str, Enum):

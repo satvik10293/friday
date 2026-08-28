@@ -18,7 +18,7 @@ from typing import Optional
 from .controls import SimulationControls
 from .director import SimulationDirector
 from .engine import SimulationEngine
-from .models import Scenario, Simulation, SimulationType
+from .models import Simulation, SimulationType
 from .scenario import ScenarioBuilder
 from .timeline import Timeline
 

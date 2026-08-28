@@ -13,7 +13,6 @@ they're not. Additive — no M1–M8 file is modified.
 from __future__ import annotations
 
 import uuid
-from typing import Optional
 
 from .models import UserContextPackage
 

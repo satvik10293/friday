@@ -6,10 +6,7 @@ Modifies how every downstream module responds.
 Friday doesn't just hear the words — she hears what's behind them.
 """
 
-import re
-import time
 import logging
-from typing import Optional
 from dataclasses import dataclass, field
 
 log = logging.getLogger("friday.empath")

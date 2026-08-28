@@ -12,7 +12,6 @@ side-effect-free and dependency-light. Localhost-only.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from core.security.auth import security_headers
 from .ui import render_hud

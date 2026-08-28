@@ -34,10 +34,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from pathlib import Path
-from typing import Callable, Optional, Protocol
+from typing import Optional, Protocol
 
 from core.intelligence.cloud_reasoner import ReasonedAnswer  # shared contract
 from core.intelligence.teacher import _context_block          # same grounding

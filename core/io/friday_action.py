@@ -175,12 +175,10 @@ class FridayAction:
     def _probe(self) -> dict:
         caps = {"pyautogui": False, "pygetwindow": False, "win32": False}
         try:
-            import pyautogui
             caps["pyautogui"] = True
         except ImportError:
             pass
         try:
-            import pygetwindow
             caps["pygetwindow"] = True
         except ImportError:
             pass

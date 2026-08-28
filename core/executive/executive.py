@@ -20,14 +20,13 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from enum import Enum
 from typing import Optional
 
 from .orchestrator import Orchestrator
 from .planner import ExecutivePlanner, Plan, PlanResult
 from .reasoner import Reasoner, ReasoningResult
-from .state import CognitiveState, CognitiveStateStore, FocusState
+from .state import CognitiveState, FocusState
 
 log = logging.getLogger("friday.executive.brain")
 

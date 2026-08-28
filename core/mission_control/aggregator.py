@@ -10,7 +10,6 @@ agent_team (3D, M11-ready) · resource_monitor · security_center · event_strea
 
 from __future__ import annotations
 
-from typing import Optional
 
 from .resilience import is_degraded, safe_call
 
@@ -52,7 +51,6 @@ class MissionControlAggregator:
         def build():
             if self.goals is None:
                 return {"status": "absent", "nodes": [], "edges": []}
-            from core.goals import GoalStatus
             goals = self.goals.list_goals()
             nodes, edges = [], []
             active = blocked = 0
