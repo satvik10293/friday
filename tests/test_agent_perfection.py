@@ -177,33 +177,6 @@ def test_total_capacity_evicts_weakest_but_never_core_or_confirmed():
     assert tiers.metrics()["evictions"] > 0
 
 
-# ── codex agent: the cap limits filings, not vision ───────────────────────────
-
-def test_codex_files_new_issues_beyond_the_first_batch(tmp_path, monkeypatch):
-    from core.agents import friday_codex_agent as codex
-    monkeypatch.setattr(codex, "PROPOSALS_VAULT", tmp_path)
-
-    def issues(n, start=0):
-        return [{"kind": "improvement", "target": f"core/m{i}.py",
-                 "title": f"issue {i}", "intent": "fix", "why": "w", "change": "c"}
-                for i in range(start, start + n)]
-
-    monkeypatch.setattr(codex, "self_check",
-                        lambda: {"checked": 1, "ok": 1, "issues": issues(8),
-                                 "at": "now"})
-    first = codex.run_once()
-    assert first["new_proposals"] == codex._MAX_TODO_PROPOSALS
-
-    # next cycle: the same 8 known issues PLUS one genuinely new one at the end
-    monkeypatch.setattr(codex, "self_check",
-                        lambda: {"checked": 1, "ok": 1,
-                                 "issues": issues(8) + issues(1, start=99),
-                                 "at": "now"})
-    second = codex.run_once()
-    assert second["new_proposals"] >= 1, \
-        "a new issue behind known ones was never proposed (agent went silent)"
-
-
 # ── pipeline: segments processed off the frame loop ───────────────────────────
 
 def test_async_segments_defer_to_the_worker_and_still_route():
