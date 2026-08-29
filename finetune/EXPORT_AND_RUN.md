@@ -1,9 +1,9 @@
 # From fine-tuned model → GGUF → running locally
 
-Step 2 of the plan: after the fine-tune works on Lightning, turn it into a single
-`.gguf` file, download it, and wire it into FRIDAY's local brain. This is the
-fiddliest part; the exact sub-command names drift between tool versions, so if one
-errors, run it with `--help` and match the current name.
+Step 2 of the plan: after AutoTrain finishes, turn the trained model into a single
+`.gguf` file and wire it into FRIDAY's local brain. This is the fiddliest part; the
+exact sub-command names drift between tool versions, so if one errors, run it with
+`--help` and match the current name.
 
 FRIDAY's `LocalReasoner` (`core/intelligence/local_reasoner.py`) loads
 `models/<model_file>` (a llama.cpp GGUF) via `llama-cpp-python`. Goal: produce a
@@ -11,29 +11,31 @@ GGUF and point the config at it.
 
 ---
 
-## A. Export on Lightning (whichever fine-tune path you used)
+## A. Get the trained model from Hugging Face, then convert to GGUF
 
-You need the model in **HuggingFace format**, then convert HF → GGUF with llama.cpp.
+AutoTrain pushes the fine-tuned model to a repo on your HF Hub. Download it, then
+convert HF → GGUF with llama.cpp. (Do this on **this machine** — conversion is
+CPU-fine; only training needed the cloud.)
 
-### If you fine-tuned with LitGPT
+### Download the trained model
 ```bash
-# 1. merge the LoRA into the base weights
-litgpt merge_lora out/friday-qwen/final
-
-# 2. convert the LitGPT checkpoint to HuggingFace format
-#    (name varies by version: try `convert_from_litgpt`; check `litgpt --help`)
-litgpt convert_from_litgpt out/friday-qwen/final out/friday-hf
+pip install huggingface_hub
+huggingface-cli login                      # your HF token
+huggingface-cli download <your-username>/<autotrain-repo> --local-dir out/friday-hf
 ```
 
-### If you fine-tuned with HuggingFace + PEFT/TRL
-Your output adapter merges straight to HF format:
+### If AutoTrain gave you a LoRA adapter (not a merged model)
+Merge it to a full HF model first:
 ```python
 from peft import AutoPeftModelForCausalLM
-m = AutoPeftModelForCausalLM.from_pretrained("out/friday-lora")
+from transformers import AutoTokenizer
+m = AutoPeftModelForCausalLM.from_pretrained("out/friday-hf")
 m = m.merge_and_unload()
-m.save_pretrained("out/friday-hf")
-# also copy the tokenizer files into out/friday-hf
+m.save_pretrained("out/friday-merged")
+AutoTokenizer.from_pretrained("out/friday-hf").save_pretrained("out/friday-merged")
+# then use out/friday-merged below instead of out/friday-hf
 ```
+*(Skip this if you enabled "merge adapter" in AutoTrain — then the download is already a full model.)*
 
 ### Convert HF → GGUF (llama.cpp) and quantize
 ```bash
@@ -86,7 +88,7 @@ reasoning **locally** — cloud out of the hot path. Done.
 
 - **q4_k_m** is the sweet spot for an 8 GB CPU box (~2 GB resident, good quality).
   If it's tight, `q4_0` is smaller/faster and a bit worse; `q5_k_m` is larger/better.
-- The base model download and all training happen **on Lightning**, not here — only
+- The base model download and all training happen **on Hugging Face**, not here — only
   the final ~2 GB GGUF comes home.
 - This gives a local Friday **voice + the base model's reasoning**. It is not a
   capability leap over the cloud, and it doesn't add knowledge (that's her

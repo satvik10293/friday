@@ -8,9 +8,15 @@ memory/state, protected from edits) — this is build material, not her mind.
 
 | File | What it is |
 |---|---|
-| `friday_persona.jsonl` | 76 seed examples, Alpaca schema (`instruction` / `input` / `output`). LitGPT reads this directly. |
+| `friday_autotrain.jsonl` | **369 examples for Hugging Face AutoTrain** — single `text` column, Qwen ChatML. This is the one to upload. |
+| `friday_persona.jsonl` | 369 examples, Alpaca schema (`instruction` / `input` / `output`) — the source of truth. |
+| `friday_persona.json` | Same, as a JSON list. |
+| `friday_persona_chat.jsonl` | Same, chat-message schema (for HF TRL, or a non-Qwen base). |
 | `friday_system_prompt.txt` | The persona anchor (her identity, voice, values), drawn from `core/persona/friday_psyche.py`. |
-| `to_chat.py` | Converts the seed file to chat-message schema (`friday_persona_chat.jsonl`) for HuggingFace / TRL. Std-lib only. |
+| `to_autotrain.py` | Renders the source into `friday_autotrain.jsonl` (Qwen ChatML). Std-lib only. |
+| `to_chat.py` | Renders the source into `friday_persona_chat.jsonl`. Std-lib only. |
+| `wire_local_model.py` | After training, points the local brain at the downloaded GGUF. |
+| `EXPORT_AND_RUN.md` | Runbook: trained model → GGUF → running locally. |
 
 ## What this does and does NOT do (read this)
 
@@ -21,36 +27,29 @@ memory/state, protected from edits) — this is build material, not her mind.
 - **Does NOT:** create raw intelligence. That is inherited from the base model's
   pretraining. This is a **thin personality layer** on a borrowed brain.
 
-## This is a SEED, not the finished set
+## Dataset size
 
-76 examples is enough to *shift tone*, not to fully lock a persona. For a solid
-result grow it to a few hundred–~1,000, keeping the same voice: short replies,
-"we", opinions, honest deferral, ask-before-risky. Quality beats quantity —
-one off-voice example teaches the wrong thing.
+369 examples — enough to lock a consistent persona. Same voice throughout:
+short replies, "we", opinions, honest deferral, ask-before-risky. Quality beats
+quantity; one off-voice example teaches the wrong thing. Grow it further only if
+a training run shows a specific voice gap.
 
-## The pipeline (train in the cloud, think locally)
+## The pipeline (train on Hugging Face, think locally)
 
-Cloud is the gym, your machine is the home. Nothing here downloads a model.
+Hugging Face is the gym, your machine is the home. Nothing here downloads a model.
 
 1. **Prep (local, done):** this dataset.
-2. **On Lightning.ai (GPU):** fine-tune a base model with LoRA. Recommended base:
-   `Qwen2.5-3B-Instruct` — it matches what `core/intelligence/local_reasoner.py`
-   already expects. Using LitGPT:
-   ```bash
-   pip install 'litgpt[all]'
-   litgpt download Qwen/Qwen2.5-3B-Instruct
-   litgpt finetune_lora Qwen/Qwen2.5-3B-Instruct \
-       --data JSON --data.json_path finetune/friday_persona.jsonl \
-       --data.val_split_fraction 0.1 --train.epochs 3 \
-       --out_dir out/friday-qwen
-   litgpt merge_lora out/friday-qwen/final
-   ```
-   (Or HuggingFace + PEFT/TRL using `friday_persona_chat.jsonl` from `to_chat.py`.)
-3. **Export to GGUF** (so llama.cpp can run it), quantized to `q4_k_m`.
-4. **Download** the single `.gguf` file to this machine.
-5. **Run locally:** drop it where `LocalReasoner` looks (see `_DEFAULT_FILE` in
-   `core/intelligence/local_reasoner.py`), `pip install llama-cpp-python`, and she
-   reasons on-device in her own voice — no cloud in the hot path.
+2. **Train on Hugging Face AutoTrain:** task **LLM Fine-tuning (SFT)**. Upload
+   `friday_autotrain.jsonl`, set the text column to `text`, base model
+   `Qwen/Qwen2.5-3B-Instruct` (it matches `core/intelligence/local_reasoner.py`).
+   Keep LoRA + ~3 epochs. AutoTrain pushes the trained model to a repo on your
+   HF Hub. **Enable "merge adapter" / push the merged model** so it converts to
+   GGUF cleanly. *(Compute is pay-per-use — a small LoRA is usually a few dollars.)*
+3. **Export to GGUF** — download the HF model, convert with llama.cpp, quantize to
+   `q4_k_m`. Full commands in `EXPORT_AND_RUN.md`.
+4. **Run locally:** `python finetune/wire_local_model.py <file.gguf>`, then
+   `pip install llama-cpp-python`. She reasons on-device in her own voice — no
+   cloud in the hot path.
 
 ## Honest expectations
 

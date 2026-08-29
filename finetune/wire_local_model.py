@@ -1,8 +1,8 @@
 """
 wire_local_model.py — point FRIDAY's local brain at a fine-tuned GGUF.
 
-Run this on THIS machine AFTER you've downloaded the fine-tuned .gguf from
-Lightning. It copies the file into models/ and updates friday_config.json's
+Run this on THIS machine AFTER you've converted the fine-tuned model (trained on
+Hugging Face) into a .gguf. It copies the file into models/ and updates friday_config.json's
 `local_brain` block so LocalReasoner (core/intelligence/local_reasoner.py)
 loads it on next boot. Nothing here downloads anything.
 

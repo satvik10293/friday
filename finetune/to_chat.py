@@ -2,8 +2,8 @@
 to_chat.py — convert the persona dataset into chat-message format.
 
 The base file finetune/friday_persona.jsonl is Alpaca-style
-(instruction / input / output), which LitGPT reads directly. Many
-HuggingFace / TRL fine-tuning flows want the chat schema instead:
+(instruction / input / output). Many HuggingFace / TRL fine-tuning flows want
+the chat schema instead:
 
     {"messages": [
         {"role": "system", "content": "<persona>"},
