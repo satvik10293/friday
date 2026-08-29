@@ -100,8 +100,12 @@ class PluginServiceProtocol(ServiceProtocol, Protocol):
 
 @runtime_checkable
 class LearningServiceProtocol(ServiceProtocol, Protocol):
-    """Placeholder for M17+ learning — records experience for later training."""
+    """Records experience and consolidates recurring patterns into durable,
+    recallable lessons (the learning flywheel)."""
     def record(self, kind: str, data: dict) -> None: ...
+    def learn(self, pattern: str, *, kind: str = "", category: str = "",
+              meta: Optional[dict] = None) -> dict: ...
+    def lessons(self, *, min_reinforcement: int = 1, limit: int = 100) -> list: ...
 
 
 @runtime_checkable

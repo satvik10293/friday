@@ -114,9 +114,16 @@ def test_plugin_service_registry():
     assert p.get("camera", "missing") is None
 
 
-def test_placeholders_report_placeholder_status():
+def test_learning_service_reports_real_status():
+    # the learning flywheel is completed — no longer a placeholder
     c = build_default_container()
-    assert c.get(ServiceName.LEARNING).health()["status"] == "placeholder"
+    h = c.get(ServiceName.LEARNING).health()
+    assert h["status"] == "ok"
+    assert "lessons" in h
+
+
+def test_remaining_placeholders_report_placeholder_status():
+    c = build_default_container()
     assert c.get(ServiceName.EMOTION).health()["status"] == "placeholder"
 
 

@@ -1,10 +1,12 @@
 """
-core/brains/learning/brain.py — FRIDAY V3 (M17 revision)
-The Learning Brain (foundation). It watches the experience the LearningService collects
-(tracking/relationship/observation samples) and surfaces candidate patterns with
-reinforcement scores. Real training lands in a later milestone; the lifecycle, local
-memory (pattern candidates, reinforcement scores, active-learning state), and reporting
-are in place now so callers are unchanged later.
+core/brains/learning/brain.py — FRIDAY V3 (M17 revision → flywheel completed)
+The Learning Brain. It watches the experience the LearningService collects
+(tracking/relationship/observation samples), surfaces candidate patterns with
+reinforcement scores, and — once a pattern is seen enough — PROMOTES it into a
+durable, persisted lesson through the LearningService. That closes the loop it
+used to leave open: it now not only notices patterns, it keeps them so the rest
+of the system can recall and act on them. A pattern is promoted only when it has
+genuinely more evidence than last time, so idle ticks never inflate learning.
 """
 
 from __future__ import annotations
@@ -13,6 +15,8 @@ from collections import Counter
 from typing import Optional
 
 from ..base import CognitiveBrain, SituationReport
+
+_PROMOTE_AT = 3          # a pattern becomes a lesson after this much evidence
 
 
 class LearningBrain(CognitiveBrain):
@@ -26,6 +30,7 @@ class LearningBrain(CognitiveBrain):
         self._learning = self._service("learning")
         self._counter: Counter = Counter()
         self._seen_ts = 0.0          # watermark: only NEW experience reinforces
+        self._promoted: dict = {}    # pattern -> evidence at last promotion (no tick inflation)
 
     def observe(self):
         learning = self._resolve("_learning", "learning")
@@ -52,11 +57,45 @@ class LearningBrain(CognitiveBrain):
             self.local.push("reinforcement_scores", score)
 
     def reason(self, analysis):
-        candidates = [{"pattern": p, "reinforcement": s} for p, s in analysis["top"] if s >= 3]
+        candidates = [{"pattern": p, "reinforcement": s}
+                      for p, s in analysis["top"] if s >= _PROMOTE_AT]
         self.local.set("active_learning", bool(candidates))
-        return {"candidates": candidates, "total": analysis["total"]}
+        learned_now = self._promote(candidates)
+        return {"candidates": candidates, "total": analysis["total"],
+                "learned_now": learned_now}
+
+    def _promote(self, candidates) -> list:
+        """Turn qualifying candidates into durable lessons via the learning
+        service — but only when a pattern has MORE evidence than the last time it
+        was promoted, so a persistent candidate is not re-learned every idle tick.
+        Degrades silently if the service can't learn; never breaks a tick."""
+        learning = self._resolve("_learning", "learning")
+        learn = getattr(learning, "learn", None) if learning is not None else None
+        if not callable(learn):
+            return []
+        learned_now: list = []
+        for c in candidates:
+            pattern, evidence = c["pattern"], c["reinforcement"]
+            if evidence <= self._promoted.get(pattern, 0):
+                continue                                 # no new evidence — skip
+            kind, _, category = pattern.partition(":")
+            try:
+                lesson = learn(pattern, kind=kind, category=category,
+                               meta={"evidence": evidence})
+            except Exception:  # noqa: BLE001 — learning must never break a tick
+                continue
+            self._promoted[pattern] = evidence
+            if lesson.get("new"):
+                learned_now.append(pattern)
+        return learned_now
 
     def generate_situation_report(self, insight) -> Optional[SituationReport]:
+        learned = insight.get("learned_now") or []
+        if learned:
+            return self._report(
+                f"Learned {len(learned)} new lesson(s); first: '{learned[0]}'.",
+                confidence=0.6, priority=0.3, category="learning",
+                data={"learned": learned, "candidates": insight["candidates"]})
         if not insight["candidates"]:
             return None
         top = insight["candidates"][0]["pattern"]
@@ -65,5 +104,14 @@ class LearningBrain(CognitiveBrain):
                             category="learning", data={"candidates": insight["candidates"]})
 
     def health(self) -> dict:
-        return {"status": "placeholder", "brain": self.name,
-                "candidates": len(self.local.items("pattern_candidates"))}
+        learning = self._resolve("_learning", "learning")
+        lessons = 0
+        get_lessons = getattr(learning, "lessons", None) if learning is not None else None
+        if callable(get_lessons):
+            try:
+                lessons = len(get_lessons())
+            except Exception:  # noqa: BLE001
+                lessons = 0
+        return {"status": "ok", "brain": self.name,
+                "candidates": len(self.local.items("pattern_candidates")),
+                "lessons": lessons}
