@@ -145,7 +145,43 @@ class RecommendationEngine:
                 if rec.action == "BUY" and (rec.plan.backtest_trades or 0) >= 10:
                     rec.action = "WAIT"
                     rec.reasons.append("Downgraded BUY -> WAIT: history says this setup isn't paying here")
+
+        self._enrich(rec, df)
         return rec
+
+    # ------------------------------------------------------------------
+    # Expert read: comprehensive catalog + playbook + chart-vision model
+    # ------------------------------------------------------------------
+
+    def _enrich(self, rec: "Recommendation", df) -> None:
+        """Attach the full expert read to the recommendation's reasons — every
+        signal the catalog detects, WITH why-it-happens and entry/target/stop
+        from the playbook, plus the trained chart-vision model's take. Additive
+        only: it never changes the action/confidence, and never raises (a stumble
+        here must not break a live recommendation)."""
+        try:
+            from trading_knowledge import explain_chart
+            read = explain_chart(df)
+        except Exception:  # noqa: BLE001
+            return
+        rec.reasons.append(
+            f"— Expert read: {read['bias'].upper()} bias, {read['count']} signals")
+        for s in read["signals"][:6]:
+            if s.get("why"):
+                rec.reasons.append(f"  • {s['name']}: {s['why']}")
+            if s.get("entry") or s.get("stop_loss"):
+                rec.reasons.append(
+                    f"    → enter: {s.get('entry', '-')}  |  stop: {s.get('stop_loss', '-')}")
+        try:
+            from vision_model.predict import ChartPredictor
+            predictor = ChartPredictor("out/chartnet.pt")
+            if predictor.available():
+                v = predictor.predict_df(df)
+                rec.reasons.append(
+                    f"— Chart-vision model sees {v['class'].upper()} "
+                    f"(confidence {v['confidence']})")
+        except Exception:  # noqa: BLE001 — vision model is optional
+            pass
 
     # ------------------------------------------------------------------
     # Multi-timeframe confirmation
