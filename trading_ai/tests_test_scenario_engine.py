@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from scenario_engine import (best_trade, enumerate_plans, evaluate,
-                             simulate_paths, summarize)
+from scenario_engine import (TradePlan, best_trade, enumerate_plans, evaluate,
+                             simulate_paths, size_position, summarize)
 from vision_model.dataset import synth_ohlcv
 
 
@@ -74,3 +74,22 @@ def test_summary_is_human_readable():
     df = synth_ohlcv(bars=120, drift=0.9, seed=8)
     s = summarize(best_trade(df, n_paths=2000, seed=0))
     assert isinstance(s, str) and len(s) > 10
+
+
+def test_position_sizing_respects_the_risk_budget():
+    plan = TradePlan("long", "pullback", entry=100.0, stop=98.0, target=106.0)  # 2/sh risk
+    sz = size_position(plan, account=10000, risk_pct=0.01)                       # $100 risk
+    assert abs(sz.dollar_risk - 100.0) < 1e-6
+    assert abs(sz.shares - 50.0) < 1e-6                     # $100 / $2 = 50 shares
+    assert abs(sz.dollar_reward - 300.0) < 1e-6            # 50 × $6 reward
+    assert size_position(TradePlan("wait", "no trade"), 10000) is None
+
+
+def test_best_trade_sizes_the_position_when_given_an_account():
+    df = synth_ohlcv(bars=120, drift=0.9, vol=0.8, seed=4)
+    strat = best_trade(df, n_paths=3000, account=10000, risk_pct=0.01, seed=0)
+    if strat.action != "WAIT":
+        assert strat.size is not None
+        assert strat.size.dollar_risk <= 10000 * 0.01 + 1e-6   # never over budget
+        assert "Size:" in summarize(strat)
+    assert best_trade(df, n_paths=1000, seed=0).size is None    # no account → no size

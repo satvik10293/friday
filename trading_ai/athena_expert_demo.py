@@ -70,7 +70,7 @@ def _render_png(df, symbol: str, path: str) -> None:
     plt.close(fig)
 
 
-def _print_read(symbol: str, source: str, df) -> None:
+def _print_read(symbol: str, source: str, df, account: float = 0.0) -> None:
     read = explain_chart(df)
     print("\n" + "=" * 68)
     print(f"  ATHENA'S READ — {symbol}   [{source} data, {len(df)} candles]")
@@ -119,7 +119,7 @@ def _print_read(symbol: str, source: str, df) -> None:
     # strategist: simulate every trade's outcomes, pick the max-expected-profit one
     try:
         from scenario_engine import best_trade, summarize
-        strat = best_trade(df)
+        strat = best_trade(df, account=(account or None))
         print(f"\n  STRATEGIST — searched {strat.n_candidates} trades × "
               f"{strat.n_paths} simulated paths in {strat.ms:.0f} ms:")
         print(f"    → {summarize(strat)}")
@@ -143,6 +143,8 @@ def main(argv=None) -> int:
     ap.add_argument("--period", default="5d")
     ap.add_argument("--interval", default="15m")
     ap.add_argument("--offline", action="store_true", help="use a synthetic chart")
+    ap.add_argument("--account", type=float, default=0.0,
+                    help="account size to size the position (risks 1%% per trade)")
     ap.add_argument("--no-open", action="store_true", help="don't auto-open the PNG")
     args = ap.parse_args(argv)
 
@@ -150,7 +152,7 @@ def main(argv=None) -> int:
     png = os.path.abspath(f"athena_{args.symbol.replace('.', '_')}.png")
     _render_png(df, args.symbol, png)
     print(f"[chart] saved {png}")
-    _print_read(args.symbol, source, df)
+    _print_read(args.symbol, source, df, account=args.account)
     if not args.no_open:
         try:
             os.startfile(png)  # Windows: opens the chart in the default viewer

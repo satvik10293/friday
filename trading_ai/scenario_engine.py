@@ -71,6 +71,19 @@ class Scenario:
 
 
 @dataclass
+class PositionSize:
+    shares: float                  # how many to trade
+    dollar_risk: float             # lost if the stop hits
+    dollar_reward: float           # made if the target hits
+    notional: float                # position value at entry
+    capped: bool = False           # True if the account (no leverage) limited the size
+    def to_dict(self) -> dict:
+        return {"shares": round(self.shares, 4), "dollar_risk": round(self.dollar_risk, 2),
+                "dollar_reward": round(self.dollar_reward, 2),
+                "notional": round(self.notional, 2), "capped": self.capped}
+
+
+@dataclass
 class Strategy:
     best: Optional[Scenario]
     action: str                    # BUY | SELL | WAIT
@@ -78,6 +91,24 @@ class Strategy:
     ms: float = 0.0
     n_paths: int = 0
     n_candidates: int = 0
+    size: Optional[PositionSize] = None    # set when an account size is given
+
+
+def size_position(plan: TradePlan, account: float, risk_pct: float = 0.01,
+                  max_leverage: float = 1.0) -> Optional[PositionSize]:
+    """Shares to trade so a stop-out loses `risk_pct` of the account — sizing off
+    the stop distance, the disciplined way. Capped so notional never exceeds
+    account × max_leverage (default 1.0 = cash, no leverage); when a tight stop
+    would need more than that, the size (and therefore the risk) is reduced."""
+    if plan.direction == "wait" or plan.risk <= 0 or account <= 0:
+        return None
+    risk_shares = (account * max(0.0, risk_pct)) / plan.risk
+    max_shares = (account * max_leverage) / plan.entry if plan.entry > 0 else risk_shares
+    capped = risk_shares > max_shares
+    shares = min(risk_shares, max_shares)
+    return PositionSize(shares=shares, dollar_risk=shares * plan.risk,
+                        dollar_reward=shares * plan.reward, notional=shares * plan.entry,
+                        capped=capped)
 
 
 # ── candidate trades ──────────────────────────────────────────────────────────
@@ -169,9 +200,11 @@ def evaluate(plan: TradePlan, paths: np.ndarray) -> Scenario:
 
 def best_trade(df: pd.DataFrame, *, n_paths: int = _DEFAULT_PATHS,
                horizon: int = _DEFAULT_HORIZON, min_ev_r: float = 0.10,
+               account: Optional[float] = None, risk_pct: float = 0.01,
                seed: int = 0) -> Strategy:
     """Enumerate every candidate trade, simulate outcomes once, score all, and
-    return the maximum-expected-profit plan. WAIT wins if nothing has an edge."""
+    return the maximum-expected-profit plan. WAIT wins if nothing has an edge.
+    Pass `account` to also size the position for `risk_pct` risk per trade."""
     t0 = time.perf_counter()
     if df is None or len(df) < 40:
         return Strategy(best=None, action="WAIT", ms=0.0, n_paths=0, n_candidates=0)
@@ -186,9 +219,11 @@ def best_trade(df: pd.DataFrame, *, n_paths: int = _DEFAULT_PATHS,
         best = next((s for s in scored if s.plan.direction != "wait"), best)
     else:
         action = "BUY" if best.plan.direction == "long" else "SELL"
+    size = (size_position(best.plan, account, risk_pct)
+            if account and action != "WAIT" else None)
     return Strategy(best=best, action=action, ranked=scored,
                     ms=(time.perf_counter() - t0) * 1000.0,
-                    n_paths=n_paths, n_candidates=len(plans))
+                    n_paths=n_paths, n_candidates=len(plans), size=size)
 
 
 def summarize(strategy: Strategy) -> str:
@@ -200,7 +235,14 @@ def summarize(strategy: Strategy) -> str:
     if strategy.action == "WAIT":
         return (f"WAIT — best of {strategy.n_candidates} candidates only had "
                 f"{b.expected_r:+.2f}R edge; no trade worth the risk right now.")
-    return (f"{strategy.action} ({p.setup}) @ {p.entry:.2f}, stop {p.stop:.2f}, "
+    line = (f"{strategy.action} ({p.setup}) @ {p.entry:.2f}, stop {p.stop:.2f}, "
             f"target {p.target:.2f} (1:{p.rr:.1f} R:R). Simulated win {b.win_prob*100:.0f}%, "
             f"expected {b.expected_r:+.2f}R (best of {strategy.n_candidates} trades, "
             f"{strategy.n_paths} paths, {strategy.ms:.0f} ms).")
+    if strategy.size is not None:
+        sz = strategy.size
+        line += (f" Size: {sz.shares:.0f} shares — risk ${sz.dollar_risk:.0f}, "
+                 f"target +${sz.dollar_reward:.0f} (notional ${sz.notional:.0f}).")
+        if sz.capped:
+            line += " (size capped by account — stop too tight for the full risk budget.)"
+    return line
