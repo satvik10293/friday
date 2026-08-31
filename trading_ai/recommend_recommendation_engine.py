@@ -203,6 +203,14 @@ class RecommendationEngine:
         except Exception:  # noqa: BLE001 — vision model is optional
             pass
 
+        # strategist: simulate every candidate trade's outcomes, surface the
+        # maximum-expected-profit plan (fast Monte Carlo; never changes the action)
+        try:
+            from scenario_engine import best_trade, summarize
+            rec.reasons.append(f"— Strategist: {summarize(best_trade(df))}")
+        except Exception:  # noqa: BLE001
+            pass
+
     # ------------------------------------------------------------------
     # Multi-timeframe confirmation
     # ------------------------------------------------------------------

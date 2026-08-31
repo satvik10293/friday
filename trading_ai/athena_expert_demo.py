@@ -115,7 +115,26 @@ def _print_read(symbol: str, source: str, df) -> None:
     if atr > 0:
         print(f"  Risk frame @ {price:.2f}: ATR={atr:.2f} → a ~1.5x ATR stop is "
               f"{1.5*atr:.2f} away; aim ~2R target ({3*atr:.2f}).")
-    print("  (Observe-only. Every setup is probabilistic — size small, honor the stop.)")
+
+    # strategist: simulate every trade's outcomes, pick the max-expected-profit one
+    try:
+        from scenario_engine import best_trade, summarize
+        strat = best_trade(df)
+        print(f"\n  STRATEGIST — searched {strat.n_candidates} trades × "
+              f"{strat.n_paths} simulated paths in {strat.ms:.0f} ms:")
+        print(f"    → {summarize(strat)}")
+        top = [sc for sc in strat.ranked if sc.plan.direction != 'wait'][:3]
+        if top:
+            print("    Top candidates by expected profit:")
+            for sc in top:
+                dd = sc.to_dict()
+                print(f"      {dd['direction']:5} {dd['setup']:14} "
+                      f"EV {dd['expected_R']:+.2f}R | win {dd['win_prob']*100:4.0f}% | "
+                      f"R:R 1:{dd['rr']}")
+    except Exception as e:  # noqa: BLE001
+        print(f"  Strategist unavailable: {e}")
+
+    print("\n  (Observe-only. Every setup is probabilistic — size small, honor the stop.)")
 
 
 def main(argv=None) -> int:
