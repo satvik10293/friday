@@ -12,12 +12,19 @@ from vision_model.dataset import synth_ohlcv   # reuse the synthetic OHLCV helpe
 
 def test_coverage_is_comprehensive():
     c = counts()
+    # stock / chart knowledge — still there
     assert c["indicator"] >= 14
     assert c["trend"] >= 6
     assert c["candlestick"] >= 15
     assert c["chart_pattern"] >= 10
     assert c["risk"] >= 6
-    assert len(ALL_LESSONS) >= 55
+    # trading-craft knowledge — the "trading side"
+    assert c["psychology"] >= 10
+    assert c["money_management"] >= 7
+    assert c["execution"] >= 5
+    assert c["process"] >= 5
+    assert c["management"] >= 6
+    assert len(ALL_LESSONS) >= 90
 
 
 def test_every_lesson_explains_what_and_why():
@@ -54,7 +61,20 @@ def test_teach_includes_why_and_how():
 
 def test_catalog_groups_by_category():
     cats = set(catalog())
-    assert {"indicator", "trend", "candlestick", "chart_pattern", "risk"} <= cats
+    assert {"indicator", "trend", "candlestick", "chart_pattern", "risk",
+            "psychology", "money_management", "execution", "process", "management"} <= cats
+
+
+def test_trading_craft_lessons_are_actionable():
+    craft = (by_category("psychology") + by_category("money_management")
+             + by_category("execution") + by_category("process") + by_category("management"))
+    assert len(craft) >= 35
+    for lesson in craft:
+        assert lesson.apply.strip(), f"{lesson.name} missing an actionable 'apply'"
+    # she can teach the craft, not just chart patterns
+    assert "Do:" in teach("revenge trading")
+    assert "Do:" in teach("FOMO")
+    assert explain("kelly").category == "money_management"        # alias resolves
 
 
 def test_explain_chart_attaches_playbook_to_detected_signals():

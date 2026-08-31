@@ -33,6 +33,7 @@ class Lesson:
     entry: str = ""               # how to enter for profit
     profit: str = ""              # how to take profit / target
     stop: str = ""                # where the stop-loss goes
+    apply: str = ""               # for craft lessons: what to actually DO about it
     bias: int = NEUTRAL
     reliability: str = ""
     aka: List[str] = field(default_factory=list)
@@ -49,6 +50,8 @@ class Lesson:
             lines.append(f"Take profit: {self.profit}")
         if self.stop:
             lines.append(f"Stop-loss: {self.stop}")
+        if self.apply:
+            lines.append(f"Do: {self.apply}")
         if self.reliability:
             lines.append(f"Reliability: {self.reliability}")
         return "\n".join(lines)
@@ -456,9 +459,242 @@ _RISK = [
 ]
 
 
+# ── trading psychology ────────────────────────────────────────────────────────
+
+_PSYCHOLOGY = [
+    Lesson("fear", "psychology",
+           "The urge to freeze, cut winners early, or skip a valid setup.",
+           "Loss aversion — the pain of a loss feels bigger than the pleasure of an equal "
+           "gain, so the brain avoids risk exactly when the plan says to take it.",
+           apply="Decide the trade before the moment: fixed entry, stop and size, then "
+                 "execute the rules, not the feeling."),
+    Lesson("greed", "psychology",
+           "The urge to oversize, chase, or hold past the target for 'more'.",
+           "Euphoria after wins convinces you the edge is bigger than it is; the market "
+           "hands the gains back.",
+           apply="Pre-set targets and keep risk per trade constant regardless of how good "
+                 "you feel."),
+    Lesson("FOMO", "psychology",
+           "Fear of missing out — chasing a move that already ran.",
+           "Watching price rip without you triggers regret, and you buy the top just as "
+           "early money takes profit.",
+           apply="Wait for YOUR setup. There is always another trade; a missed one costs "
+                 "nothing, a chased one costs money.", aka=["fear of missing out", "chasing"]),
+    Lesson("revenge trading", "psychology",
+           "Trying to win a loss straight back, usually by oversizing.",
+           "The loss feels like an insult, so you abandon the plan to 'get even' — and turn "
+           "one small loss into a large one.",
+           apply="After a loss, step away. A loss is a business cost, not a personal debt to "
+                 "collect."),
+    Lesson("discipline", "psychology",
+           "Following your plan whether you feel like it or not.",
+           "An edge only pays out over many trades; breaking rules on the ones that 'feel' "
+           "different is how the edge leaks away.",
+           apply="Rules over feelings, every time. Consistency is the edge."),
+    Lesson("patience", "psychology",
+           "Waiting for A+ setups and sitting out the rest.",
+           "Most bars are noise; forcing trades in the gaps between good setups bleeds the "
+           "account.",
+           apply="No setup, no trade. Cash is a position."),
+    Lesson("overconfidence", "psychology",
+           "Sizing up or loosening rules after a winning streak.",
+           "A run of wins feels like skill even when it was partly variance; the next loss "
+           "arrives oversized.",
+           apply="Keep risk per trade fixed. Your best streak is when you should be MOST "
+                 "boring."),
+    Lesson("confirmation bias", "psychology",
+           "Seeing only the evidence that supports the trade you already want.",
+           "Once positioned, the brain filters for agreement and ignores the warning signs.",
+           apply="Before entering, argue the OTHER side out loud. If you can't, you don't "
+                 "understand the trade."),
+    Lesson("recency bias", "psychology",
+           "Overweighting your last few trades.",
+           "A couple of losses make a good method feel broken; a couple of wins make a bad "
+           "one feel great.",
+           apply="Judge by expectancy over a large sample, not the last three trades."),
+    Lesson("loss aversion", "psychology",
+           "Holding a loser and hoping it comes back.",
+           "Taking the loss admits you were wrong, so the mind avoids it — and a small loss "
+           "becomes an account risk.",
+           apply="Honor the stop the instant it's hit. Hope is not a plan."),
+    Lesson("anchoring", "psychology",
+           "Fixating on your entry price when deciding to exit.",
+           "The market doesn't know or care where you got in; anchoring to it distorts every "
+           "exit decision.",
+           apply="Manage from the CURRENT structure and risk, not from your cost basis."),
+    Lesson("analysis paralysis", "psychology",
+           "Over-analyzing until every setup passes you by.",
+           "Chasing certainty in a probabilistic game freezes you; the perfect read never "
+           "arrives.",
+           apply="A solid plan acted on beats a perfect plan delayed. Decide, size small, "
+                 "execute."),
+]
+
+# ── money management ──────────────────────────────────────────────────────────
+
+_MONEY = [
+    Lesson("risk per trade", "money_management",
+           "The fraction of the account you'll lose if a trade hits its stop (commonly ~1%).",
+           "Fixed small risk means no single trade — or losing streak — can seriously hurt "
+           "you; it's what keeps you in the game long enough for the edge to show.",
+           apply="Set risk% first; the position size falls out of (account × risk%) ÷ stop "
+                 "distance."),
+    Lesson("drawdown", "money_management",
+           "The decline from an equity peak to a trough.",
+           "Recovery is asymmetric — a 50% loss needs a 100% gain to get back — so deep "
+           "drawdowns are far harder to climb out of than they look.",
+           apply="Keep risk per trade small so a bad run stays a shallow dip, not a hole."),
+    Lesson("risk of ruin", "money_management",
+           "The probability of losing enough capital to be unable to continue.",
+           "Even a positive edge blows up if bets are too large — variance strings losses "
+           "together, and oversizing turns a normal streak fatal.",
+           apply="Small risk per trade + positive expectancy drives risk of ruin toward zero."),
+    Lesson("position sizing (advanced)", "money_management",
+           "Turning your risk% and stop distance into a share/contract count.",
+           "Sizing off the stop (not a gut feeling) makes every trade risk the same amount, "
+           "so wins and losses are comparable and the edge is measurable.",
+           apply="Size = (account × risk%) ÷ (entry − stop). Wider stop → smaller size."),
+    Lesson("compounding", "money_management",
+           "Reinvesting gains so returns build on returns.",
+           "A small consistent edge, compounded, grows far faster than it feels — and one "
+           "big drawdown sets the compounding clock way back.",
+           apply="Protect the downside first; consistent small gains compound, blow-ups reset."),
+    Lesson("Kelly criterion", "money_management",
+           "A formula for the bet size that maximizes long-run growth given your edge.",
+           "Full Kelly maximizes growth but with wild swings; most pros use a fraction "
+           "(half-Kelly) to cut volatility for far less give-up in return.",
+           apply="Use a FRACTION of Kelly. Full Kelly's drawdowns are brutal.",
+           aka=["kelly"]),
+    Lesson("correlation risk", "money_management",
+           "Multiple positions that move together are really one big bet.",
+           "Five tech longs aren't diversified — one market move hits them all at once, so "
+           "your real risk is several times what each line implies.",
+           apply="Count correlated positions as one; don't stack the same bet under different "
+                 "tickers."),
+    Lesson("max daily loss", "money_management",
+           "A hard cap on how much you'll lose in a single day.",
+           "Bad days spiral — losses trigger tilt, tilt triggers bigger losses; a daily stop "
+           "cuts the spiral before it wrecks the week.",
+           apply="Hit the daily limit → close the platform. Tomorrow is a fresh, calmer you."),
+]
+
+# ── execution & market mechanics ──────────────────────────────────────────────
+
+_EXECUTION = [
+    Lesson("spread", "execution",
+           "The gap between the best bid and the best ask.",
+           "You buy at the ask and sell at the bid, so the spread is a cost you pay on every "
+           "round trip — wide on illiquid names, it quietly eats the edge.",
+           apply="Favor liquid instruments with tight spreads; the spread is a tax on every "
+                 "trade."),
+    Lesson("slippage", "execution",
+           "Getting filled at a worse price than you intended.",
+           "In fast or thin markets the price moves between your decision and your fill; "
+           "market orders 'take' whatever's there.",
+           apply="Use limit orders to control price in fast markets; accept market orders "
+                 "only when the fill matters more than the price."),
+    Lesson("liquidity", "execution",
+           "How easily you can enter and exit without moving the price.",
+           "Thin instruments gap and trap — you can get in but not out at a fair price, "
+           "especially when you most need to.",
+           apply="Trade liquid names, and size to the liquidity, not just to your account."),
+    Lesson("market sessions", "execution",
+           "Pre-market, the open, midday, the close, after-hours — each behaves differently.",
+           "Volatility and volume cluster at the open and the close; midday is often quiet "
+           "chop where breakouts fail.",
+           apply="Trade the active windows (open/close); be skeptical of midday breakouts."),
+    Lesson("market vs limit order", "execution",
+           "Market = fill now at any price; limit = fill only at your price or better.",
+           "It's a trade-off: speed and certainty of fill versus control of price.",
+           apply="Limit to control your entry/exit price; market only when getting filled "
+                 "beats getting a good price."),
+    Lesson("order flow", "execution",
+           "Watching where volume is actually trading (bid vs ask, size).",
+           "Price is the story after the fact; order flow shows who is aggressive — buyers "
+           "lifting the ask or sellers hitting the bid — in real time.",
+           apply="Confirm a move with volume trading in its direction, not price alone."),
+]
+
+# ── process & edge ────────────────────────────────────────────────────────────
+
+_PROCESS = [
+    Lesson("trading plan", "process",
+           "Written rules for what you trade, and how you size, enter, and exit.",
+           "Decisions made calmly in advance beat decisions made under live pressure; the "
+           "plan is what keeps emotion out of the trade.",
+           apply="Write it down. If a trade isn't in the plan, it isn't a trade."),
+    Lesson("edge", "process",
+           "A repeatable reason your trades make money over a large sample.",
+           "Without a defined edge you're gambling; with one, the job is simply to execute "
+           "it consistently and let the numbers play out.",
+           apply="Know your edge in one sentence. Only take trades that express it."),
+    Lesson("trading journal", "process",
+           "A record of every trade: setup, reason, size, result, and how you felt.",
+           "You can't improve what you don't measure; the journal turns vague impressions "
+           "into patterns you can actually fix.",
+           apply="Log every trade and review weekly — the leaks show up in the data."),
+    Lesson("backtesting", "process",
+           "Testing a method against historical data before risking money.",
+           "It tells you whether an idea ever had an edge and how it behaves in drawdown, "
+           "so you risk capital on evidence, not a hunch.",
+           apply="Validate on history first; forward-test small before sizing up."),
+    Lesson("probabilistic thinking", "process",
+           "Treating any single trade as one draw from a distribution.",
+           "A good trade can lose and a bad trade can win; judging your method by one "
+           "outcome is how people abandon a working edge (or trust a broken one).",
+           apply="Grade the PROCESS, not the single result. The edge shows over dozens."),
+    Lesson("review", "process",
+           "Periodically analyzing your own trades to find and cut mistakes.",
+           "Most traders repeat the same handful of errors; a regular review surfaces them "
+           "so they stop costing you.",
+           apply="Weekly: what worked, what leaked, one thing to fix next week."),
+]
+
+# ── trade & position management ───────────────────────────────────────────────
+
+_MANAGEMENT = [
+    Lesson("scaling in", "management",
+           "Building a position in pieces rather than all at once.",
+           "Starting small and adding as the trade proves right lowers the cost of being "
+           "wrong early while still sizing up when you're right.",
+           apply="Add only as the trade confirms — never average DOWN into a loser."),
+    Lesson("scaling out", "management",
+           "Taking partial profit while leaving a piece to run.",
+           "It banks real gains (beating the urge to round-trip a winner) while keeping "
+           "exposure to a big move.",
+           apply="Take some off at the first target; trail the remainder."),
+    Lesson("move to breakeven", "management",
+           "Trailing the stop to your entry once the trade is comfortably in profit.",
+           "It converts a winning trade into a free option — you can no longer lose on it — "
+           "which also calms the decision-making.",
+           apply="Once price has moved ~1R in your favor, slide the stop to entry."),
+    Lesson("letting winners run", "management",
+           "Not cutting a working trade early.",
+           "A few big winners pay for many small losers; clipping every winner short starves "
+           "the strategy of the trades that actually make the year.",
+           apply="Trail the stop and let structure take you out — don't guess the exact top."),
+    Lesson("cutting losers fast", "management",
+           "Exiting a losing trade at the plan, immediately.",
+           "Small losses are the cost of doing business; the account killer is the loss you "
+           "let run 'just a little longer'.",
+           apply="Hit the stop → out, no negotiation, no adding down."),
+    Lesson("pyramiding", "management",
+           "Adding to a winner with progressively smaller size in a strong trend.",
+           "It presses an advantage while keeping average risk in check — but only works "
+           "when a real trend is in force.",
+           apply="Add smaller each time and raise the stop under the whole position."),
+    Lesson("when not to trade", "management",
+           "Recognizing the times to stay in cash.",
+           "No clear setup, choppy conditions, thin liquidity, big news pending, or being "
+           "tired/tilted — forcing trades then is where accounts bleed.",
+           apply="No edge on the screen or off it → don't trade. Cash is a position."),
+]
+
+
 # ── index + query API ─────────────────────────────────────────────────────────
 
-ALL_LESSONS: List[Lesson] = _INDICATORS + _TRENDS + _CANDLES + _CHART_PATTERNS + _RISK
+ALL_LESSONS: List[Lesson] = (_INDICATORS + _TRENDS + _CANDLES + _CHART_PATTERNS + _RISK
+                             + _PSYCHOLOGY + _MONEY + _EXECUTION + _PROCESS + _MANAGEMENT)
 _BY_NAME = {lesson.name.lower(): lesson for lesson in ALL_LESSONS}
 for _l in ALL_LESSONS:                                   # index aliases too
     for _a in _l.aka:

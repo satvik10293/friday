@@ -172,6 +172,26 @@ class RecommendationEngine:
             if s.get("entry") or s.get("stop_loss"):
                 rec.reasons.append(
                     f"    → enter: {s.get('entry', '-')}  |  stop: {s.get('stop_loss', '-')}")
+
+        # a trading-side discipline reminder, matched to the situation
+        try:
+            from trading_knowledge import explain
+            names = " ".join(sig["name"].lower() for sig in read["signals"])
+            if read["bias"] == "neutral" or rec.action == "WAIT":
+                topic = "when not to trade"                # no clear edge → patience
+            elif "overbought" in names or "shooting star" in names:
+                topic = "FOMO"                             # extended → don't chase
+            elif rec.action == "BUY":
+                topic = "risk per trade"                   # sizing/risk first
+            else:
+                topic = "cutting losers fast"
+            lesson = explain(topic)
+            if lesson is not None:
+                rec.reasons.append(
+                    f"— Discipline: {lesson.name} — {lesson.apply or lesson.why}")
+        except Exception:  # noqa: BLE001
+            pass
+
         try:
             from vision_model.predict import ChartPredictor
             predictor = ChartPredictor("out/chartnet.pt")
