@@ -84,9 +84,13 @@ def _ensure_indicators(df: pd.DataFrame) -> pd.DataFrame:
 def backtest(df: pd.DataFrame, *, symbol: str = "", capital: float = 10000.0,
              risk_pct: float = 0.01, entry_score: float = 40.0,
              stop_atr: float = 1.5, target_atr: float = 3.0,
-             fee_bps: float = 5.0, slippage_bps: float = 5.0) -> Scorecard:
-    """Replay the strategy with position sizing AND costs. fee+slippage are in
-    basis points per side (5 bps = 0.05%)."""
+             fee_bps: float = 5.0, slippage_bps: float = 5.0,
+             signal_fn=None) -> Scorecard:
+    """Replay a strategy with position sizing AND costs. `signal_fn(df, i) ->
+    score` supplies the entry signal (default: the built-in momentum score_bar);
+    a positive score above entry_score goes long, below -entry_score goes short.
+    fee+slippage are in basis points per side (5 bps = 0.05%)."""
+    sig = signal_fn or score_bar
     d = _ensure_indicators(df)
     atr_s = atr(d)
     cost_rate = (fee_bps + slippage_bps) / 10000.0
@@ -120,7 +124,7 @@ def backtest(df: pd.DataFrame, *, symbol: str = "", capital: float = 10000.0,
         av = atr_s.iloc[i]
         if pd.isna(av) or av <= 0 or equity <= 0:
             continue
-        score = score_bar(d, i)
+        score = sig(d, i)
         if score >= entry_score:
             direction, entry = 1, float(row.close)
             stop, target = entry - stop_atr * av, entry + target_atr * av

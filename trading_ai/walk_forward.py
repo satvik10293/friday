@@ -38,11 +38,12 @@ def default_grid() -> List[dict]:
     return grid
 
 
-def optimize(df: pd.DataFrame, grid: List[dict], *, min_trades: int = 8) -> dict:
+def optimize(df: pd.DataFrame, grid: List[dict], *, min_trades: int = 8,
+             signal_fn=None) -> dict:
     """Best parameters on THIS (in-sample) slice, by expectancy after costs."""
     best, best_exp = grid[len(grid) // 2], float("-inf")   # default = middle of grid
     for params in grid:
-        card = backtest(df, capital=10000, **params)
+        card = backtest(df, capital=10000, signal_fn=signal_fn, **params)
         if card.trades >= min_trades and card.expectancy > best_exp:
             best_exp, best = card.expectancy, params
     return best
@@ -50,7 +51,8 @@ def optimize(df: pd.DataFrame, grid: List[dict], *, min_trades: int = 8) -> dict
 
 def walk_forward(df: pd.DataFrame, *, symbol: str = "", in_bars: int = 300,
                  out_bars: int = 100, capital: float = 10000.0,
-                 grid: Optional[List[dict]] = None) -> Tuple[Scorecard, List[dict]]:
+                 grid: Optional[List[dict]] = None, signal_fn=None
+                 ) -> Tuple[Scorecard, List[dict]]:
     """Roll optimize-then-test across history. Returns (out-of-sample aggregate,
     per-window records). Only out-of-sample results count."""
     grid = grid or default_grid()
@@ -60,8 +62,8 @@ def walk_forward(df: pd.DataFrame, *, symbol: str = "", in_bars: int = 300,
     while i + in_bars + out_bars <= len(df):
         insample = df.iloc[i:i + in_bars]
         oos = df.iloc[i + in_bars:i + in_bars + out_bars]
-        best = optimize(insample, grid)
-        card = backtest(oos, symbol=symbol, capital=capital, **best)
+        best = optimize(insample, grid, signal_fn=signal_fn)
+        card = backtest(oos, symbol=symbol, capital=capital, signal_fn=signal_fn, **best)
         oos_cards.append(card)
         windows.append({"params": best, "oos_trades": card.trades,
                         "oos_expectancy": round(card.expectancy, 2),
@@ -101,14 +103,23 @@ def main(argv=None) -> int:
     ap.add_argument("--interval", default="15m")
     ap.add_argument("--in-bars", type=int, default=300)
     ap.add_argument("--out-bars", type=int, default=100)
+    ap.add_argument("--strategy", default="momentum",
+                    help="momentum | mean_reversion | mr_trend")
     args = ap.parse_args(argv)
 
+    from strategies import STRATEGIES
+    signal_fn = STRATEGIES.get(args.strategy)
+    if signal_fn is None:
+        print(f"unknown strategy '{args.strategy}'; choices: {list(STRATEGIES)}")
+        return 2
+
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
-    print(f"Walk-forward on {len(symbols)} symbols ({args.period}/{args.interval}) — "
-          f"optimize on {args.in_bars} bars, test on the next {args.out_bars}, roll ...\n")
+    print(f"Walk-forward [{args.strategy}] on {len(symbols)} symbols "
+          f"({args.period}/{args.interval}) — optimize on {args.in_bars} bars, "
+          f"test on the next {args.out_bars}, roll ...\n")
     portfolio, per = validate_wf(symbols, capital=args.capital, period=args.period,
                                  interval=args.interval, in_bars=args.in_bars,
-                                 out_bars=args.out_bars)
+                                 out_bars=args.out_bars, signal_fn=signal_fn)
     for c in per:
         print("  " + (str(c) if c.trades else f"[{c.symbol}] {c.note}"))
     print("\n" + "=" * 72)
