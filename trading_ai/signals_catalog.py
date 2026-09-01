@@ -258,6 +258,11 @@ def _local_extrema(a: np.ndarray, *, kind: str, w: int = 3) -> List[int]:
 def read_chart(df: pd.DataFrame) -> dict:
     """Every signal Athena can see on this chart, plus a net directional bias."""
     sigs = candlesticks(df) + indicator_signals(df) + chart_structure(df)
+    try:                                     # lazy import avoids a circular dep
+        from chart_patterns import detect_chart_patterns
+        sigs = sigs + detect_chart_patterns(df)
+    except Exception:  # noqa: BLE001 — pattern detection is best-effort
+        pass
     score = sum(s.direction * s.strength for s in sigs)
     bias = "bullish" if score > 0.4 else "bearish" if score < -0.4 else "neutral"
     return {"signals": [s.to_dict() for s in sigs], "count": len(sigs),
