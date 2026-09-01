@@ -51,9 +51,13 @@ def parse_region(value: Optional[str]) -> Optional[dict]:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Screen-Aware Trading Assistant (observe-only)")
     parser.add_argument("--symbol", default="AAPL", help="Ticker to watch (e.g. AAPL, RELIANCE.NS)")
-    parser.add_argument("--auto", action="store_true",
+    parser.add_argument("--auto", dest="auto", action="store_true",
                         help="Auto-detect the chart on screen (even in a split screen), focus OCR on "
-                             "just that area, recognize the symbol (crypto/Indian/US), and track it")
+                             "just that area, recognize the symbol (crypto/Indian/US), and track it "
+                             "(this is now the DEFAULT)")
+    parser.add_argument("--no-auto", dest="auto", action="store_false",
+                        help="Disable screen scanning; just watch the fixed --symbol")
+    parser.set_defaults(auto=True)
     parser.add_argument("--interval", type=float, default=3.0, help="Seconds between observe cycles (1-5s recommended)")
     parser.add_argument("--region", type=str, default=None, help="Screen region to capture: LEFT,TOP,WIDTH,HEIGHT (default: full primary monitor)")
     parser.add_argument("--monitor-index", type=int, default=1, help="Which monitor to capture when --region is not set (mss numbering, 1=primary)")
