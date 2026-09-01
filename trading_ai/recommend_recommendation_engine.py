@@ -372,7 +372,10 @@ class RecommendationEngine:
 
         risk = abs(entry - stop)
         reward = abs(target - entry)
-        if risk <= 0:
+        # A level can sit almost exactly at entry; tightening the target to it
+        # produces a worthless ~0-reward trade (and, live, a loss loop). Reject
+        # any plan whose target isn't at least half an ATR away.
+        if risk <= 0 or reward < 0.5 * atr_val:
             return None
 
         return TradePlan(

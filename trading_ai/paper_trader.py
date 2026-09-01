@@ -45,6 +45,7 @@ class PaperTrader:
     risk_pct: float = 0.01
     fee_bps: float = 5.0
     slippage_bps: float = 5.0
+    cooldown_s: float = 300.0      # don't re-open a symbol within this of closing it
     cash: float = 0.0
     positions: Dict[str, Position] = field(default_factory=dict)
     closed: List[dict] = field(default_factory=list)   # {symbol, pnl, r, result}
@@ -55,6 +56,7 @@ class PaperTrader:
             self.cash = self.capital
         if self.path is None:
             self.path = _DEFAULT_STATE
+        self._recent: Dict[str, float] = {}     # symbol -> last close time (re-entry cooldown)
         self._load()
 
     # ── money ──────────────────────────────────────────────────────────────────
@@ -73,6 +75,8 @@ class PaperTrader:
         """Open a paper position if she signals BUY/SELL and we're flat on it."""
         if symbol in self.positions or action not in ("BUY", "SELL") or plan is None:
             return None
+        if time.time() - self._recent.get(symbol, 0.0) < self.cooldown_s:
+            return None                          # closed this recently — don't re-enter yet
         entry = float(getattr(plan, "entry", 0.0))
         stop = float(getattr(plan, "stop_loss", 0.0))
         target = float(getattr(plan, "target", 0.0))
@@ -114,6 +118,7 @@ class PaperTrader:
         self.closed.append({"symbol": symbol, "pnl": round(pnl, 2), "r": round(r, 2),
                             "result": result})
         del self.positions[symbol]
+        self._recent[symbol] = time.time()       # start the re-entry cooldown
         self._save()
         return (f"CLOSE {symbol} @ {exit_price:.2f} — {hit.upper()} ({result}) — "
                 f"P&L ${pnl:+.2f} ({r:+.2f}R)")
