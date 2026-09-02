@@ -66,3 +66,15 @@ def test_read_chart_now_includes_chart_patterns():
     read = read_chart(_df(_head_and_shoulders()))
     kinds = {s["kind"] for s in read["signals"]}
     assert "chart_pattern" in kinds
+
+
+def _rising_wedge():
+    # highs rise slowly, lows rise faster → the range converges upward (bearish)
+    close = []
+    for k, (lo, hi) in enumerate(zip(np.linspace(100, 116, 7), np.linspace(110, 118, 7))):
+        close += list(np.linspace(lo, hi, 5)) + list(np.linspace(hi, lo, 5))[1:]
+    return np.array(close)
+
+
+def test_detects_rising_wedge():
+    assert "rising wedge" in _names(detect_chart_patterns(_df(_rising_wedge())))

@@ -81,6 +81,12 @@ def indicators(df: pd.DataFrame) -> pd.DataFrame:
     d["stoch_k"] = (100 * (c - lo14) / (hi14 - lo14).replace(0.0, np.nan)).fillna(50.0)
     d["stoch_d"] = d["stoch_k"].rolling(3).mean()
     d["adx14"] = _adx(d, 14)
+    tp = (d["high"] + d["low"] + c) / 3                       # CCI
+    sma_tp = tp.rolling(20).mean()
+    mad = (tp - sma_tp).abs().rolling(20).mean()
+    d["cci"] = ((tp - sma_tp) / (0.015 * mad.replace(0.0, np.nan))).fillna(0.0)
+    hh14, ll14 = d["high"].rolling(14).max(), d["low"].rolling(14).min()
+    d["williams_r"] = (-100 * (hh14 - c) / (hh14 - ll14).replace(0.0, np.nan)).fillna(-50.0)
     return d
 
 
@@ -210,6 +216,16 @@ def indicator_signals(df: pd.DataFrame) -> List[Signal]:
     if last.adx14 >= 25:
         trend = BULL if last.ema20 > last.ema50 else BEAR
         out.append(Signal("strong trend (ADX)", trend, "indicator", f"ADX {last.adx14:.0f} ≥ 25", 0.5))
+
+    if last.cci < -100:
+        out.append(Signal("CCI oversold", BULL, "indicator", f"CCI {last.cci:.0f} < -100", 0.45))
+    elif last.cci > 100:
+        out.append(Signal("CCI overbought", BEAR, "indicator", f"CCI {last.cci:.0f} > 100", 0.45))
+
+    if last.williams_r < -80:
+        out.append(Signal("Williams %R oversold", BULL, "indicator", "%R < -80", 0.4))
+    elif last.williams_r > -20:
+        out.append(Signal("Williams %R overbought", BEAR, "indicator", "%R > -20", 0.4))
     return out
 
 

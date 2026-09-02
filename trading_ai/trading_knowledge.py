@@ -174,6 +174,20 @@ _INDICATORS = [
            profit="Trail the stop on the SAR dots.",
            stop="The current SAR dot.",
            reliability="Whipsaws badly in ranges."),
+    Lesson("CCI", "indicator",
+           "Commodity Channel Index — how far price is from its average, measured in typical deviations.",
+           "Above +100 is unusually stretched up (strong or overbought), below -100 unusually stretched down (weak or oversold).",
+           entry="Fade extremes back toward zero in a range, or treat a cross above +100 as trend strength.",
+           profit="A return to the zero line.",
+           stop="Beyond the extreme that triggered you.",
+           reliability="Best as a confirmation, not alone."),
+    Lesson("Williams %R", "indicator",
+           "Where the close sits in its recent range, from 0 (top) to -100 (bottom) — an inverted Stochastic.",
+           "Above -20 is overbought, below -80 oversold — a short-term exhaustion read.",
+           entry="Buy a turn up from below -80; sell a turn down from above -20.",
+           profit="Mid-range or the next level.",
+           stop="Just beyond the local extreme.",
+           reliability="Noisy in strong trends — pair with the trend."),
 ]
 
 # ── trend types ───────────────────────────────────────────────────────────────

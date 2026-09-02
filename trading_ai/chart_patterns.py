@@ -69,6 +69,12 @@ def detect_chart_patterns(df: pd.DataFrame, *, lookback: int = 60,
         elif hi_s < -flat and lo_s > flat:
             out.append(Signal("symmetrical triangle", NEUTRAL, "chart_pattern",
                               "converging highs and lows — a coil; trade the break", 0.4))
+        elif hi_s > flat and lo_s > flat and lo_s > hi_s:
+            out.append(Signal("rising wedge", BEAR, "chart_pattern",
+                              "both lines rising but converging — buying is tiring", 0.45))
+        elif hi_s < -flat and lo_s < -flat and hi_s < lo_s:
+            out.append(Signal("falling wedge", BULL, "chart_pattern",
+                              "both lines falling but converging — selling is tiring", 0.45))
 
     # ── flag / pennant: a strong pole, then a tight counter/quiet consolidation ─
     if len(seg) >= 30:
