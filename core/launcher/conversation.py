@@ -227,6 +227,7 @@ class ConversationBridge:
         self._pending_approval: Optional[tuple] = None   # (goal_id, title, expires_at)
         self._pending_paused: Optional[tuple] = None     # (goal_id, title, skill, expires_at)
         self._pending_command: Optional[tuple] = None    # (skill, args, describe, expires_at)
+        self._pending_plan: Optional[tuple] = None       # (steps, expires_at, plan_desc)
         self._pending_send: Optional[dict] = None        # a composed message await confirm
         self._lock = threading.Lock()
 
@@ -666,6 +667,103 @@ class ConversationBridge:
         return ("files.find_open",
                 result.error or f"I couldn't find a file matching '{query}'.")
 
+    # ── Multi-step: chain everyday actions into one plan ──────────────────────
+    # "open report.pdf and click Print" → resolve each step deterministically,
+    # confirm the WHOLE plan once (if any step is consequential), then run it in
+    # order, stopping honestly on the first failure. Small + rule-based on
+    # purpose: the reliable core, no fragile model in the loop.
+    _CHAIN_SPLIT_RE = re.compile(
+        r"\s+and\s+then\s+|\s+then\s+|\s+after\s+that\s+|\s+and\s+|,\s+", re.I)
+
+    def _resolve_step(self, part: str) -> Optional[tuple]:
+        """One chainable step → (skill, args, describe) or None."""
+        p = (part or "").strip().strip(".").strip()
+        if not p:
+            return None
+        low = p.lower()
+        m = re.match(r"^click(?:\s+on)?\s+(?:the\s+)?(?P<t>.+?)(?:\s+button|\s+link)?$",
+                     p, re.I)
+        if m and m.group("t").strip():
+            q = m.group("t").strip().strip("'\"")
+            return ("screen.click_text", {"query": q}, f"click '{q}'")
+        m = self._OPEN_FILE_RE.match(p)
+        if m:
+            rest = m.group("rest").strip()
+            if ("find and open" in low or "file" in rest.lower()
+                    or self._FILE_EXT_RE.search(rest)):
+                q = re.sub(r"^(?:the\s+|my\s+)?(?:file\s+(?:called\s+|named\s+)?)?",
+                           "", rest, flags=re.I).strip().strip("'\"")
+                if q:
+                    return ("files.find_open", {"query": q}, f"open {q}")
+        m = re.match(r"^open\s+(?:the\s+)?(?P<n>.+)$", p, re.I)
+        if m:
+            name = self._clean_app_name(m.group("n"))
+            if name:
+                return ("app.open", {"name": name}, f"open {name}")
+        m = re.match(r"^type\s+(?P<x>.+)$", p, re.I)
+        if m and m.group("x").strip():
+            return ("input.type_text", {"text": m.group("x").strip()}, "type that")
+        m = re.match(r"^press\s+(?:the\s+)?(?P<k>[\w ]+?)(?:\s+key)?$", p, re.I)
+        if m and m.group("k").strip():
+            return ("input.press_key", {"key": m.group("k").strip()},
+                    f"press {m.group('k').strip()}")
+        return None
+
+    def _step_needs_approval(self, skill_name: str) -> bool:
+        try:
+            from core.skills.permissions import Permission
+            return self.skills._registry.get(skill_name).permission >= Permission.USER_APPROVAL
+        except Exception:  # noqa: BLE001
+            return True                                  # unknown → be cautious
+
+    def _run_plan(self, steps: list, plan_desc: str) -> tuple:
+        """Run resolved steps in order; stop honestly on the first failure."""
+        from core.skills.permissions import Permission
+        done = []
+        for skill_name, args, desc in steps:
+            try:
+                skill = self.skills._registry.get(skill_name)
+                if skill.permission > Permission.USER_APPROVAL:
+                    return ("plan:refused", f"I can't {desc} — that needs admin rights.")
+                if skill.permission >= Permission.USER_APPROVAL:
+                    from core.executive.agentic import run_one_shot_approved
+                    result = run_one_shot_approved(self.skills, skill_name, args)
+                else:
+                    result = self.skills.execute(skill_name, args)
+            except Exception:  # noqa: BLE001
+                log.debug("plan step failed: %s", skill_name, exc_info=True)
+                result = None
+            if not getattr(result, "success", False):
+                err = getattr(result, "error", None) or "it failed"
+                prefix = f"I {', then '.join(done)}, but " if done else ""
+                return ("plan:failed", f"{prefix}couldn't {desc} — {err}.")
+            done.append(desc)
+        return ("plan:done", f"Done — I {', then '.join(done)}.")
+
+    def _multistep(self, command: str) -> Optional[tuple]:
+        """A chain of everyday actions in one utterance. Returns (key, answer) or
+        None (not a clean chain → let normal handling take the whole thing)."""
+        if self.skills is None:
+            return None
+        q = (command or "").strip()
+        if not q or q.endswith("?"):
+            return None
+        parts = [p.strip() for p in self._CHAIN_SPLIT_RE.split(q) if p.strip()]
+        if len(parts) < 2:
+            return None
+        steps = []
+        for part in parts:
+            r = self._resolve_step(part)
+            if r is None:
+                return None                              # all-or-nothing chain
+            steps.append(r)
+        plan_desc = ", then ".join(s[2] for s in steps)
+        if any(self._step_needs_approval(s[0]) for s in steps):
+            self._pending_command = None
+            self._pending_plan = (steps, time.time() + self._APPROVAL_TTL_S, plan_desc)
+            return ("plan:await_confirm", f"Say 'confirm' and I'll {plan_desc}.")
+        return self._run_plan(steps, plan_desc)
+
     def _command_gate(self, command: str) -> Optional[tuple]:
         """Runs AFTER the skill routes: a device imperative that no SAFE route
         matched. A USER_APPROVAL command (close app, type, press a key) is RUN
@@ -676,6 +774,19 @@ class ConversationBridge:
         q = (command or "").strip()
         if not q or q.endswith("?"):
             return None
+
+        # (0) a pending multi-step PLAN confirm waits for 'confirm'
+        plan_pending = self._pending_plan
+        if plan_pending is not None:
+            self._pending_plan = None                    # single-shot, always cleared
+            steps, expires_at, plan_desc = plan_pending
+            low = q.lower()
+            if time.time() <= expires_at:
+                if re.search(r"\b(confirm|confirmed|go ahead|do it|yes)\b", low):
+                    return self._run_plan(steps, plan_desc)
+                if re.search(r"\b(cancel|no|don'?t|never ?mind|stop)\b", low):
+                    return ("plan:cancelled", f"Okay, I won't {plan_desc}.")
+            # anything else: confirmation dropped, fall through to a fresh parse
 
         # (1) a pending direct-command confirm waits for exactly 'confirm'
         pending = self._pending_command
@@ -2396,6 +2507,22 @@ class ConversationBridge:
             key, answer = visible
             return self._respond_directly(turn, key, answer, t0)
 
+        # multi-step: "open report.pdf and click Print" — chain everyday actions
+        # into one confirmed plan, run in order. Before _try_skill so a chain
+        # isn't grabbed as a single app-open. All-or-nothing (else falls through).
+        chained = self._multistep(command)
+        if chained is not None:
+            key, answer = chained
+            return self._respond_directly(turn, key, answer, t0)
+
+        # the first "run my PC" job: "find and open my report", "open notes.txt"
+        # — a SAFE file search-and-open, on-device. Before _try_skill so a file
+        # open isn't mistaken for an app; scoped so "open spotify" stays an app.
+        opened_file = self._open_file(command)
+        if opened_file is not None:
+            key, answer = opened_file
+            return self._respond_directly(turn, key, answer, t0)
+
         # her body (M47): action-shaped commands ("take a screenshot", "system
         # status", "set volume to 40") run through the governed skill executor.
         # No `command=` — an action confirmation is not conversational context.
@@ -2493,14 +2620,6 @@ class ConversationBridge:
         sim = self._simulate(command)
         if sim is not None:
             key, answer = sim
-            return self._respond_directly(turn, key, answer, t0)
-
-        # the first "run my PC" job: "find and open my report", "open notes.txt"
-        # — a SAFE file search-and-open, on-device, no cloud. Scoped so it never
-        # hijacks "open spotify" (that stays an app-open).
-        opened_file = self._open_file(command)
-        if opened_file is not None:
-            key, answer = opened_file
             return self._respond_directly(turn, key, answer, t0)
 
         # the command gate (M59.1): an imperative no route matched is STILL a

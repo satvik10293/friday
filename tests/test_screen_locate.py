@@ -50,3 +50,42 @@ def test_locate_is_honest_with_no_display(monkeypatch):
     res = screen.locate("save")
     assert not res["ok"]
     assert res["matches"] == []
+
+
+# ── seeing ICONS: real cv2 template matching (no text involved) ────────────────
+
+def _blank():
+    from PIL import Image
+    return Image.new("RGB", (400, 300), (200, 200, 200))
+
+
+def _screen_with_icon(tmp_path):
+    """A grey 'screen' with a structured 'icon' (a two-colour X in a bordered box)
+    at a known spot — internal detail so template matching is well-posed. The icon
+    is saved as a template file. Returns (screen_img, template_path)."""
+    from PIL import ImageDraw
+    scr = _blank()
+    d = ImageDraw.Draw(scr)
+    d.rectangle([100, 80, 119, 99], fill=(255, 255, 255), outline=(0, 0, 0))
+    d.line([100, 80, 119, 99], fill=(220, 20, 20), width=2)
+    d.line([100, 99, 119, 80], fill=(20, 20, 220), width=2)
+    tpl_path = tmp_path / "icon.png"
+    scr.crop((100, 80, 120, 100)).save(tpl_path)          # the icon alone (20x20)
+    return scr, str(tpl_path)
+
+
+def test_locate_image_finds_an_icon_by_template(monkeypatch, tmp_path):
+    scr, tpl = _screen_with_icon(tmp_path)
+    monkeypatch.setattr(screen, "_capture_primary", lambda: scr)
+    res = screen.locate_image(tpl, screen_size=(400, 300), threshold=0.8)
+    assert res["ok"]
+    m = res["matches"][0]
+    assert abs(m["x"] - 110) <= 3 and abs(m["y"] - 90) <= 3   # centre of the icon
+
+
+def test_locate_image_is_honest_when_icon_absent(monkeypatch, tmp_path):
+    _, tpl = _screen_with_icon(tmp_path)
+    monkeypatch.setattr(screen, "_capture_primary", lambda: _blank())   # no icon
+    res = screen.locate_image(tpl, screen_size=(400, 300), threshold=0.9)
+    assert not res["ok"]
+    assert res["matches"] == []

@@ -189,6 +189,39 @@ def test_click_a_label_confirms_then_runs_the_aim_faculty():
     assert skills.executed == [("screen.click_text", {"query": "Save"})]
 
 
+# ── multi-step: chain everyday actions into one plan ──────────────────────────
+
+def test_multistep_all_safe_runs_in_order_without_confirm():
+    skills = _Skills({"files.find_open": _Skill(), "app.open": _Skill()})
+    bridge = _bridge(skills, _CloudSpy())
+    r = bridge.think("open notes.txt and open spotify")
+    assert [n for n, _ in skills.executed] == ["files.find_open", "app.open"]
+    assert skills.executed[0][1] == {"query": "notes.txt"}
+    assert skills.executed[1][1] == {"name": "spotify"}
+    assert "done" in r.answer.lower()
+
+
+def test_multistep_with_a_click_confirms_the_whole_plan_then_runs():
+    skills = _Skills({"files.find_open": _Skill(),
+                      "screen.click_text": _Skill(Permission.USER_APPROVAL)})
+    bridge = _bridge(skills, _CloudSpy())
+    r1 = bridge.think("open report.pdf and click Print")
+    assert skills.executed == []                         # one confirm for the whole plan
+    assert "confirm" in r1.answer.lower()
+    assert "open report.pdf" in r1.answer.lower() and "print" in r1.answer.lower()
+    bridge.think("confirm")
+    assert [n for n, _ in skills.executed] == ["files.find_open", "screen.click_text"]
+    assert skills.executed[1][1] == {"query": "Print"}
+
+
+def test_a_filename_containing_and_is_not_split_into_a_chain():
+    skills = _Skills({"files.find_open": _Skill(), "app.open": _Skill()})
+    bridge = _bridge(skills, _CloudSpy())
+    bridge.think("open the sales and marketing file")
+    names = [n for n, _ in skills.executed]
+    assert names == ["files.find_open"]                 # whole thing, not mis-chained
+
+
 def test_admin_commands_are_refused_never_confirmable():
     skills = _Skills({})
     cloud = _CloudSpy()

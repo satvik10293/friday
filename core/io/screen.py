@@ -227,3 +227,60 @@ def locate(query: str, *, screen_size=None) -> dict:
     matches = [m for _, _, m in scored]
     return {"ok": bool(matches), "matches": matches, "backend": "rapidocr",
             "reason": None if matches else f"no on-screen text matches '{query}'"}
+
+
+# ── Seeing ICONS / images, not just text ──────────────────────────────────────
+# OCR only sees text; an icon (gear, trash, an X) has none. Template matching
+# finds a reference image ON the screen — so she can click a visual element she's
+# been shown once. Local, deterministic (OpenCV), no model. Honest limit: it
+# matches THIS icon, it doesn't NAME an arbitrary one (that needs a vision model).
+
+def _match_template(screen_img, template_img, threshold: float):
+    """[(score, cx, cy), ...] image-pixel centres where template appears, best
+    first, with light non-max suppression so one icon isn't reported many times."""
+    import cv2
+    import numpy as np
+    scr = cv2.cvtColor(np.asarray(screen_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    tpl = cv2.cvtColor(np.asarray(template_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    th, tw = tpl.shape[:2]
+    if scr.shape[0] < th or scr.shape[1] < tw:
+        return []
+    res = cv2.matchTemplate(scr, tpl, cv2.TM_CCOEFF_NORMED)
+    ys, xs = np.where(res >= threshold)
+    cand = sorted(((float(res[y, x]), x + tw / 2.0, y + th / 2.0)
+                   for x, y in zip(xs, ys)), reverse=True)
+    kept = []
+    for score, cx, cy in cand:
+        if all(abs(cx - kx) > tw / 2 or abs(cy - ky) > th / 2 for _, kx, ky in kept):
+            kept.append((score, cx, cy))
+    return kept
+
+
+def locate_image(template_path: str, *, screen_size=None, threshold: float = 0.8) -> dict:
+    """WHERE does this reference image (icon) appear on screen? {ok, matches:
+    [{x,y,score}], reason}. Coordinates in the mouse space when screen_size is
+    given (DPI-safe). Best match first. Never raises."""
+    image = _capture_primary()
+    if image is None:
+        return {"ok": False, "matches": [],
+                "reason": "no display / capture unavailable"}
+    try:
+        from PIL import Image
+        template = Image.open(template_path)
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "matches": [],
+                "reason": f"couldn't open template image '{template_path}'"}
+    try:
+        found = _match_template(image, template, threshold)
+    except Exception:  # noqa: BLE001
+        log.debug("template match failed", exc_info=True)
+        return {"ok": False, "matches": [],
+                "reason": "image matching unavailable (needs opencv)"}
+    iw, ih = image.size
+    sw, sh = screen_size if screen_size else (iw, ih)
+    fx = sw / iw if iw else 1.0
+    fy = sh / ih if ih else 1.0
+    matches = [{"x": int(round(cx * fx)), "y": int(round(cy * fy)),
+                "score": round(s, 3)} for s, cx, cy in found]
+    return {"ok": bool(matches), "matches": matches,
+            "reason": None if matches else "that image isn't on the screen right now"}

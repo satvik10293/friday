@@ -545,6 +545,37 @@ class FridayAction:
             return f"Clicked '{best['text']}' {where} (closest of {len(matches)} matches)."
         return f"Clicked '{best['text']}' {where}."
 
+    def locate_image(self, template_path: str, threshold: float = 0.8) -> list:
+        """[{x, y, score}] — where an icon/reference image appears, in click
+        coordinates. Read-only. Best match first. For icons OCR can't read."""
+        from core.io import screen
+        size = None
+        if self._caps["pyautogui"]:
+            try:
+                import pyautogui
+                size = tuple(pyautogui.size())
+            except Exception:
+                size = None
+        return screen.locate_image(template_path, screen_size=size,
+                                   threshold=threshold).get("matches", [])
+
+    def click_image(self, template_path: str, button: str = "left",
+                    threshold: float = 0.8) -> str:
+        """Find an icon/image on screen (by a reference image) and click it.
+        Honest: says so when it can't see it — never clicks blind."""
+        if not self._caps["pyautogui"]:
+            return "pyautogui not available"
+        matches = self.locate_image(template_path, threshold)
+        if not matches:
+            raise LookupError("I can't see that icon on the screen right now.")
+        best = matches[0]
+        import pyautogui
+        pyautogui.click(best["x"], best["y"], button=button)
+        where = f"at ({best['x']}, {best['y']})"
+        if len(matches) > 1:
+            return f"Clicked the icon {where} (best of {len(matches)} matches)."
+        return f"Clicked the icon {where}."
+
     def scroll(self, clicks: int = 3, direction: str = "down") -> str:
         if not self._caps["pyautogui"]:
             return "pyautogui not available"
