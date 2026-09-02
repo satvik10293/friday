@@ -512,6 +512,39 @@ class FridayAction:
             pyautogui.click(button=button)
         return f"Clicked {button}"
 
+    # ── The "aim" faculty: point/click at VISIBLE TEXT on screen ──────────────
+    # read_screen sees WHAT is on screen; these find WHERE, so she can click a
+    # labelled control instead of a blind coordinate. Coordinates come back in
+    # pyautogui's own space, so aiming survives display scaling.
+    def locate_text(self, query: str) -> list:
+        """[{text, x, y}] — where matching visible text sits, in click coordinates.
+        Read-only (no pointer movement). Best match first."""
+        from core.io import screen
+        size = None
+        if self._caps["pyautogui"]:
+            try:
+                import pyautogui
+                size = tuple(pyautogui.size())
+            except Exception:
+                size = None
+        return screen.locate(query, screen_size=size).get("matches", [])
+
+    def click_text(self, query: str, button: str = "left") -> str:
+        """Find a visible label on screen and click it. Honest: says so when it
+        can't see the text — never clicks blind."""
+        if not self._caps["pyautogui"]:
+            return "pyautogui not available"
+        matches = self.locate_text(query)
+        if not matches:
+            raise LookupError(f"I can't see '{query}' on the screen right now.")
+        best = matches[0]
+        import pyautogui
+        pyautogui.click(best["x"], best["y"], button=button)
+        where = f"at ({best['x']}, {best['y']})"
+        if len(matches) > 1:
+            return f"Clicked '{best['text']}' {where} (closest of {len(matches)} matches)."
+        return f"Clicked '{best['text']}' {where}."
+
     def scroll(self, clicks: int = 3, direction: str = "down") -> str:
         if not self._caps["pyautogui"]:
             return "pyautogui not available"

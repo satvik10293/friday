@@ -82,6 +82,9 @@ _SPECS: list[ActionSpec] = [
                *_T2, ("files", "act"),
                {"query": {"required": True, "type": str},
                 "folder": {"type": str}, "extension": {"type": str}}),
+    ActionSpec("screen.locate", "locate_text",
+               "Find where visible text sits on screen (coordinates, read-only).",
+               *_T1, ("screen", "read"), {"query": {"required": True, "type": str}}),
     ActionSpec("system.capabilities", "capabilities", "Which action capabilities are available.",
                *_T1, ("system", "read")),
     ActionSpec("system.battery_alert", "start_battery_alert",
@@ -136,6 +139,10 @@ _SPECS: list[ActionSpec] = [
     ActionSpec("input.click", "click", "Click the mouse.",
                *_T3, ("input", "act"),
                {"x": {"type": int}, "y": {"type": int}, "button": {"type": str}}),
+    ActionSpec("screen.click_text", "click_text",
+               "Find a visible text label on screen and click it.",
+               *_T3, ("input", "act"),
+               {"query": {"required": True, "type": str}, "button": {"type": str}}),
 
     # ── Tier 3+ — machine-altering, admin role + approval ─────────────────────
     ActionSpec("shell.run", "run_shell",

@@ -612,6 +612,10 @@ class ConversationBridge:
              r"(?P<key>[\w ]+?)(?:\s+key)?$", "input.press_key",
              lambda m: {"key": m.group("key").strip()},
              lambda a: f"press {a['key']}"),
+            (r"^(?:please\s+|friday[,\s]*)*click(?:\s+on)?\s+(?:the\s+)?"
+             r"(?P<label>.+?)(?:\s+button|\s+link)?$", "screen.click_text",
+             lambda m: {"query": m.group("label").strip().strip("'\"")},
+             lambda a: f"click '{a['query']}'"),
         ]
         cls._CONFIRM_ROUTES = [(re.compile(p, re.I), s, a, d)
                                for p, s, a, d in routes]

@@ -179,6 +179,16 @@ def test_type_command_confirms_then_runs():
     assert skills.executed == [("input.type_text", {"text": "hello world"})]
 
 
+def test_click_a_label_confirms_then_runs_the_aim_faculty():
+    skills = _Skills({"screen.click_text": _Skill(Permission.USER_APPROVAL)})
+    bridge = _bridge(skills, _CloudSpy())
+    r1 = bridge.think("click the Save button")
+    assert skills.executed == []                    # waits for confirm (it's a click)
+    assert "confirm" in r1.answer.lower() and "save" in r1.answer.lower()
+    bridge.think("confirm")
+    assert skills.executed == [("screen.click_text", {"query": "Save"})]
+
+
 def test_admin_commands_are_refused_never_confirmable():
     skills = _Skills({})
     cloud = _CloudSpy()

@@ -137,3 +137,93 @@ def read_screen() -> dict:
                     "chars": len(cleaned)}
     return {"ok": False, "text": "", "backend": None,
             "reason": "no OCR backend available"}
+
+
+# ── Locating text ON the screen (the "aim" faculty) ───────────────────────────
+# read_screen() gives WHAT is on the screen; locate() gives WHERE — the box
+# centre of matching text, so she can point and click at a visible label. The
+# centre is scaled from image pixels into the mouse coordinate space, which makes
+# aiming survive display scaling (DPI). Primary monitor only — an honest scope.
+
+def _capture_primary():
+    """The primary monitor as a PIL image (origin 0,0 — clean for aiming), or None."""
+    try:
+        from PIL import ImageGrab
+        return ImageGrab.grab()
+    except Exception:  # noqa: BLE001
+        log.debug("primary capture failed", exc_info=True)
+        return None
+
+
+def _boxes_rapidocr(image):
+    """[(text, cx, cy), ...] in image pixels. RapidOCR returns [box, text, score]
+    per line — read_screen throws box away; here we keep it (box = 4 corners)."""
+    try:
+        import numpy as np
+        from rapidocr_onnxruntime import RapidOCR
+        global _RAPID
+        try:
+            _RAPID
+        except NameError:
+            _RAPID = RapidOCR()
+        result, _ = _RAPID(np.asarray(image.convert("RGB")))
+        items = []
+        for line in result or []:
+            box, text = line[0], line[1]
+            xs = [p[0] for p in box]
+            ys = [p[1] for p in box]
+            items.append((text, (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0))
+        return items
+    except Exception:  # noqa: BLE001
+        log.debug("rapidocr boxes failed", exc_info=True)
+        return None
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def _rank(item_text: str, query: str) -> Optional[int]:
+    """Match quality, lower = better; None = no match. exact < starts-with <
+    contains < all-words-present."""
+    t, q = _norm(item_text), _norm(query)
+    if not q:
+        return None
+    if t == q:
+        return 0
+    if t.startswith(q):
+        return 1
+    if q in t:
+        return 2
+    if q.split() and all(w in t.split() for w in q.split()):
+        return 3
+    return None
+
+
+def locate(query: str, *, screen_size=None) -> dict:
+    """WHERE is this text on screen? {ok, matches:[{text,x,y}], backend, reason}.
+    Coordinates are in the mouse coordinate space when screen_size=(w,h) is given
+    (scaled from image pixels — survives DPI). Best match first. Never raises."""
+    image = _capture_primary()
+    if image is None:
+        return {"ok": False, "matches": [], "backend": None,
+                "reason": "no display / capture unavailable"}
+    items = _boxes_rapidocr(image) if _backend_available("rapidocr") else None
+    if items is None:
+        return {"ok": False, "matches": [], "backend": None,
+                "reason": "box-level OCR unavailable (needs rapidocr)"}
+    iw, ih = image.size
+    sw, sh = screen_size if screen_size else (iw, ih)
+    fx = sw / iw if iw else 1.0
+    fy = sh / ih if ih else 1.0
+    scored = []
+    for text, cx, cy in items:
+        r = _rank(text, query)
+        if r is not None:
+            scored.append((r, len(_norm(text)),
+                           {"text": text, "x": int(round(cx * fx)),
+                            "y": int(round(cy * fy))}))
+    scored.sort(key=lambda s: (s[0], s[1]))
+    matches = [m for _, _, m in scored]
+    return {"ok": bool(matches), "matches": matches, "backend": "rapidocr",
+            "reason": None if matches else f"no on-screen text matches '{query}'"}
