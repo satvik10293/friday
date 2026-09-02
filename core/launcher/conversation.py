@@ -624,6 +624,44 @@ class ConversationBridge:
                       name, flags=re.I)
         return name.strip()
 
+    _FILE_EXT_RE = re.compile(
+        r"\.(txt|pdf|docx?|xlsx?|pptx?|csv|md|rtf|log|json|png|jpe?g|gif|mp4|mp3|zip)\b",
+        re.I)
+    _OPEN_FILE_RE = re.compile(
+        r"^(?:please\s+|friday[,\s]*)*(?:find\s+and\s+open|open)\s+(?P<rest>.+)$", re.I)
+
+    def _open_file(self, command: str) -> Optional[tuple]:
+        """SAFE everyday job — the first 'run my PC' brick: 'find and open my
+        report', 'open the file notes.txt'. Searches by name, opens the closest
+        match, answers honestly when there's none. Scoped so it never hijacks
+        'open spotify' — it only fires on a clear FILE intent. Never raises."""
+        if self.skills is None:
+            return None
+        q = (command or "").strip()
+        if not q or q.endswith("?"):
+            return None
+        m = self._OPEN_FILE_RE.match(q)
+        if not m:
+            return None
+        rest = m.group("rest").strip()
+        # a FILE open only — not "open spotify"/"open chrome" (those are apps)
+        if not ("find and open" in q.lower() or "file" in rest.lower()
+                or self._FILE_EXT_RE.search(rest)):
+            return None
+        query = re.sub(r"^(?:the\s+|my\s+)?(?:file\s+(?:called\s+|named\s+)?)?",
+                       "", rest, flags=re.I).strip().strip("'\"").strip()
+        if not query:
+            return None
+        try:
+            result = self.skills.execute("files.find_open", {"query": query})
+        except Exception:
+            log.debug("open_file route failed", exc_info=True)
+            return ("files.find_open", f"I couldn't open '{query}'.")
+        if result.success:
+            return ("files.find_open", str(result.data or f"Opened {query}."))
+        return ("files.find_open",
+                result.error or f"I couldn't find a file matching '{query}'.")
+
     def _command_gate(self, command: str) -> Optional[tuple]:
         """Runs AFTER the skill routes: a device imperative that no SAFE route
         matched. A USER_APPROVAL command (close app, type, press a key) is RUN
@@ -2451,6 +2489,14 @@ class ConversationBridge:
         sim = self._simulate(command)
         if sim is not None:
             key, answer = sim
+            return self._respond_directly(turn, key, answer, t0)
+
+        # the first "run my PC" job: "find and open my report", "open notes.txt"
+        # — a SAFE file search-and-open, on-device, no cloud. Scoped so it never
+        # hijacks "open spotify" (that stays an app-open).
+        opened_file = self._open_file(command)
+        if opened_file is not None:
+            key, answer = opened_file
             return self._respond_directly(turn, key, answer, t0)
 
         # the command gate (M59.1): an imperative no route matched is STILL a

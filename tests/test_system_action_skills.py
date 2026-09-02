@@ -84,7 +84,7 @@ def test_all_37_actions_registered():
     registry = SkillRegistry()
     register_builtins(registry)
     action_names = {s.skill_name for s in ALL_ACTION_SPECS}
-    assert len(ALL_ACTION_SPECS) == 38          # + media.play_music (real playback)
+    assert len(ALL_ACTION_SPECS) == 40          # + media.play_music, files.open/find_open
     assert action_names <= set(registry.names())
 
 
@@ -92,9 +92,68 @@ def test_tier_distribution():
     by_permission = {}
     for spec in ALL_ACTION_SPECS:
         by_permission.setdefault(spec.permission, []).append(spec.skill_name)
-    assert len(by_permission[Permission.SAFE]) == 29          # tiers 1 + 2
+    assert len(by_permission[Permission.SAFE]) == 31          # tiers 1 + 2
     assert len(by_permission[Permission.USER_APPROVAL]) == 4  # tier 3
     assert len(by_permission[Permission.ADMIN_ONLY]) == 5     # tier 3+
+
+
+# ── the first end-to-end "run my PC" job: find a file and open it ────────────────
+
+@pytest.fixture
+def real_action_harness(tmp_path, monkeypatch):
+    """Executor wired to the REAL FridayAction, with the OS 'open' call stubbed so
+    the job runs its true search→pick→open logic without launching a GUI."""
+    from core.io import friday_action as fa
+    from core.skills.audit import AuditLog
+
+    opened = []
+    monkeypatch.setattr(fa.os, "startfile", lambda p: opened.append(str(p)), raising=False)
+
+    def _popen(*a, **k):  # record only file-open calls, neutralize other subprocess use
+        cmd = a[0] if a else None
+        if isinstance(cmd, (list, tuple)) and cmd and cmd[0] in ("open", "xdg-open"):
+            opened.append(str(cmd[-1]))
+        return None
+    monkeypatch.setattr(fa.subprocess, "Popen", _popen)
+    monkeypatch.setattr(sa, "_action", fa.FridayAction())
+
+    registry = SkillRegistry()
+    register_builtins(registry)
+    executor = SkillExecutor(
+        registry=registry,
+        audit=AuditLog(tmp_path / "audit.db"),
+        security_log=SecuritySpy(),
+        approvals=ApprovalManager(auto_decider=lambda req: True),
+    )
+    return executor, opened
+
+
+def test_find_and_open_job_opens_the_closest_match(real_action_harness, tmp_path):
+    executor, opened = real_action_harness
+    (tmp_path / "report.txt").write_text("hi")
+    (tmp_path / "report_final_v2.txt").write_text("hi")
+    (tmp_path / "notes.txt").write_text("hi")
+
+    result = executor.execute("files.find_open",
+                              {"query": "report", "folder": str(tmp_path)})
+    assert result.success
+    assert opened and opened[-1].endswith("report.txt")   # exact stem beats the longer name
+
+
+def test_find_and_open_fails_honestly_when_missing(real_action_harness, tmp_path):
+    executor, opened = real_action_harness
+    result = executor.execute("files.find_open",
+                              {"query": "does_not_exist", "folder": str(tmp_path)})
+    assert not result.success
+    assert not opened
+
+
+def test_open_file_refuses_to_launch_executables(real_action_harness, tmp_path):
+    executor, opened = real_action_harness
+    (tmp_path / "danger.exe").write_text("nope")
+    result = executor.execute("files.open", {"path": str(tmp_path / "danger.exe")})
+    assert not result.success
+    assert not opened          # code is never auto-launched
 
 
 # ── execution through the pipeline ─────────────────────────────────────────────

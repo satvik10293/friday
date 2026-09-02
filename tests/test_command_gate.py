@@ -116,6 +116,37 @@ def test_clipboard_and_brightness_commands_act():
     assert ("display.set_brightness", {"level": 70}) in skills.executed
 
 
+# ── the first "run my PC" job: find-and-open a file (SAFE, on-device) ──────────
+
+def test_open_file_by_extension_routes_to_find_open():
+    skills = _Skills({"files.find_open": _Skill()})
+    bridge = _bridge(skills, _CloudSpy())
+    bridge.think("open notes.txt")
+    assert ("files.find_open", {"query": "notes.txt"}) in skills.executed
+
+
+def test_find_and_open_phrase_routes_to_find_open():
+    skills = _Skills({"files.find_open": _Skill()})
+    bridge = _bridge(skills, _CloudSpy())
+    bridge.think("find and open report")
+    assert ("files.find_open", {"query": "report"}) in skills.executed
+
+
+def test_open_the_file_called_x_routes_to_find_open():
+    skills = _Skills({"files.find_open": _Skill()})
+    bridge = _bridge(skills, _CloudSpy())
+    bridge.think("open the file called budget")
+    assert ("files.find_open", {"query": "budget"}) in skills.executed
+
+
+def test_open_app_is_not_hijacked_by_the_file_route():
+    skills = _Skills({"app.open": _Skill(), "files.find_open": _Skill()})
+    bridge = _bridge(skills, _CloudSpy())
+    bridge.think("open spotify")
+    assert ("app.open", {"name": "spotify"}) in skills.executed
+    assert all(name != "files.find_open" for name, _ in skills.executed)
+
+
 # ── USER_APPROVAL commands ACT via a two-step voice confirm ───────────────────
 
 def test_close_app_is_a_two_step_confirm_that_then_runs():

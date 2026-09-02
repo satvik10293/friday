@@ -818,6 +818,56 @@ class FridayAction:
         files.sort(reverse=True)
         return [f[1] for f in files[:count]]
 
+    # ── Open a file / find-and-open (the first end-to-end "run my PC" job) ─────
+    # Auto-opening an executable would run code, so this refuses those extensions
+    # and points at the approval-gated shell.run instead. Documents, media,
+    # images, folders — the everyday cases — open with the OS default program.
+    _UNSAFE_OPEN = {".exe", ".bat", ".cmd", ".com", ".ps1", ".msi", ".scr",
+                    ".vbs", ".js", ".jar", ".reg", ".lnk"}
+
+    def open_file(self, path: str) -> str:
+        """Open one file (or folder) with its default program. Honest: raises if
+        it doesn't exist, and refuses to auto-launch code (see _UNSAFE_OPEN)."""
+        from pathlib import Path as P
+        p = P(path).expanduser()
+        if not p.exists():
+            raise FileNotFoundError(f"There's no file at {path}.")
+        if p.is_file() and p.suffix.lower() in self._UNSAFE_OPEN:
+            raise PermissionError(
+                f"I won't auto-open a {p.suffix} file — that runs code. "
+                f"Ask me to run it explicitly (that needs your approval).")
+        if _IS_WIN:
+            os.startfile(str(p))  # noqa: S606 — owner-named file, default assoc
+        elif _IS_MAC:
+            subprocess.Popen(["open", str(p)])
+        else:
+            subprocess.Popen(["xdg-open", str(p)])
+        return f"Opened {p.name}"
+
+    @staticmethod
+    def _best_file_match(paths: list, query: str) -> str:
+        """Pick the closest match: prefer an exact name hit, else the shortest
+        filename containing the query (the least-cluttered, most-likely target)."""
+        from pathlib import Path as P
+        q = query.lower().strip()
+        exact = [p for p in paths if P(p).stem.lower() == q]
+        if exact:
+            return exact[0]
+        return min(paths, key=lambda p: (len(P(p).name), p))
+
+    def find_and_open(self, query: str, folder: str = None,
+                      extension: str = None) -> str:
+        """The everyday job: find a file by name and open it. Searches, picks the
+        closest match, opens it — or fails honestly if nothing matches."""
+        matches = self.search_files(query, folder, extension)
+        if not matches:
+            raise FileNotFoundError(f"I couldn't find a file matching '{query}'.")
+        best = self._best_file_match(matches, query)
+        opened = self.open_file(best)
+        if len(matches) > 1:
+            return f"{opened} (closest of {len(matches)} matches for '{query}')."
+        return f"{opened} for '{query}'."
+
     # ── Startup programs (Windows) ────────────────────────────────────────────
 
     def add_to_startup(self, name: str, exe_path: str) -> str:
