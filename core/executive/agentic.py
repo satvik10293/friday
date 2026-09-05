@@ -137,17 +137,26 @@ class AgenticWorkflow:
 
     def __init__(self, goals, skills=None, *, memory=None, decision_log=None,
                  deliberator=None, world_model=None,
-                 goals_per_cycle: int = 2) -> None:
+                 goals_per_cycle: int = 2, runtime=None,
+                 max_concurrency: int = 1) -> None:
         self.goals = goals
         self.gate = SafeAutonomyGate(skills) if skills is not None else None
         self.goals_per_cycle = max(1, int(goals_per_cycle))
+        # deps kept so each concurrent worker can build its OWN ExecutiveBrain
+        # (no shared cognitive state races when goals run in parallel)
+        self._memory = memory
+        self._decision_log = decision_log
+        self._deliberator = deliberator
+        self._world_model = world_model
+        # "many tasks at once": run up to N goals concurrently on the runtime's
+        # thread pool. Default 1 == today's exact serial behaviour (opt-in only).
+        self._runtime = runtime
+        self._max_concurrency = max(1, min(int(max_concurrency), self.goals_per_cycle))
+        self._inflight: set = set()               # goal_ids currently being worked
         # the M5 ExecutiveBrain supplies context (memory + goals + world model),
-        # attention, reasoning, planning, and the orchestrator — all existing
-        from core.executive.executive import ExecutiveBrain
-        self.executive = ExecutiveBrain(
-            memory_service=memory, goal_service=goals,
-            skill_executor=self.gate, decision_log=decision_log,
-            world_model=world_model, deliberator=deliberator)
+        # attention, reasoning, planning, and the orchestrator — all existing.
+        # This shared brain still drives the serial (default) path unchanged.
+        self.executive = self._new_executive()
         self.cycles = 0
         self.executed = 0
         self.completed = 0
@@ -158,19 +167,39 @@ class AgenticWorkflow:
         self._lock = threading.Lock()
         self._last: dict = {}
 
+    def _new_executive(self):
+        """A fresh ExecutiveBrain from the shared services — in-memory state only
+        (state_store=None), so concurrent workers never clobber one shared row."""
+        from core.executive.executive import ExecutiveBrain
+        return ExecutiveBrain(
+            memory_service=self._memory, goal_service=self.goals,
+            skill_executor=self.gate, decision_log=self._decision_log,
+            world_model=self._world_model, deliberator=self._deliberator)
+
     # ── one scheduled pass ───────────────────────────────────────────────────────
     def cycle(self) -> dict:
         """Work up to `goals_per_cycle` ACTIVE goals to an outcome. Quiet,
-        bounded, never raises — safe to run on the runtime scheduler forever."""
+        bounded, never raises — safe to run on the runtime scheduler forever.
+
+        With max_concurrency == 1 (default) this is the original serial loop.
+        Above that, SAFE-only goals run in parallel on the runtime pool while any
+        goal needing approval stays on a single serial lane (the approval path is
+        not reentrant), so parallelism never weakens the security posture."""
         summary = {"worked": [], "completed": [], "paused": [], "failed": []}
         try:
+            gids = []
             for brief in (self.goals.next_actions(self.goals_per_cycle) or []):
                 gid = brief.get("goal_id") if isinstance(brief, dict) else None
-                if not gid:
-                    continue
-                outcome = self._work_goal(gid)
-                summary["worked"].append(gid)
-                summary[outcome].append(gid)
+                if gid and self._claim(gid):
+                    gids.append(gid)
+            try:
+                if self._max_concurrency <= 1 or self._runtime is None:
+                    for gid in gids:                       # serial — unchanged
+                        self._run_and_record(gid, summary)
+                else:
+                    self._cycle_concurrent(gids, summary)
+            finally:
+                self._release(gids)
         except Exception:  # noqa: BLE001 — the loop must survive anything
             log.debug("agentic cycle failed", exc_info=True)
         with self._lock:
@@ -178,15 +207,70 @@ class AgenticWorkflow:
             self._last = summary
         return summary
 
-    def _work_goal(self, goal_id: str) -> str:
+    def _claim(self, gid: str) -> bool:
+        """Reserve a goal so overlapping cycles / lanes never work it twice."""
+        with self._lock:
+            if gid in self._inflight:
+                return False
+            self._inflight.add(gid)
+            return True
+
+    def _release(self, gids) -> None:
+        with self._lock:
+            self._inflight.difference_update(gids)
+
+    def _run_and_record(self, gid: str, summary: dict, *, fresh: bool = False) -> None:
+        """Work one goal and record its outcome. `fresh` gives it its own
+        ExecutiveBrain (for the concurrent lane). Summary writes are locked."""
+        executive = self._new_executive() if fresh else None
+        outcome = self._work_goal(gid, executive=executive)
+        with self._lock:
+            summary["worked"].append(gid)
+            summary[outcome].append(gid)
+
+    def _cycle_concurrent(self, gids: list, summary: dict) -> None:
+        """SAFE-only goals in parallel (bounded); approval-needing goals serial."""
+        import concurrent.futures as cf
+        safe = [g for g in gids if self._is_safe_only(g)]
+        serial = [g for g in gids if g not in safe]
+        for i in range(0, len(safe), self._max_concurrency):      # bounded waves
+            wave = safe[i:i + self._max_concurrency]
+            futures = [self._runtime.submit(self._run_and_record, g, summary, fresh=True)
+                       for g in wave]
+            for f in cf.as_completed(futures):
+                try:
+                    f.result()
+                except Exception:  # noqa: BLE001 — one worker can't sink the cycle
+                    log.debug("concurrent goal failed", exc_info=True)
+        for gid in serial:                                        # non-reentrant path
+            self._run_and_record(gid, summary)
+
+    def _is_safe_only(self, goal_id: str) -> bool:
+        """True if the goal's skill is SAFE (or it has no skill — a thinking
+        step). Anything unprovable falls to the serial lane (conservative)."""
+        if self.gate is None:
+            return True
+        goal = self.goals.get_goal(goal_id)
+        meta = getattr(goal, "metadata", None) or {}
+        skill = meta.get("skill") if isinstance(meta, dict) else None
+        if not skill:
+            return True
+        try:
+            return self.gate.registry.get(skill).permission == Permission.SAFE
+        except Exception:  # noqa: BLE001 — unknown skill → play it safe, serialize
+            return False
+
+    def _work_goal(self, goal_id: str, executive=None) -> str:
         """Drive one goal through decide → execute → feedback. Returns
-        'completed' | 'paused' | 'failed'."""
+        'completed' | 'paused' | 'failed'. `executive` lets a concurrent worker
+        use its own brain; None uses the shared one (the serial default)."""
+        ex = executive if executive is not None else self.executive
         goal = self.goals.get_goal(goal_id)
         if goal is None:
             return "failed"
         try:
-            plan = self.executive.decide(goal.title, goals=[goal])
-            result = self.executive.execute_plan(plan)
+            plan = ex.decide(goal.title, goals=[goal])
+            result = ex.execute_plan(plan)
             with self._lock:
                 self.executed += 1
         except Exception as e:  # noqa: BLE001 — a broken plan fails the goal
@@ -315,7 +399,9 @@ class AgenticWorkflow:
                     "failed": self.failed, "approved_resumes": self.approved_resumes,
                     "rejected": self.rejected, "last": dict(self._last),
                     "policy": "safe_only",
-                    "gated": self.gate is not None}
+                    "gated": self.gate is not None,
+                    "max_concurrency": self._max_concurrency,
+                    "inflight": len(self._inflight)}
 
     def health(self) -> dict:
         return {"status": "ok", **self.status()}
@@ -323,16 +409,19 @@ class AgenticWorkflow:
 
 def build_agentic_workflow(*, goals, skills=None, memory=None,
                            decision_log=None, deliberator=None,
-                           world_model=None, goals_per_cycle: int = 2
+                           world_model=None, goals_per_cycle: int = 2,
+                           runtime=None, max_concurrency: int = 1
                            ) -> Optional[AgenticWorkflow]:
-    """Factory used at boot. None when goals are absent; never raises."""
+    """Factory used at boot. None when goals are absent; never raises.
+    max_concurrency>1 (opt-in) lets her work several SAFE goals at once."""
     if goals is None:
         return None
     try:
         return AgenticWorkflow(
             goals, skills, memory=memory, decision_log=decision_log,
             deliberator=deliberator, world_model=world_model,
-            goals_per_cycle=goals_per_cycle)
+            goals_per_cycle=goals_per_cycle, runtime=runtime,
+            max_concurrency=max_concurrency)
     except Exception:  # noqa: BLE001 — the workflow is optional at boot
         log.debug("agentic workflow build failed", exc_info=True)
         return None

@@ -432,7 +432,9 @@ class StartupSequence:
                     deliberator=getattr(v3_exec, "deliberate", None),
                     world_model=(kernel.try_get("world_model")
                                  if kernel is not None else None),
-                    goals_per_cycle=int(acfg.get("goals_per_cycle", 2)))
+                    goals_per_cycle=int(acfg.get("goals_per_cycle", 2)),
+                    runtime=runtime,
+                    max_concurrency=int(acfg.get("max_concurrency", 1)))
                 if workflow is not None:
                     self.components["agentic"] = workflow
                     if kernel is not None:
