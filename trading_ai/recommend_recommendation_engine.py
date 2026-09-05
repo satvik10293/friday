@@ -318,6 +318,12 @@ class RecommendationEngine:
             )
             score *= 0.5 + win_rate  # win_rate 0 -> halves score, 1 -> 1.5x score
 
+        # --- 4) trained model (present ONLY if it passed the honest edge test) --
+        prob = self._model_prob(df)
+        if prob is not None:
+            reasons.append(f"Trained model: {prob:.0%} chance up next")
+            score += (prob - 0.5) * 40.0        # ±20 nudge, centred on 50/50
+
         # --- decision -------------------------------------------------------
         confidence = min(100.0, abs(score))
         plan: Optional[TradePlan] = None
@@ -389,6 +395,19 @@ class RecommendationEngine:
             rr_ratio=reward / risk,
             risk_pct=risk / entry * 100,
         )
+
+    def _model_prob(self, df) -> Optional[float]:
+        """P(up next) from a trained model, cached. None unless a model exists —
+        and one only exists if it beat the honest out-of-sample edge test."""
+        try:
+            from train_model import load_model, predict_up_prob
+            if not hasattr(self, "_model_bundle"):
+                self._model_bundle = load_model()
+            if self._model_bundle is None:
+                return None
+            return predict_up_prob(df, self._model_bundle)
+        except Exception:  # noqa: BLE001
+            return None
 
     # ------------------------------------------------------------------
     # Backtest-derived probability / expectancy
