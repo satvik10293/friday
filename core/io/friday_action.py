@@ -598,6 +598,15 @@ class FridayAction:
         IconLibrary().save(name, img.crop(box))
         return f"Got it — I'll remember the '{name}' icon."
 
+    def describe_image(self, path: str) -> str:
+        """Look at an image file and say what's in it (general captioning). Honest
+        when she can't see it — never invents a description."""
+        from core.vision import image_understanding as vi
+        res = vi.describe_image(path)
+        if res.get("ok"):
+            return res["text"]
+        raise RuntimeError(res.get("reason") or "I couldn't describe that image.")
+
     def click_icon(self, name: str, button: str = "left",
                    threshold: float = 0.8) -> str:
         """Click a previously-taught icon by name. Honest: if she hasn't learned

@@ -671,6 +671,35 @@ class ConversationBridge:
         return ("files.find_open",
                 result.error or f"I couldn't find a file matching '{query}'.")
 
+    # ── Look at an image: "what's in this picture C:\pics\a.png" ──────────────
+    _DESCRIBE_IMG_RE = re.compile(
+        r"^(?:please\s+|friday[,\s]*)*(?:describe|what'?s?(?:\s+is)?\s+in|what\s+is|"
+        r"look\s+at|tell\s+me\s+about)\s+(?:the\s+|this\s+|my\s+)?"
+        r"(?:image|picture|photo|screenshot|img)?\s*"
+        r"(?P<path>[^\s'\"].*?\.(?:png|jpe?g|gif|bmp|webp))[?.!]?\s*$", re.I)
+
+    def _describe_image(self, command: str) -> Optional[tuple]:
+        """General image understanding: describe an image file she's pointed at.
+        On-demand (the model loads only here). Returns (key, answer) or None."""
+        if self.skills is None:
+            return None
+        q = (command or "").strip()
+        if not q:
+            return None
+        m = self._DESCRIBE_IMG_RE.match(q)
+        if not m:
+            return None
+        path = m.group("path").strip().strip("'\"")
+        try:
+            result = self.skills.execute("vision.describe", {"path": path})
+        except Exception:  # noqa: BLE001
+            log.debug("describe_image route failed", exc_info=True)
+            return ("vision.describe", "I couldn't look at that image.")
+        if result.success:
+            return ("vision.describe", f"It looks like: {result.data}")
+        return ("vision.describe",
+                result.error or "I couldn't describe that image.")
+
     # ── Point-and-teach an icon: "remember this as the settings icon" ─────────
     _TEACH_ICON_RE = re.compile(
         r"^(?:please\s+|friday[,\s]*)*(?:remember|save|learn)\s+(?:this|the\s+current)"
@@ -2543,6 +2572,13 @@ class ConversationBridge:
         visible = self._visibility(command)
         if visible is not None:
             key, answer = visible
+            return self._respond_directly(turn, key, answer, t0)
+
+        # general image understanding: "what's in this picture C:\a.png" — an
+        # on-demand local captioner (the model loads only here, never at startup).
+        described = self._describe_image(command)
+        if described is not None:
+            key, answer = described
             return self._respond_directly(turn, key, answer, t0)
 
         # point-and-teach an icon: "remember this as the settings icon" — grabs

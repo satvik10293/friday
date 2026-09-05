@@ -250,6 +250,13 @@ def test_click_a_text_label_is_not_treated_as_an_icon():
     assert [n for n, _ in skills.executed] == ["screen.click_text"]
 
 
+def test_describe_image_routes_to_vision_describe():
+    skills = _Skills({"vision.describe": _Skill()})     # SAFE (read-only) → runs
+    bridge = _bridge(skills, _CloudSpy())
+    bridge.think(r"what's in this picture C:\pics\holiday.jpg")
+    assert ("vision.describe", {"path": r"C:\pics\holiday.jpg"}) in skills.executed
+
+
 def test_admin_commands_are_refused_never_confirmable():
     skills = _Skills({})
     cloud = _CloudSpy()
