@@ -576,6 +576,42 @@ class FridayAction:
             return f"Clicked the icon {where} (best of {len(matches)} matches)."
         return f"Clicked the icon {where}."
 
+    def teach_icon(self, name: str, size: int = 48) -> str:
+        """Point-and-teach: grab the pixels under the cursor and remember them as
+        a named icon, so she can find and click it later. Honest on failure."""
+        if not self._caps["pyautogui"]:
+            return "pyautogui not available"
+        from core.io import screen
+        from core.io.icon_library import IconLibrary
+        import pyautogui
+        img = screen._capture_primary()
+        if img is None:
+            raise RuntimeError("I can't capture the screen right now.")
+        iw, ih = img.size
+        sw, sh = tuple(pyautogui.size())
+        px, py = tuple(pyautogui.position())
+        ix = px * iw / sw if sw else px           # cursor (logical) → image pixels
+        iy = py * ih / sh if sh else py
+        half = max(8, int(size)) / 2.0
+        box = (max(0, int(ix - half)), max(0, int(iy - half)),
+               min(iw, int(ix + half)), min(ih, int(iy + half)))
+        IconLibrary().save(name, img.crop(box))
+        return f"Got it — I'll remember the '{name}' icon."
+
+    def click_icon(self, name: str, button: str = "left",
+                   threshold: float = 0.8) -> str:
+        """Click a previously-taught icon by name. Honest: if she hasn't learned
+        it, she says how to teach her — never clicks blind."""
+        if not self._caps["pyautogui"]:
+            return "pyautogui not available"
+        from core.io.icon_library import IconLibrary
+        path = IconLibrary().path_for(name)
+        if not path:
+            raise LookupError(
+                f"I don't know the '{name}' icon yet — hover over it and say "
+                f"'remember this as the {name} icon'.")
+        return self.click_image(path, button=button, threshold=threshold)
+
     def scroll(self, clicks: int = 3, direction: str = "down") -> str:
         if not self._caps["pyautogui"]:
             return "pyautogui not available"

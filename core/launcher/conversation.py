@@ -614,6 +614,10 @@ class ConversationBridge:
              lambda m: {"key": m.group("key").strip()},
              lambda a: f"press {a['key']}"),
             (r"^(?:please\s+|friday[,\s]*)*click(?:\s+on)?\s+(?:the\s+)?"
+             r"(?P<label>.+?)\s+icon$", "screen.click_icon",
+             lambda m: {"name": m.group("label").strip().strip("'\"")},
+             lambda a: f"click the {a['name']} icon"),
+            (r"^(?:please\s+|friday[,\s]*)*click(?:\s+on)?\s+(?:the\s+)?"
              r"(?P<label>.+?)(?:\s+button|\s+link)?$", "screen.click_text",
              lambda m: {"query": m.group("label").strip().strip("'\"")},
              lambda a: f"click '{a['query']}'"),
@@ -667,6 +671,36 @@ class ConversationBridge:
         return ("files.find_open",
                 result.error or f"I couldn't find a file matching '{query}'.")
 
+    # ── Point-and-teach an icon: "remember this as the settings icon" ─────────
+    _TEACH_ICON_RE = re.compile(
+        r"^(?:please\s+|friday[,\s]*)*(?:remember|save|learn)\s+(?:this|the\s+current)"
+        r"\s+(?:screen\s+)?(?:as\s+)?(?:the\s+)?(?P<name>.+?)(?:\s+icon)?$", re.I)
+
+    def _teach_icon(self, command: str) -> Optional[tuple]:
+        """Learn the icon under the cursor by name (SAFE, on-device). Returns
+        (key, answer) or None. Never raises."""
+        if self.skills is None:
+            return None
+        q = (command or "").strip()
+        if not q or q.endswith("?"):
+            return None
+        m = self._TEACH_ICON_RE.match(q)
+        if not m:
+            return None
+        name = m.group("name").strip().strip("'\"")
+        if not name or len(name) > 40:
+            return None
+        try:
+            result = self.skills.execute("screen.teach_icon", {"name": name})
+        except Exception:  # noqa: BLE001
+            log.debug("teach_icon route failed", exc_info=True)
+            return ("screen.teach_icon", f"I couldn't save the '{name}' icon.")
+        if result.success:
+            return ("screen.teach_icon",
+                    str(result.data or f"I'll remember the '{name}' icon."))
+        return ("screen.teach_icon",
+                result.error or f"I couldn't save the '{name}' icon.")
+
     # ── Multi-step: chain everyday actions into one plan ──────────────────────
     # "open report.pdf and click Print" → resolve each step deterministically,
     # confirm the WHOLE plan once (if any step is consequential), then run it in
@@ -681,6 +715,10 @@ class ConversationBridge:
         if not p:
             return None
         low = p.lower()
+        m = re.match(r"^click(?:\s+on)?\s+(?:the\s+)?(?P<t>.+?)\s+icon$", p, re.I)
+        if m and m.group("t").strip():
+            n = m.group("t").strip().strip("'\"")
+            return ("screen.click_icon", {"name": n}, f"click the {n} icon")
         m = re.match(r"^click(?:\s+on)?\s+(?:the\s+)?(?P<t>.+?)(?:\s+button|\s+link)?$",
                      p, re.I)
         if m and m.group("t").strip():
@@ -2505,6 +2543,13 @@ class ConversationBridge:
         visible = self._visibility(command)
         if visible is not None:
             key, answer = visible
+            return self._respond_directly(turn, key, answer, t0)
+
+        # point-and-teach an icon: "remember this as the settings icon" — grabs
+        # the pixels under the cursor and stores them by name (SAFE, on-device).
+        taught = self._teach_icon(command)
+        if taught is not None:
+            key, answer = taught
             return self._respond_directly(turn, key, answer, t0)
 
         # multi-step: "open report.pdf and click Print" — chain everyday actions

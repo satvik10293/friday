@@ -222,6 +222,34 @@ def test_a_filename_containing_and_is_not_split_into_a_chain():
     assert names == ["files.find_open"]                 # whole thing, not mis-chained
 
 
+# ── point-and-teach icons: learn by name, then click by name ──────────────────
+
+def test_remember_this_as_icon_teaches_it_immediately():
+    skills = _Skills({"screen.teach_icon": _Skill()})       # SAFE → runs at once
+    bridge = _bridge(skills, _CloudSpy())
+    bridge.think("remember this as the settings icon")
+    assert ("screen.teach_icon", {"name": "settings"}) in skills.executed
+
+
+def test_click_the_x_icon_confirms_then_clicks_by_name():
+    skills = _Skills({"screen.click_icon": _Skill(Permission.USER_APPROVAL)})
+    bridge = _bridge(skills, _CloudSpy())
+    r1 = bridge.think("click the settings icon")
+    assert skills.executed == []                             # waits for confirm
+    assert "confirm" in r1.answer.lower() and "settings" in r1.answer.lower()
+    bridge.think("confirm")
+    assert skills.executed == [("screen.click_icon", {"name": "settings"})]
+
+
+def test_click_a_text_label_is_not_treated_as_an_icon():
+    skills = _Skills({"screen.click_text": _Skill(Permission.USER_APPROVAL),
+                      "screen.click_icon": _Skill(Permission.USER_APPROVAL)})
+    bridge = _bridge(skills, _CloudSpy())
+    bridge.think("click Save")
+    bridge.think("confirm")
+    assert [n for n, _ in skills.executed] == ["screen.click_text"]
+
+
 def test_admin_commands_are_refused_never_confirmable():
     skills = _Skills({})
     cloud = _CloudSpy()

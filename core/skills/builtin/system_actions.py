@@ -90,6 +90,10 @@ _SPECS: list[ActionSpec] = [
                *_T1, ("screen", "read"),
                {"template_path": {"required": True, "type": str},
                 "threshold": {"type": float}}),
+    ActionSpec("screen.teach_icon", "teach_icon",
+               "Remember the icon under the cursor by name (point-and-teach).",
+               *_T2, ("screen", "act"),
+               {"name": {"required": True, "type": str}, "size": {"type": int}}),
     ActionSpec("system.capabilities", "capabilities", "Which action capabilities are available.",
                *_T1, ("system", "read")),
     ActionSpec("system.battery_alert", "start_battery_alert",
@@ -152,6 +156,11 @@ _SPECS: list[ActionSpec] = [
                "Find an icon/reference image on screen and click it.",
                *_T3, ("input", "act"),
                {"template_path": {"required": True, "type": str},
+                "button": {"type": str}, "threshold": {"type": float}}),
+    ActionSpec("screen.click_icon", "click_icon",
+               "Find a previously-taught icon by name and click it.",
+               *_T3, ("input", "act"),
+               {"name": {"required": True, "type": str},
                 "button": {"type": str}, "threshold": {"type": float}}),
 
     # ── Tier 3+ — machine-altering, admin role + approval ─────────────────────
