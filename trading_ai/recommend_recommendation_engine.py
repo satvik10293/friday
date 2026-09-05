@@ -81,6 +81,7 @@ class Recommendation:
     confidence: float  # 0-100
     reasons: List[str] = field(default_factory=list)
     plan: Optional[TradePlan] = None
+    setup_tag: str = "trend_continuation"   # the tag she learns AND reads under
 
     def __str__(self) -> str:
         lines = [f"{self.action} SIGNAL — {self.symbol}", f"Confidence: {self.confidence:.0f}%"]
@@ -112,6 +113,7 @@ class RecommendationEngine:
 
         df = self.market.with_indicators(candles)
         rec = self._evaluate_from_indicators(df, symbol, has_open_position, setup_tag)
+        rec.setup_tag = setup_tag        # carry the tag so learning files under it too
 
         # Multi-timeframe confirmation: a 15m signal that fights the 1-hour
         # trend is much more likely to fail. Veto buys against the tide;

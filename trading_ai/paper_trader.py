@@ -196,7 +196,9 @@ def run_live(symbols: List[str], *, capital: float = 10000.0, cycles: int = 0,
                 opened = trader.consider(sym, rec.action, rec.plan, prices)
                 if opened:
                     print("  " + opened)
-                    tracker.track(sym, rec.action, rec.plan, "paper")
+                    # file the outcome under the SAME tag the engine reads back,
+                    # so what she learns actually nudges her next call
+                    tracker.track(sym, rec.action, rec.plan, rec.setup_tag)
             except Exception as e:  # noqa: BLE001 — one symbol failing can't stop the loop
                 print(f"  [{sym}] skipped: {e}")
         r = trader.report(prices)
