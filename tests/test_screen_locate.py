@@ -12,35 +12,48 @@ import core.io.screen as screen
 
 
 class _Img:
-    size = (2000, 1000)
+    def __init__(self, size=(1200, 800)):     # <= _MAX_OCR_DIM → no downscale
+        self.size = size
 
     def convert(self, _mode):
         return self
 
+    def resize(self, size):
+        return _Img(size)
 
-def _stub(monkeypatch, items):
-    monkeypatch.setattr(screen, "_capture_primary", lambda: _Img())
+
+def _stub(monkeypatch, items, size=(1200, 800)):
+    monkeypatch.setattr(screen, "_capture_primary", lambda: _Img(size))
     monkeypatch.setattr(screen, "_backend_available", lambda n: True)
     monkeypatch.setattr(screen, "_boxes_rapidocr", lambda img: items)
 
 
 def test_locate_scales_image_pixels_into_click_space(monkeypatch):
-    # image is 2000x1000; the mouse space is half that → coords must halve (DPI)
-    _stub(monkeypatch, [("Save", 1000, 500), ("Cancel", 1500, 500)])
-    res = screen.locate("save", screen_size=(1000, 500))
+    # image 1200x800; the mouse space is half that → coords must halve (DPI)
+    _stub(monkeypatch, [("Save", 600, 400), ("Cancel", 900, 400)])
+    res = screen.locate("save", screen_size=(600, 400))
     assert res["ok"]
-    assert res["matches"][0] == {"text": "Save", "x": 500, "y": 250}
+    assert res["matches"][0] == {"text": "Save", "x": 300, "y": 200}
+
+
+def test_locate_downscales_a_big_screen_then_maps_back(monkeypatch):
+    # 3200x1800 > cap(1600) → OCR runs on 1600x900; coords map to the real screen
+    _stub(monkeypatch, [("Save", 800, 450)], size=(3200, 1800))
+    res = screen.locate("save", screen_size=(3200, 1800))
+    assert res["ok"]
+    m = res["matches"][0]
+    assert abs(m["x"] - 1600) <= 2 and abs(m["y"] - 900) <= 2   # 1600-wide OCR, 2x back
 
 
 def test_locate_ranks_exact_over_partial(monkeypatch):
     _stub(monkeypatch, [("Save As", 100, 100), ("Save", 200, 200)])
-    res = screen.locate("save", screen_size=(2000, 1000))   # 1:1, no scaling
+    res = screen.locate("save", screen_size=(1200, 800))    # 1:1, no scaling
     assert [m["text"] for m in res["matches"]][0] == "Save"  # exact beats starts-with
 
 
 def test_locate_is_honest_when_text_absent(monkeypatch):
     _stub(monkeypatch, [("Home", 10, 10), ("File", 20, 20)])
-    res = screen.locate("save", screen_size=(2000, 1000))
+    res = screen.locate("save", screen_size=(1200, 800))
     assert not res["ok"]
     assert "save" in res["reason"].lower()
 

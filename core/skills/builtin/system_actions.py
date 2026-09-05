@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
+from typing import Optional
 
 from core.skills.permissions import Permission, RiskLevel
 from core.skills.skill import Skill
@@ -48,6 +49,7 @@ class ActionSpec:
     risk: RiskLevel
     tags: tuple
     schema: dict = field(default_factory=dict)
+    timeout: Optional[float] = None       # None → executor default (15s)
 
 
 _T1 = (Permission.SAFE, RiskLevel.LOW)
@@ -151,20 +153,26 @@ _SPECS: list[ActionSpec] = [
     ActionSpec("input.click", "click", "Click the mouse.",
                *_T3, ("input", "act"),
                {"x": {"type": int}, "y": {"type": int}, "button": {"type": str}}),
+    # screen-clicks do OCR/template matching (slow on a CPU, and the first call
+    # loads the OCR model), so give them a roomy sandbox budget — the downscaled
+    # OCR keeps typical calls quick; this only covers the one-time model load.
     ActionSpec("screen.click_text", "click_text",
                "Find a visible text label on screen and click it.",
                *_T3, ("input", "act"),
-               {"query": {"required": True, "type": str}, "button": {"type": str}}),
+               {"query": {"required": True, "type": str}, "button": {"type": str}},
+               timeout=45.0),
     ActionSpec("screen.click_image", "click_image",
                "Find an icon/reference image on screen and click it.",
                *_T3, ("input", "act"),
                {"template_path": {"required": True, "type": str},
-                "button": {"type": str}, "threshold": {"type": float}}),
+                "button": {"type": str}, "threshold": {"type": float}},
+               timeout=45.0),
     ActionSpec("screen.click_icon", "click_icon",
                "Find a previously-taught icon by name and click it.",
                *_T3, ("input", "act"),
                {"name": {"required": True, "type": str},
-                "button": {"type": str}, "threshold": {"type": float}}),
+                "button": {"type": str}, "threshold": {"type": float}},
+               timeout=45.0),
 
     # ── Tier 3+ — machine-altering, admin role + approval ─────────────────────
     ActionSpec("shell.run", "run_shell",
@@ -198,6 +206,7 @@ class SystemActionSkill(Skill):
         self.risk_level = spec.risk
         self.tags = spec.tags
         self.input_schema = dict(spec.schema)
+        self.timeout = spec.timeout        # per-skill sandbox budget (None = default)
 
     def run(self, context, **kwargs):
         from core.skills.exceptions import SkillExecutionError

@@ -1868,6 +1868,10 @@ class ConversationBridge:
             (r"\b(?:play|put on|start)\b(?:\s+(?:some|the|my))?\s+music\b",
              "media.play_music", None,
              lambda d: d if isinstance(d, str) else "Playing music."),
+            # stop / pause / resume the music — "stop playing the music", "pause
+            # the song" (\bplay\b never matches "playing", and "stop" was missing)
+            (r"\b(stop|pause|resume|halt)\b(?:\s+\w+){0,3}\s+(music|song|track|media|playback|spotify)\b",
+             "media.play_pause", None, lambda d: "Done."),
             (r"\b(play|pause|play ?pause|resume)\b.{0,10}(music|media|track|song|it)?\b",
              "media.play_pause", None, lambda d: "Done."),
             (r"\bnext (track|song)\b|\bskip\b", "media.next", None, lambda d: "Next track."),

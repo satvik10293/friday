@@ -145,6 +145,9 @@ def read_screen() -> dict:
 # centre is scaled from image pixels into the mouse coordinate space, which makes
 # aiming survive display scaling (DPI). Primary monitor only — an honest scope.
 
+_MAX_OCR_DIM = 1600          # cap the long side before OCR (speed on CPU)
+
+
 def _capture_primary():
     """The primary monitor as a PIL image (origin 0,0 — clean for aiming), or None."""
     try:
@@ -208,12 +211,21 @@ def locate(query: str, *, screen_size=None) -> dict:
     if image is None:
         return {"ok": False, "matches": [], "backend": None,
                 "reason": "no display / capture unavailable"}
-    items = _boxes_rapidocr(image) if _backend_available("rapidocr") else None
+    # Downscale before OCR — a full 4K scan is slow on a CPU and can blow the
+    # click skill's sandbox budget; capping the long side keeps text legible while
+    # cutting OCR time several-fold. Coordinates map from the SCALED image.
+    ocr_img = image
+    fw, fh = image.size
+    longest = max(fw, fh)
+    if longest > _MAX_OCR_DIM:
+        s = _MAX_OCR_DIM / float(longest)
+        ocr_img = image.resize((max(1, int(fw * s)), max(1, int(fh * s))))
+    items = _boxes_rapidocr(ocr_img) if _backend_available("rapidocr") else None
     if items is None:
         return {"ok": False, "matches": [], "backend": None,
                 "reason": "box-level OCR unavailable (needs rapidocr)"}
-    iw, ih = image.size
-    sw, sh = screen_size if screen_size else (iw, ih)
+    iw, ih = ocr_img.size
+    sw, sh = screen_size if screen_size else (fw, fh)
     fx = sw / iw if iw else 1.0
     fy = sh / ih if ih else 1.0
     scored = []
